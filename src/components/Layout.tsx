@@ -879,6 +879,27 @@ export default function Layout() {
                   </div>
                 </div>
               </div>
+
+              {/* Session / Logout group */}
+              <div className="pt-4 border-t border-slate-100 animate-fade-in">
+                <span className="block text-[10px] font-black uppercase text-slate-450 tracking-wider mb-2">Sessão da Conta</span>
+                <div className="bg-rose-50 border border-rose-100 p-3.5 rounded-2xl flex items-center justify-between gap-3">
+                  <div className="space-y-0.5">
+                    <p className="text-[11px] font-bold text-slate-800">Desconectar da Plataforma</p>
+                    <p className="text-[10px] text-slate-550 leading-normal mb-0">Encerre sua sessão atual com segurança e retorne para a tela de login.</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setIsProfileOpen(false);
+                      handleLogout();
+                    }}
+                    className="px-3.5 py-2 bg-rose-600 hover:bg-rose-700 hover:text-white text-white font-black text-[10px] rounded-xl transition-all cursor-pointer shadow-sm flex items-center gap-1.5 shrink-0 uppercase tracking-wider"
+                  >
+                    <LogOut size={13} />
+                    <span>Sair</span>
+                  </button>
+                </div>
+              </div>
             </div>
 
             <div className="p-4 bg-slate-50 border-t border-slate-100 flex gap-3 shrink-0">
