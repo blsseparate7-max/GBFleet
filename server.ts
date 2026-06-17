@@ -439,7 +439,7 @@ async function startServer() {
       routes: filteredRoutes,
       categories_entrada: categoriesEntrada,
       categories_saida: categoriesSaida,
-      chat_logs: db.chat_logs || []
+      chat_logs: (db.chat_logs || []).filter((cl: any) => cl.companyId === targetCompanyId)
     });
   });
 
@@ -689,15 +689,20 @@ async function startServer() {
 
   app.post("/api/fuel_logs", (req, res) => {
     const db = readDB();
-    const newLog = { ...req.body, id: `fuel_${Date.now()}` };
+    const companyId = (req as any).companyId;
+    const newLog = { 
+      ...req.body, 
+      id: `fuel_${Date.now()}`,
+      companyId 
+    };
     db.fuel_logs.push(newLog);
     
     // Also add to cash flow as 'saida'
     db.cash_flow.push({
       id: `cash_${Date.now()}`,
-      companyId: newLog.companyId,
+      companyId: companyId,
       tipo: 'saida',
-      valor: newLog.valor,
+      valor: parseFloat(newLog.valor || 0),
       data: newLog.data,
       descricao: `Abastecimento: ${newLog.truckId} (${newLog.litros}L)`
     });
@@ -708,14 +713,19 @@ async function startServer() {
 
   app.post("/api/expenses", (req, res) => {
     const db = readDB();
-    const newExpense = { ...req.body, id: `exp_${Date.now()}` };
+    const companyId = (req as any).companyId;
+    const newExpense = { 
+      ...req.body, 
+      id: `exp_${Date.now()}`,
+      companyId 
+    };
     db.expenses.push(newExpense);
 
     db.cash_flow.push({
       id: `cash_${Date.now()}`,
-      companyId: newExpense.companyId,
+      companyId: companyId,
       tipo: 'saida',
-      valor: newExpense.valor,
+      valor: parseFloat(newExpense.valor || 0),
       data: newExpense.data,
       descricao: `Despesa: ${newExpense.tipo} - ${newExpense.truckId}`
     });
@@ -727,11 +737,15 @@ async function startServer() {
   app.delete("/api/expenses/:id", (req, res) => {
     const db = readDB();
     const { id } = req.params;
+    const companyId = (req as any).companyId;
     const exp = db.expenses.find((e: any) => e.id === id);
     if (exp) {
+      if (exp.companyId !== companyId) {
+        return res.status(403).json({ error: "Não autorizado." });
+      }
       db.expenses = db.expenses.filter((e: any) => e.id !== id);
       db.cash_flow = db.cash_flow.filter((c: any) => {
-        const isMatch = c.descricao === `Despesa: ${exp.tipo} - ${exp.truckId}` && c.valor === exp.valor && c.data === exp.data;
+        const isMatch = c.companyId === companyId && c.descricao === `Despesa: ${exp.tipo} - ${exp.truckId}` && c.valor === exp.valor && c.data === exp.data;
         return !isMatch;
       });
       writeDB(db);
@@ -741,9 +755,11 @@ async function startServer() {
 
   app.post("/api/cash_flow", (req, res) => {
     const db = readDB();
+    const companyId = (req as any).companyId;
     const newEntry = { 
       ...req.body, 
       id: `cash_${Date.now()}`,
+      companyId,
       valor: parseFloat(req.body.valor || 0)
     };
     db.cash_flow.push(newEntry);
@@ -754,6 +770,14 @@ async function startServer() {
   app.delete("/api/cash_flow/:id", (req, res) => {
     const db = readDB();
     const { id } = req.params;
+    const companyId = (req as any).companyId;
+    const item = db.cash_flow.find((c: any) => c.id === id);
+    if (!item) {
+      return res.status(404).json({ error: "Lançamento não encontrado." });
+    }
+    if (item.companyId !== companyId) {
+      return res.status(403).json({ error: "Não autorizado." });
+    }
     db.cash_flow = db.cash_flow.filter((c: any) => c.id !== id);
     writeDB(db);
     res.json({ success: true });
@@ -762,12 +786,17 @@ async function startServer() {
   app.put("/api/cash_flow/:id", (req, res) => {
     const db = readDB();
     const { id } = req.params;
+    const companyId = (req as any).companyId;
     const idx = db.cash_flow.findIndex((c: any) => c.id === id);
     if (idx !== -1) {
+      if (db.cash_flow[idx].companyId !== companyId) {
+        return res.status(403).json({ error: "Não autorizado." });
+      }
       db.cash_flow[idx] = {
         ...db.cash_flow[idx],
         ...req.body,
         id,
+        companyId, // Force immutable companyId
         valor: parseFloat(req.body.valor || 0)
       };
       writeDB(db);
@@ -779,7 +808,13 @@ async function startServer() {
 
   app.post("/api/chat_logs", (req, res) => {
     const db = readDB();
-    const newLog = { ...req.body, id: `chat_${Date.now()}`, timestamp: new Date().toISOString() };
+    const companyId = (req as any).companyId;
+    const newLog = { 
+      ...req.body, 
+      id: `chat_${Date.now()}`, 
+      companyId,
+      timestamp: new Date().toISOString() 
+    };
     db.chat_logs.push(newLog);
     writeDB(db);
     res.json(newLog);
@@ -787,10 +822,31 @@ async function startServer() {
 
   app.post("/api/trucks", (req, res) => {
     const db = readDB();
-    const newTruck = { ...req.body, id: `truck_${Date.now()}` };
+    const companyId = (req as any).companyId;
+    const newTruck = { 
+      ...req.body, 
+      id: `truck_${Date.now()}`,
+      companyId 
+    };
     db.trucks.push(newTruck);
     writeDB(db);
     res.json(newTruck);
+  });
+
+  app.delete("/api/trucks/:id", (req, res) => {
+    const db = readDB();
+    const { id } = req.params;
+    const companyId = (req as any).companyId;
+    const truck = db.trucks.find((t: any) => t.id === id);
+    if (!truck) {
+      return res.status(404).json({ error: "Veículo não encontrado." });
+    }
+    if (truck.companyId !== companyId) {
+      return res.status(403).json({ error: "Não autorizado." });
+    }
+    db.trucks = db.trucks.filter((t: any) => t.id !== id);
+    writeDB(db);
+    res.json({ success: true });
   });
 
   const syncFreightData = (db: any, freight: any) => {
@@ -891,9 +947,11 @@ async function startServer() {
 
   app.post("/api/freights", (req, res) => {
     const db = readDB();
+    const companyId = (req as any).companyId;
     const newFreight = { 
       ...req.body, 
       id: `freight_${Date.now()}`,
+      companyId,
       valorBruto: parseFloat(req.body.valorBruto || 0),
       pedagio: parseFloat(req.body.pedagio || 0),
       combustivel: parseFloat(req.body.combustivel || 0),
@@ -912,10 +970,15 @@ async function startServer() {
     const db = readDB();
     const { id } = req.params;
     const { status } = req.body;
+    const companyId = (req as any).companyId;
 
     const freightIndex = db.freights.findIndex((f: any) => f.id === id);
     if (freightIndex === -1) {
       return res.status(404).json({ error: "Frete não encontrado" });
+    }
+
+    if (db.freights[freightIndex].companyId !== companyId) {
+      return res.status(403).json({ error: "Não autorizado." });
     }
 
     db.freights[freightIndex].status = status;
@@ -929,9 +992,11 @@ async function startServer() {
 
   app.post("/api/maintenance_alerts", (req, res) => {
     const db = readDB();
+    const companyId = (req as any).companyId;
     const newAlert = {
       ...req.body,
       id: `alert_${Date.now()}`,
+      companyId,
       limiteKm: Number(req.body.limiteKm || 0),
       custo: 0,
       status: "Pendente",
@@ -946,10 +1011,15 @@ async function startServer() {
     const db = readDB();
     const { id } = req.params;
     const { custo, dataRealizada } = req.body;
+    const companyId = (req as any).companyId;
 
     const idx = db.maintenance_alerts.findIndex((a: any) => a.id === id);
     if (idx === -1) {
       return res.status(404).json({ error: "Alerta não encontrado" });
+    }
+
+    if (db.maintenance_alerts[idx].companyId !== companyId) {
+      return res.status(403).json({ error: "Não autorizado." });
     }
 
     db.maintenance_alerts[idx].status = "Realizado";
@@ -962,7 +1032,7 @@ async function startServer() {
     const expenseId = `exp_maint_${alert.id}`;
     db.expenses.push({
       id: expenseId,
-      companyId: alert.companyId,
+      companyId: companyId,
       truckId: alert.truckId,
       tipo: "Manutenção",
       valor: parseFloat(custo || 0),
@@ -973,7 +1043,7 @@ async function startServer() {
     // Automatically register as cash flow outgo (saída)
     db.cash_flow.push({
       id: `cash_maint_${alert.id}`,
-      companyId: alert.companyId,
+      companyId: companyId,
       tipo: "saida",
       valor: parseFloat(custo || 0),
       data: alert.dataRealizada,
@@ -987,6 +1057,12 @@ async function startServer() {
   app.delete("/api/maintenance_alerts/:id", (req, res) => {
     const db = readDB();
     const { id } = req.params;
+    const companyId = (req as any).companyId;
+
+    const prevMatched = db.maintenance_alerts.find((a: any) => a.id === id);
+    if (prevMatched && prevMatched.companyId !== companyId) {
+      return res.status(403).json({ error: "Não autorizado." });
+    }
 
     db.maintenance_alerts = db.maintenance_alerts.filter((a: any) => a.id !== id);
     writeDB(db);
@@ -996,10 +1072,11 @@ async function startServer() {
   // Driver Endpoints
   app.post("/api/drivers", (req, res) => {
     const db = readDB();
+    const companyId = (req as any).companyId;
     const newDriver = {
       ...req.body,
       id: `driver_${Date.now()}`,
-      companyId: req.body.companyId || "comp_1"
+      companyId
     };
     db.drivers.push(newDriver);
     writeDB(db);
@@ -1009,13 +1086,19 @@ async function startServer() {
   app.put("/api/drivers/:id", (req, res) => {
     const db = readDB();
     const { id } = req.params;
+    const companyId = (req as any).companyId;
     const idx = db.drivers.findIndex((d: any) => d.id === id);
     if (idx === -1) {
       return res.status(404).json({ error: "Motorista não encontrado" });
     }
+    if (db.drivers[idx].companyId !== companyId) {
+      return res.status(403).json({ error: "Não autorizado." });
+    }
     db.drivers[idx] = {
       ...db.drivers[idx],
-      ...req.body
+      ...req.body,
+      id,
+      companyId // Force immutable companyId
     };
     writeDB(db);
     res.json(db.drivers[idx]);
@@ -1024,6 +1107,11 @@ async function startServer() {
   app.delete("/api/drivers/:id", (req, res) => {
     const db = readDB();
     const { id } = req.params;
+    const companyId = (req as any).companyId;
+    const prevMatched = db.drivers.find((d: any) => d.id === id);
+    if (prevMatched && prevMatched.companyId !== companyId) {
+      return res.status(403).json({ error: "Não autorizado." });
+    }
     db.drivers = db.drivers.filter((d: any) => d.id !== id);
     writeDB(db);
     res.json({ success: true });
@@ -1032,10 +1120,11 @@ async function startServer() {
   // Route Presets Endpoints (SaaS Dynamic Routes)
   app.post("/api/routes", (req, res) => {
     const db = readDB();
+    const companyId = (req as any).companyId;
     const newRoute = {
       ...req.body,
       id: `route_${Date.now()}`,
-      companyId: req.body.companyId || "comp_1",
+      companyId,
       distanciaKm: parseFloat(req.body.distanciaKm || 0),
       valorPedagio: parseFloat(req.body.valorPedagio || 0),
       diariaMotorista: parseFloat(req.body.diariaMotorista || 0),
@@ -1050,14 +1139,19 @@ async function startServer() {
   app.put("/api/routes/:id", (req, res) => {
     const db = readDB();
     const { id } = req.params;
+    const companyId = (req as any).companyId;
     const idx = db.routes.findIndex((r: any) => r.id === id);
     if (idx === -1) {
       return res.status(404).json({ error: "Rota não encontrada" });
+    }
+    if (db.routes[idx].companyId !== companyId) {
+      return res.status(403).json({ error: "Não autorizado." });
     }
     db.routes[idx] = {
       ...db.routes[idx],
       ...req.body,
       id,
+      companyId, // Force immutable companyId
       distanciaKm: parseFloat(req.body.distanciaKm || 0),
       valorPedagio: parseFloat(req.body.valorPedagio || 0),
       diariaMotorista: parseFloat(req.body.diariaMotorista || 0),
@@ -1071,6 +1165,11 @@ async function startServer() {
   app.delete("/api/routes/:id", (req, res) => {
     const db = readDB();
     const { id } = req.params;
+    const companyId = (req as any).companyId;
+    const prevMatched = db.routes.find((r: any) => r.id === id);
+    if (prevMatched && prevMatched.companyId !== companyId) {
+      return res.status(403).json({ error: "Não autorizado." });
+    }
     db.routes = db.routes.filter((r: any) => r.id !== id);
     writeDB(db);
     res.json({ success: true });
@@ -1079,11 +1178,41 @@ async function startServer() {
   // Dynamic categories endpoints
   app.post("/api/categories", (req, res) => {
     const db = readDB();
+    const companyId = (req as any).companyId;
     const { tipo, nome } = req.body;
     if (!nome) {
       return res.status(400).json({ error: "Nome da categoria é obrigatório." });
     }
     const cleanNome = nome.trim();
+    
+    const companyIdx = db.companies.findIndex((c: any) => c.id === companyId);
+    if (companyIdx !== -1) {
+      if (!db.companies[companyIdx].categories_entrada) {
+        db.companies[companyIdx].categories_entrada = [...db.categories_entrada];
+      }
+      if (!db.companies[companyIdx].categories_saida) {
+        db.companies[companyIdx].categories_saida = [...db.categories_saida];
+      }
+      
+      if (tipo === "entrada") {
+        if (!db.companies[companyIdx].categories_entrada.includes(cleanNome)) {
+          db.companies[companyIdx].categories_entrada.push(cleanNome);
+        }
+      } else if (tipo === "saida") {
+        if (!db.companies[companyIdx].categories_saida.includes(cleanNome)) {
+          db.companies[companyIdx].categories_saida.push(cleanNome);
+        }
+      } else {
+        return res.status(400).json({ error: "Tipo inválido." });
+      }
+      writeDB(db);
+      return res.json({ 
+        categories_entrada: db.companies[companyIdx].categories_entrada, 
+        categories_saida: db.companies[companyIdx].categories_saida 
+      });
+    }
+    
+    // Fallback for demo state or if company not found
     if (tipo === "entrada") {
       if (!db.categories_entrada.includes(cleanNome)) {
         db.categories_entrada.push(cleanNome);
@@ -1101,6 +1230,7 @@ async function startServer() {
 
   app.put("/api/categories", (req, res) => {
     const db = readDB();
+    const companyId = (req as any).companyId;
     const { tipo, oldNome, newNome } = req.body;
     if (!oldNome || !newNome) {
       return res.status(400).json({ error: "Valores antigos e novos de nome são obrigatórios" });
@@ -1108,57 +1238,102 @@ async function startServer() {
     const cleanOld = oldNome.trim();
     const cleanNew = newNome.trim();
 
-    if (tipo === "entrada") {
-      const idx = db.categories_entrada.indexOf(cleanOld);
-      if (idx !== -1) {
-        db.categories_entrada[idx] = cleanNew;
+    const companyIdx = db.companies.findIndex((c: any) => c.id === companyId);
+    let currentEntrada = db.categories_entrada;
+    let currentSaida = db.categories_saida;
+
+    if (companyIdx !== -1) {
+      if (!db.companies[companyIdx].categories_entrada) {
+        db.companies[companyIdx].categories_entrada = [...db.categories_entrada];
       }
-      // cascade change to cash_flow entry category
+      if (!db.companies[companyIdx].categories_saida) {
+        db.companies[companyIdx].categories_saida = [...db.categories_saida];
+      }
+      
+      currentEntrada = db.companies[companyIdx].categories_entrada;
+      currentSaida = db.companies[companyIdx].categories_saida;
+    }
+
+    if (tipo === "entrada") {
+      const idx = currentEntrada.indexOf(cleanOld);
+      if (idx !== -1) {
+        currentEntrada[idx] = cleanNew;
+      }
+      // cascade change to cash_flow entry category for THIS company only
       db.cash_flow.forEach((c: any) => {
-        if (c.tipo === "entrada" && c.categoria === cleanOld) {
+        if (c.companyId === companyId && c.tipo === "entrada" && c.categoria === cleanOld) {
           c.categoria = cleanNew;
         }
       });
     } else if (tipo === "saida") {
-      const idx = db.categories_saida.indexOf(cleanOld);
+      const idx = currentSaida.indexOf(cleanOld);
       if (idx !== -1) {
-        db.categories_saida[idx] = cleanNew;
+        currentSaida[idx] = cleanNew;
       }
-      // cascade change to expenses of type
+      // cascade change to expenses of type for THIS company only
       db.expenses.forEach((e: any) => {
-        if (e.tipo === cleanOld) {
+        if (e.companyId === companyId && e.tipo === cleanOld) {
           e.tipo = cleanNew;
         }
       });
-      // cascade change to cash_flow of category
+      // cascade change to cash_flow of category for THIS company only
       db.cash_flow.forEach((c: any) => {
-        if (c.tipo === "saida" && c.categoria === cleanOld) {
+        if (c.companyId === companyId && c.tipo === "saida" && c.categoria === cleanOld) {
           c.categoria = cleanNew;
         }
       });
     } else {
       return res.status(400).json({ error: "Tipo inválido." });
     }
+    
     writeDB(db);
-    res.json({ categories_entrada: db.categories_entrada, categories_saida: db.categories_saida });
+    res.json({ categories_entrada: currentEntrada, categories_saida: currentSaida });
   });
 
   app.delete("/api/categories", (req, res) => {
     const db = readDB();
+    const companyId = (req as any).companyId;
     const { tipo, nome } = req.body;
     if (!nome) {
       return res.status(400).json({ error: "Nome é obrigatório." });
     }
     const cleanNome = nome.trim();
-    if (tipo === "entrada") {
-      db.categories_entrada = db.categories_entrada.filter((c: string) => c !== cleanNome);
-    } else if (tipo === "saida") {
-      db.categories_saida = db.categories_saida.filter((c: string) => c !== cleanNome);
+
+    const companyIdx = db.companies.findIndex((c: any) => c.id === companyId);
+    let currentEntrada = db.categories_entrada;
+    let currentSaida = db.categories_saida;
+
+    if (companyIdx !== -1) {
+      if (!db.companies[companyIdx].categories_entrada) {
+        db.companies[companyIdx].categories_entrada = [...db.categories_entrada];
+      }
+      if (!db.companies[companyIdx].categories_saida) {
+        db.companies[companyIdx].categories_saida = [...db.categories_saida];
+      }
+      
+      if (tipo === "entrada") {
+        db.companies[companyIdx].categories_entrada = db.companies[companyIdx].categories_entrada.filter((c: string) => c !== cleanNome);
+      } else if (tipo === "saida") {
+        db.companies[companyIdx].categories_saida = db.companies[companyIdx].categories_saida.filter((c: string) => c !== cleanNome);
+      } else {
+        return res.status(400).json({ error: "Tipo inválido." });
+      }
+      currentEntrada = db.companies[companyIdx].categories_entrada;
+      currentSaida = db.companies[companyIdx].categories_saida;
     } else {
-      return res.status(400).json({ error: "Tipo inválido." });
+      if (tipo === "entrada") {
+        db.categories_entrada = db.categories_entrada.filter((c: string) => c !== cleanNome);
+      } else if (tipo === "saida") {
+        db.categories_saida = db.categories_saida.filter((c: string) => c !== cleanNome);
+      } else {
+        return res.status(400).json({ error: "Tipo inválido." });
+      }
+      currentEntrada = db.categories_entrada;
+      currentSaida = db.categories_saida;
     }
+
     writeDB(db);
-    res.json({ categories_entrada: db.categories_entrada, categories_saida: db.categories_saida });
+    res.json({ categories_entrada: currentEntrada, categories_saida: currentSaida });
   });
 
   // Vite middleware for development
