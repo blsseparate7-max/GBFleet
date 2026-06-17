@@ -44,7 +44,7 @@ const baseUrl = getBackendUrl();
 
 // Global Fetch Interceptor
 const originalFetch = window.fetch;
-window.fetch = async function (input: RequestInfo | URL, init?: RequestInit) {
+const customFetch = async function (input: RequestInfo | URL, init?: RequestInit) {
   let url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
   
   // Se a rota for relativa (ex: /api/auth/login), anexa a URL correta do servidor
@@ -80,6 +80,31 @@ window.fetch = async function (input: RequestInfo | URL, init?: RequestInit) {
   }
   return originalFetch(url, init);
 };
+
+try {
+  // Use Object.defineProperty with getter to bypass read-only/getter-only restrictions
+  Object.defineProperty(window, 'fetch', {
+    configurable: true,
+    enumerable: true,
+    get: () => customFetch,
+    set: () => {} // Prevent errors if something tries to write to window.fetch
+  });
+} catch (e) {
+  try {
+    Object.defineProperty(window, 'fetch', {
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      value: customFetch
+    });
+  } catch (err) {
+    try {
+      (window as any).fetch = customFetch;
+    } catch (lastErr) {
+      console.error("Critical: Multi-tenant request interceptor could not be attached:", lastErr);
+    }
+  }
+}
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
