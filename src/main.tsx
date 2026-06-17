@@ -30,14 +30,28 @@ const safeStorage = {
   }
 };
 
-// Interceptor Global de Requisições (Fetch) reconstruído de forma limpa
+// Descobre a URL base do ambiente de forma dinâmica
+const getBaseUrl = () => {
+  // Tenta pegar do ambiente do Vite ou usa a própria URL atual do navegador
+  const envUrl = (import.meta.env?.VITE_APP_URL || import.meta.env?.APP_URL);
+  if (envUrl) return envUrl.endsWith('/') ? envUrl.slice(0, -1) : envUrl;
+  return window.location.origin; 
+};
+
+const baseUrl = getBaseUrl();
+
+// Interceptor Global de Requisições (Fetch) Reconstruído e Blindado
 const originalFetch = window.fetch;
 window.fetch = async function (input: RequestInfo | URL, init?: RequestInit) {
-  // Pega a URL da chamada atual
-  const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+  let url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
   
-  // SE for uma rota de API (/api/) E NÃO for a rota de login (/api/auth/login)
-  const isApiCall = url && (url.includes('/api/')) && !url.includes('/api/auth/login');
+  // Se a rota for estritamente o login relativo, corrige a URL para o servidor correto
+  if (url === '/api/auth/login' || url.endsWith('/api/auth/login')) {
+    return originalFetch(`${baseUrl}/api/auth/login`, init);
+  }
+
+  // Verifica se é uma chamada de API
+  const isApiCall = url && (url.includes('/api/'));
 
   if (isApiCall) {
     const userStr = safeStorage.getItem('gbfleet_user');
@@ -45,26 +59,30 @@ window.fetch = async function (input: RequestInfo | URL, init?: RequestInit) {
     const impersonateId = safeStorage.getItem('gbfleet_impersonate');
 
     if (user && user.id) {
-      // Cria uma cópia segura das opções da requisição
       const newInit = init ? { ...init } : {};
       
-      // Usa o sistema nativo do navegador para manusear cabeçalhos sem dar erro de texto
+      // Usa a API nativa de Headers do navegador (Caminho 1 sugerido pela IA)
       const headers = newInit.headers instanceof Headers 
         ? newInit.headers 
         : new Headers(newInit.headers || {});
 
-      // Injeta as credenciais de segurança com segurança
       headers.set('x-user-id', String(user.id));
       if (impersonateId) {
         headers.set('x-impersonate-company-id', String(impersonateId));
       }
 
       newInit.headers = headers;
-      return originalFetch(input, newInit);
+      
+      // Se a URL for relativa (ex: /api/veiculos), anexa a URL base correta do Cloud Run / Local
+      if (url.startsWith('/api/')) {
+        url = `${baseUrl}${url}`;
+      }
+
+      return originalFetch(url, newInit);
     }
   }
 
-  // Se for a rota de login ou qualquer outra coisa, deixa passar direto sem mexer em nada
+  // Para qualquer outra rota que já venha com HTTP completo, deixa passar normal
   return originalFetch(input, init);
 };
 
