@@ -9,7 +9,7 @@ const safeStorage = {
     try {
       return localStorage.getItem(key);
     } catch (e) {
-      // Se a aba privada bloquear o localStorage, vai buscar aos Cookies (partilhado entre abas)
+      // Se a aba privada bloquear o localStorage, procura nos Cookies (partilhado entre abas)
       const nameEQ = key + "=";
       const ca = document.cookie.split(';');
       for (let i = 0; i < ca.length; i++) {
@@ -24,22 +24,38 @@ const safeStorage = {
     try {
       localStorage.setItem(key, value);
     } catch (e) {
-      // Se falhar, guarda num Cookie seguro para que todas as abas possam aceder
+      // Se falhar (aba privada), guarda num Cookie seguro para que todas as abas possam aceder
       document.cookie = `${key}=${encodeURIComponent(value)}; path=/; SameSite=Strict; Secure`;
     }
   }
 };
 
-// Global Fetch Interceptor to seamlessly handle multi-tenant authentication and Superadmin impersonation headers
+// Deteta de forma segura o endereço do backend vindo do .env do Vite
+const getBackendUrl = () => {
+  const envUrl = import.meta.env?.VITE_APP_URL;
+  if (envUrl) {
+    return envUrl.endsWith('/') ? envUrl.slice(0, -1) : envUrl;
+  }
+  // Se não encontrar o .env (como na Vercel), usa a própria origem atual
+  return window.location.origin;
+};
+
+const baseUrl = getBackendUrl();
+
+// Global Fetch Interceptor
 const originalFetch = window.fetch;
-const customFetch = async function (input: RequestInfo | URL, init?: RequestInit) {
-  const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+window.fetch = async function (input: RequestInfo | URL, init?: RequestInit) {
+  let url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
   
-  // Mantém a lógica original exata de validação de rotas do seu projeto
-  const isApiCall = url && (url.startsWith('/api/') || url.includes('/api/')) && !url.includes('/api/auth/login');
+  // Se a rota for relativa (ex: /api/auth/login), anexa a URL correta do servidor
+  if (url.startsWith('/api/')) {
+    url = `${baseUrl}${url}`;
+  }
+
+  // Mantém a lógica original de validação de rotas do seu projeto (ignora o login na injeção de headers)
+  const isApiCall = url && (url.includes('/api/')) && !url.includes('/api/auth/login');
 
   if (isApiCall) {
-    // Usa o safeStorage seguro (com suporte a Cookies para abas privadas)
     const userStr = safeStorage.getItem('gbfleet_user');
     const user = userStr ? JSON.parse(userStr) : null;
     const impersonateId = safeStorage.getItem('gbfleet_impersonate');
@@ -48,49 +64,22 @@ const customFetch = async function (input: RequestInfo | URL, init?: RequestInit
       const newInit = init ? { ...init } : {};
 
       // --- CAMINHO 1: Refatoração Segura utilizando a API nativa Headers ---
-      // Instancia ou copia de forma robusta um objeto Headers nativo do navegador para evitar erros de texto
       const headers = newInit.headers instanceof Headers 
         ? newInit.headers 
         : new Headers(newInit.headers || {});
 
-      // Define os dados de multi-tenant usando a interface segura do navegador
+      // Injeta as credenciais com segurança
       headers.set('x-user-id', String(user.id));
       if (impersonateId) {
         headers.set('x-impersonate-company-id', String(impersonateId));
       }
 
       newInit.headers = headers;
-      return originalFetch(input, newInit);
+      return originalFetch(url, newInit);
     }
   }
-  return originalFetch(input, init);
+  return originalFetch(url, init);
 };
-
-try {
-  // Try defining a getter, which bypasses read-only/writable restrictions on many sandbox wrappers
-  Object.defineProperty(window, 'fetch', {
-    configurable: true,
-    enumerable: true,
-    get: () => customFetch
-  });
-} catch (e) {
-  try {
-    // Attempt standard value definition
-    Object.defineProperty(window, 'fetch', {
-      configurable: true,
-      enumerable: true,
-      writable: true,
-      value: customFetch
-    });
-  } catch (err) {
-    try {
-      // Direct write as a last-resort fallback
-      (window as any).fetch = customFetch;
-    } catch (lastErr) {
-      console.error("Critical: Multi-tenant request interceptor could not be attached:", lastErr);
-    }
-  }
-}
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
