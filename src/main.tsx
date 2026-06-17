@@ -30,27 +30,23 @@ const safeStorage = {
   }
 };
 
-// Descobre a URL base do ambiente de forma dinâmica
-const getBaseUrl = () => {
-  // Tenta pegar do ambiente do Vite ou usa a própria URL atual do navegador
-  const envUrl = (import.meta.env?.VITE_APP_URL || import.meta.env?.APP_URL);
-  if (envUrl) return envUrl.endsWith('/') ? envUrl.slice(0, -1) : envUrl;
-  return window.location.origin; 
-};
+// --- CONFIGURAÇÃO FORÇADA E SEGURA PARA A ENTREGA ---
+// EXEMPLO: const baseUrl = 'https://meu-projeto.idxd.dev';
+const baseUrl = 'https://gbfleet.vercel.app/'.endsWith('/') 
+  ? 'https://gbfleet.vercel.app/'.slice(0, -1) 
+  : 'https://gbfleet.vercel.app/';
 
-const baseUrl = getBaseUrl();
-
-// Interceptor Global de Requisições (Fetch) Reconstruído e Blindado
+// Interceptor Global de Requisições (Fetch)
 const originalFetch = window.fetch;
 window.fetch = async function (input: RequestInfo | URL, init?: RequestInit) {
   let url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
   
-  // Se a rota for estritamente o login relativo, corrige a URL para o servidor correto
+  // Se a rota for o login relativo, força a URL completa do servidor real
   if (url === '/api/auth/login' || url.endsWith('/api/auth/login')) {
     return originalFetch(`${baseUrl}/api/auth/login`, init);
   }
 
-  // Verifica se é uma chamada de API
+  // Verifica se é uma chamada de API padrão
   const isApiCall = url && (url.includes('/api/'));
 
   if (isApiCall) {
@@ -61,7 +57,6 @@ window.fetch = async function (input: RequestInfo | URL, init?: RequestInit) {
     if (user && user.id) {
       const newInit = init ? { ...init } : {};
       
-      // Usa a API nativa de Headers do navegador (Caminho 1 sugerido pela IA)
       const headers = newInit.headers instanceof Headers 
         ? newInit.headers 
         : new Headers(newInit.headers || {});
@@ -73,7 +68,7 @@ window.fetch = async function (input: RequestInfo | URL, init?: RequestInit) {
 
       newInit.headers = headers;
       
-      // Se a URL for relativa (ex: /api/veiculos), anexa a URL base correta do Cloud Run / Local
+      // Se a URL for relativa (ex: /api/veiculos), anexa a URL base correta
       if (url.startsWith('/api/')) {
         url = `${baseUrl}${url}`;
       }
@@ -82,7 +77,6 @@ window.fetch = async function (input: RequestInfo | URL, init?: RequestInit) {
     }
   }
 
-  // Para qualquer outra rota que já venha com HTTP completo, deixa passar normal
   return originalFetch(input, init);
 };
 
