@@ -3,86 +3,70 @@ import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
 
-// Global Fetch Interceptor to seamlessly handle multi-tenant authentication and Superadmin impersonation headers
+// --- Proteção para funcionar em todas as abas (inclusive Privadas) ---
+const safeStorage = {
+  getItem: (key: string): string | null => {
+    try {
+      return localStorage.getItem(key);
+    } catch (e) {
+      // Se a aba privada bloquear o localStorage, busca nos Cookies (compartilhado entre abas)
+      const nameEQ = key + "=";
+      const ca = document.cookie.split(';');
+      for (let i = 0; i < ca.length; i++) {
+        let c = ca[i];
+        while (c.charAt(0) === ' ') c = c.substring(1, c.length);
+        if (c.indexOf(nameEQ) === 0) return decodeURIComponent(c.substring(nameEQ.length, c.length));
+      }
+      return null;
+    }
+  },
+  setItem: (key: string, value: string): void => {
+    try {
+      localStorage.setItem(key, value);
+    } catch (e) {
+      // Se falhar, salva em Cookie seguro para todas as abas acessarem
+      document.cookie = `${key}=${encodeURIComponent(value)}; path=/; SameSite=Strict; Secure`;
+    }
+  }
+};
+
+// Interceptor Global de Requisições (Fetch) reconstruído de forma limpa
 const originalFetch = window.fetch;
-const customFetch = async function (input: RequestInfo | URL, init?: RequestInit) {
+window.fetch = async function (input: RequestInfo | URL, init?: RequestInit) {
+  // Pega a URL da chamada atual
   const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
-  // Match relative path "/api/..." OR absolute path containing "/api/..."
-  const isApiCall = url && (url.startsWith('/api/') || url.includes('/api/')) && !url.includes('/api/auth/login');
+  
+  // SE for uma rota de API (/api/) E NÃO for a rota de login (/api/auth/login)
+  const isApiCall = url && (url.includes('/api/')) && !url.includes('/api/auth/login');
 
   if (isApiCall) {
-    const userStr = localStorage.getItem('gbfleet_user');
+    const userStr = safeStorage.getItem('gbfleet_user');
     const user = userStr ? JSON.parse(userStr) : null;
-    const impersonateId = localStorage.getItem('gbfleet_impersonate');
+    const impersonateId = safeStorage.getItem('gbfleet_impersonate');
 
     if (user && user.id) {
-      // Safely clone init options to prevent mutating a read-only options parameter
+      // Cria uma cópia segura das opções da requisição
       const newInit = init ? { ...init } : {};
-      const headersRecord: Record<string, string> = {};
+      
+      // Usa o sistema nativo do navegador para manusear cabeçalhos sem dar erro de texto
+      const headers = newInit.headers instanceof Headers 
+        ? newInit.headers 
+        : new Headers(newInit.headers || {});
 
-      // Copy existing headers safely to our plain record object
-      if (newInit.headers) {
-        if (newInit.headers instanceof Headers) {
-          try {
-            newInit.headers.forEach((value, name) => {
-              headersRecord[name] = value;
-            });
-          } catch (e) {
-            // Fallback for cross-realm / sandbox Headers object serialization
-          }
-        } else if (Array.isArray(newInit.headers)) {
-          newInit.headers.forEach(([name, value]) => {
-            if (name) {
-              headersRecord[name] = String(value);
-            }
-          });
-        } else if (typeof newInit.headers === 'object') {
-          Object.entries(newInit.headers).forEach(([name, value]) => {
-            if (name && value !== undefined && value !== null) {
-              headersRecord[name] = String(value);
-            }
-          });
-        }
-      }
-
-      // Add our multi-tenant credentials safely as plain strings
-      headersRecord['x-user-id'] = String(user.id);
+      // Injeta as credenciais de segurança com segurança
+      headers.set('x-user-id', String(user.id));
       if (impersonateId) {
-        headersRecord['x-impersonate-company-id'] = String(impersonateId);
+        headers.set('x-impersonate-company-id', String(impersonateId));
       }
 
-      newInit.headers = headersRecord;
+      newInit.headers = headers;
       return originalFetch(input, newInit);
     }
   }
+
+  // Se for a rota de login ou qualquer outra coisa, deixa passar direto sem mexer em nada
   return originalFetch(input, init);
 };
-
-try {
-  // Try defining a getter, which bypasses read-only/writable restrictions on many sandbox wrappers
-  Object.defineProperty(window, 'fetch', {
-    configurable: true,
-    enumerable: true,
-    get: () => customFetch
-  });
-} catch (e) {
-  try {
-    // Attempt standard value definition
-    Object.defineProperty(window, 'fetch', {
-      configurable: true,
-      enumerable: true,
-      writable: true,
-      value: customFetch
-    });
-  } catch (err) {
-    try {
-      // Direct write as a last-resort fallback
-      (window as any).fetch = customFetch;
-    } catch (lastErr) {
-      console.error("Critical: Multi-tenant request interceptor could not be attached:", lastErr);
-    }
-  }
-}
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
