@@ -196,7 +196,38 @@ async function startServer() {
       userMigrated = true;
     }
 
-    if (userMigrated) {
+    // Ensure company multi-tenant trial fields are present
+    let companiesMigrated = false;
+    if (db.companies) {
+      db.companies.forEach((c: any) => {
+        if (c.status === undefined) {
+          c.status = "ativo";
+          companiesMigrated = true;
+        }
+        if (c.pago === undefined) {
+          c.pago = (c.id === "comp_1" || c.id === "comp_superadmin");
+          companiesMigrated = true;
+        }
+        if (c.trialDays === undefined) {
+          c.trialDays = 30;
+          companiesMigrated = true;
+        }
+        if (c.supportCode === undefined) {
+          c.supportCode = null;
+          companiesMigrated = true;
+        }
+        if (c.supportCodeCreatedAt === undefined) {
+          c.supportCodeCreatedAt = null;
+          companiesMigrated = true;
+        }
+        if (c.supportAuthorizedUntil === undefined) {
+          c.supportAuthorizedUntil = null;
+          companiesMigrated = true;
+        }
+      });
+    }
+
+    if (userMigrated || companiesMigrated) {
       fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
     }
 
@@ -239,7 +270,18 @@ async function startServer() {
     // Support Context Switching / Impersonation for Superadmin users
     if (user.role === "superadmin") {
       const impersonatedCompId = req.headers["x-impersonate-company-id"] as string;
-      if (impersonatedCompId) {
+      if (impersonatedCompId && impersonatedCompId !== "comp_superadmin") {
+        // Enforce support code authorization if changing tenant (unless it is comp_1 for demo/debugging/previews)
+        if (impersonatedCompId !== "comp_1") {
+          const compMatch = db.companies.find((c: any) => c.id === impersonatedCompId);
+          const nowStr = new Date().toISOString();
+          if (!compMatch || !compMatch.supportAuthorizedUntil || nowStr > compMatch.supportAuthorizedUntil) {
+            return res.status(403).json({ 
+              error: "Acesso de suporte expirado ou não autorizado. Favor solicitar um código de acesso ao cliente.",
+              supportCodeRequired: true 
+            });
+          }
+        }
         (req as any).companyId = impersonatedCompId;
       } else {
         (req as any).companyId = user.companyId;
@@ -318,6 +360,40 @@ async function startServer() {
 
     const targetCompanyId = currentCompany?.id || companyId;
 
+    // Check block status if not superadmin (or if not impersonating)
+    let isBlocked = false;
+    let daysRemaining = 30;
+    if (currentCompany && user.role !== "superadmin") {
+      const created = new Date(currentCompany.createdAt || new Date());
+      const now = new Date();
+      const elapsedDays = Math.floor((now.getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
+      daysRemaining = Math.max(0, (currentCompany.trialDays || 30) - elapsedDays);
+
+      if (currentCompany.status === "inativo" || (!currentCompany.pago && daysRemaining <= 0)) {
+        isBlocked = true;
+      }
+    }
+
+    if (isBlocked) {
+      return res.json({
+        blocked: true,
+        currentUser: user,
+        company: currentCompany,
+        daysRemaining: daysRemaining,
+        trucks: [],
+        drivers: [],
+        fuel_logs: [],
+        expenses: [],
+        cash_flow: [],
+        freights: [],
+        maintenance_alerts: [],
+        routes: [],
+        categories_entrada: [],
+        categories_saida: [],
+        chat_logs: []
+      });
+    }
+
     // Filter all arrays by companyId context
     const filteredTrucks = db.trucks.filter((t: any) => t.companyId === targetCompanyId);
     const filteredDrivers = db.drivers.filter((d: any) => d.companyId === targetCompanyId);
@@ -382,6 +458,7 @@ async function startServer() {
         const driverCount = db.drivers.filter((d: any) => d.companyId === c.id).length;
         const freightCount = db.freights.filter((f: any) => f.companyId === c.id).length;
         const userCount = db.users.filter((u: any) => u.companyId === c.id).length;
+        const mainUser = db.users.find((u: any) => u.companyId === c.id && u.role === "admin");
         
         // Sum revenue & expense for that company
         const entries = db.cash_flow
@@ -391,13 +468,24 @@ async function startServer() {
           .filter((cf: any) => cf.companyId === c.id && cf.tipo === "saida")
           .reduce((sum: number, cf: any) => sum + (Number(cf.valor) || 0), 0);
 
+        const created = new Date(c.createdAt || new Date());
+        const now = new Date();
+        const elapsedDays = Math.floor((now.getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
+        const daysRemaining = Math.max(0, (c.trialDays || 30) - elapsedDays);
+
         return {
           ...c,
           truckCount,
           driverCount,
           freightCount,
           userCount,
-          balance: entries - egress
+          balance: entries - egress,
+          daysRemaining,
+          adminUser: mainUser ? {
+            id: mainUser.id,
+            nome: mainUser.nome,
+            email: mainUser.email
+          } : null
         };
       });
 
@@ -427,6 +515,12 @@ async function startServer() {
       nome,
       plano: plano || "Pro",
       createdAt: new Date().toISOString(),
+      status: "ativo",
+      pago: false,
+      trialDays: 30,
+      supportCode: null,
+      supportCodeCreatedAt: null,
+      supportAuthorizedUntil: null,
       categories_entrada: [...db.categories_entrada],
       categories_saida: [...db.categories_saida]
     };
@@ -454,7 +548,7 @@ async function startServer() {
     }
 
     const { id } = req.params;
-    const { plano, nome } = req.body;
+    const { plano, nome, status, pago, trialDays, createdAt, adminNome, adminEmail, adminPassword } = req.body;
 
     const db = readDB();
     const idx = db.companies.findIndex((c: any) => c.id === id);
@@ -462,11 +556,100 @@ async function startServer() {
       return res.status(404).json({ error: "Empresa não encontrada." });
     }
 
-    if (plano) db.companies[idx].plano = plano;
-    if (nome) db.companies[idx].nome = nome;
+    if (plano !== undefined) db.companies[idx].plano = plano;
+    if (nome !== undefined) db.companies[idx].nome = nome;
+    if (status !== undefined) db.companies[idx].status = status;
+    if (pago !== undefined) db.companies[idx].pago = !!pago;
+    if (trialDays !== undefined) db.companies[idx].trialDays = Number(trialDays);
+    if (createdAt !== undefined) db.companies[idx].createdAt = createdAt;
+
+    // Associated Admin user edit (dados cadastrais e redefinição de senha)
+    const companyAdmin = db.users.find((u: any) => u.companyId === id && u.role === "admin");
+    if (companyAdmin) {
+      if (adminNome !== undefined && adminNome.trim() !== "") {
+        companyAdmin.nome = adminNome.trim();
+      }
+      if (adminEmail !== undefined && adminEmail.trim() !== "") {
+        const emailClean = adminEmail.toLowerCase().trim();
+        if (emailClean !== companyAdmin.email?.toLowerCase().trim()) {
+          const emailExists = db.users.some((u: any) => u.email?.toLowerCase() === emailClean && u.id !== companyAdmin.id);
+          if (emailExists) {
+            return res.status(400).json({ error: "O e-mail fornecido já está em uso por outro usuário." });
+          }
+          companyAdmin.email = emailClean;
+        }
+      }
+      if (adminPassword !== undefined && adminPassword.trim() !== "") {
+        companyAdmin.password = adminPassword.trim();
+      }
+    }
 
     writeDB(db);
     res.json({ success: true, company: db.companies[idx] });
+  });
+
+  // Verify and Authorize support access for Super Admin
+  app.post("/api/superadmin/verify-support-code", (req, res) => {
+    const user = (req as any).user;
+    if (user.role !== "superadmin") {
+      return res.status(403).json({ error: "Acesso reservado ao Administrador Master." });
+    }
+
+    const { companyId, code } = req.body;
+    if (!companyId || !code) {
+      return res.status(400).json({ error: "Parâmetros inválidos." });
+    }
+
+    const db = readDB();
+    const idx = db.companies.findIndex((c: any) => c.id === companyId);
+    if (idx === -1) {
+      return res.status(404).json({ error: "Empresa não localizada." });
+    }
+
+    const company = db.companies[idx];
+    const cleanCodeInput = String(code).trim().toUpperCase();
+    const cleanSupportCode = company.supportCode ? String(company.supportCode).trim().toUpperCase() : "";
+
+    // Allow special admin master testing bypass for demo simplicity or direct matching
+    if (cleanCodeInput !== "" && cleanSupportCode === cleanCodeInput) {
+      // Authorize access for 2 hours
+      db.companies[idx].supportAuthorizedUntil = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+      db.companies[idx].supportCode = null; // single-use burn
+      
+      writeDB(db);
+      return res.json({ success: true, authorizedUntil: db.companies[idx].supportAuthorizedUntil });
+    }
+
+    return res.status(400).json({ error: "Código de suporte incorreto ou expirado." });
+  });
+
+  // Generate support access code for business users
+  app.post("/api/support/generate", (req, res) => {
+    const companyId = (req as any).companyId;
+    if (!companyId) {
+      return res.status(400).json({ error: "Identificação da empresa indisponível." });
+    }
+
+    const db = readDB();
+    const idx = db.companies.findIndex((c: any) => c.id === companyId);
+    if (idx === -1) {
+      return res.status(404).json({ error: "Empresa não encontrada." });
+    }
+
+    // Generate neat 6 character authorization code
+    const keys = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // readable without confusing chars like O/0/1/I
+    let code = "GB-";
+    for (let i = 0; i < 4; i++) {
+      code += keys.charAt(Math.floor(Math.random() * keys.length));
+    }
+
+    db.companies[idx].supportCode = code;
+    db.companies[idx].supportCodeCreatedAt = new Date().toISOString();
+    // Reset authorization immediately since new code was generated to revoke older authsessions
+    db.companies[idx].supportAuthorizedUntil = null;
+
+    writeDB(db);
+    res.json({ success: true, supportCode: code });
   });
 
   app.delete("/api/superadmin/companies/:id", (req, res) => {

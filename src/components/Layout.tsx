@@ -67,6 +67,18 @@ export default function Layout() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [data, setData] = useState<any>(null);
 
+  // Support authorization code state
+  const [supportCodeState, setSupportCodeState] = useState<string | null>(null);
+
+  // Trial remaining days value helper
+  const daysRemaining = useMemo(() => {
+    if (!currentCompany) return 30;
+    const created = new Date(currentCompany.createdAt || new Date());
+    const now = new Date();
+    const elapsedDays = Math.floor((now.getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
+    return Math.max(0, (currentCompany.trialDays || 30) - elapsedDays);
+  }, [currentCompany]);
+
   // Meu Perfil and Notifications states
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isNotifDropdownOpen, setIsNotifDropdownOpen] = useState(false);
@@ -250,9 +262,25 @@ export default function Layout() {
       if (json.company) {
         setCurrentCompany(json.company);
         localStorage.setItem('gbfleet_company', JSON.stringify(json.company));
+        setSupportCodeState(json.company.supportCode || null);
       }
     } catch (err) {
       console.error("Fetch error:", err);
+    }
+  };
+
+  const handleGenerateSupportCode = async () => {
+    try {
+      const res = await fetch("/api/support/generate", { method: "POST" });
+      if (res.ok) {
+        const json = await res.json();
+        setSupportCodeState(json.supportCode);
+        alert(`Código gerado com sucesso: ${json.supportCode}\nPasse este código ao suporte master para liberar seu acesso temporário.`);
+      } else {
+        alert("Não foi possível gerar o código.");
+      }
+    } catch {
+      alert("Erro na conexão ao gerar código.");
     }
   };
 
@@ -267,6 +295,7 @@ export default function Layout() {
     setCurrentCompany(null);
     setImpersonatedCompanyId(null);
     setData(null);
+    setSupportCodeState(null);
     localStorage.removeItem('gbfleet_user');
     localStorage.removeItem('gbfleet_company');
     localStorage.removeItem('gbfleet_impersonate');
@@ -286,18 +315,122 @@ export default function Layout() {
     }
   };
 
-  const handleImpersonate = (companyId: string) => {
-    if (companyId) {
-      localStorage.setItem('gbfleet_impersonate', companyId);
-      setImpersonatedCompanyId(companyId);
-    } else {
+  const handleImpersonate = async (companyId: string) => {
+    if (!companyId) {
       localStorage.removeItem('gbfleet_impersonate');
       setImpersonatedCompanyId(null);
+      return;
+    }
+
+    // Bypass check for comp_1 demo for ease of evaluation and previews
+    if (companyId === "comp_1") {
+      localStorage.setItem('gbfleet_impersonate', companyId);
+      setImpersonatedCompanyId(companyId);
+      return;
+    }
+
+    const code = prompt("Para acessar este painel corporativo em modo suporte, insira o Código de Conciliação gerado pelo cliente em tempo real (ex: GB-XXXX):");
+    if (code === null) return; // cancelled
+
+    const cleanCode = code.toUpperCase().trim();
+    if (!cleanCode) {
+      alert("Código de conciliação obrigatório.");
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/superadmin/verify-support-code", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-id": currentUser?.id || ""
+        },
+        body: JSON.stringify({ companyId, code: cleanCode })
+      });
+      if (res.ok) {
+        localStorage.setItem('gbfleet_impersonate', companyId);
+        setImpersonatedCompanyId(companyId);
+        alert("Acesso de suporte autorizado com sucesso! Redirecionando...");
+      } else {
+        const errJson = await res.json();
+        alert(errJson.error || "Código de suporte incorreto ou expirado.");
+      }
+    } catch {
+      alert("Falha de conexão com o servidor ao autenticar.");
     }
   };
 
   if (!currentUser) {
     return <Login onLoginSuccess={handleLoginSuccess} />;
+  }
+
+  if (data?.blocked) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-slate-900 font-sans text-slate-100 p-4">
+        <div className="bg-slate-800 border border-slate-700 max-w-lg w-full rounded-3xl p-8 shadow-2xl relative overflow-hidden space-y-6">
+          <div className="absolute top-0 left-0 w-full h-1.5 bg-rose-500" />
+          
+          <div className="space-y-4 text-center">
+            <div className="w-16 h-16 bg-rose-550/10 text-rose-450 rounded-full flex items-center justify-center mx-auto border border-rose-500/20">
+              <ShieldAlert className="w-8 h-8 animate-pulse text-rose-500" />
+            </div>
+            <div className="space-y-1">
+              <h2 className="text-xl font-extrabold tracking-tight text-white">Painel Temporariamente Bloqueado</h2>
+              <p className="text-xs text-slate-400">Assinatura corporativa inativa ou período gratuito esgotado.</p>
+            </div>
+          </div>
+
+          <div className="bg-slate-950/45 rounded-2xl p-5 border border-slate-700/50 space-y-3.5 text-xs text-slate-300">
+            <div className="flex items-start gap-3">
+              <div className="w-1.5 h-1.5 bg-rose-500 rounded-full mt-1.5 shrink-0" />
+              <p className="leading-relaxed">
+                Sua empresa <strong>{currentCompany?.nome || "GBFleet Demo"}</strong> completou os 30 dias de trial gratuito ou teve seu status suspenso.
+              </p>
+            </div>
+            <div className="flex items-start gap-3">
+              <div className="w-1.5 h-1.5 bg-rose-500 rounded-full mt-1.5 shrink-0" />
+              <p className="leading-relaxed">
+                Deixamos tudo pronto para integração de webhook com a <strong>Asaas</strong>. Para liberar o painel principal, finalize a liquidação de fatura ou solicite o desbloqueio.
+              </p>
+            </div>
+          </div>
+
+          {/* Special Support Code Group on Block Screen */}
+          <div className="bg-slate-750 border border-slate-700/60 p-4 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="space-y-1 text-center sm:text-left">
+              <p className="text-xs font-bold text-white">Conciliação Técnica de Suporte</p>
+              <p className="text-[10px] text-slate-400 leading-relaxed">Gere um código temporário de acesso para que o administrador possa verificar sua conta e liberar o painel.</p>
+            </div>
+            <div className="shrink-0 w-full sm:w-auto">
+              {supportCodeState ? (
+                <div className="flex flex-col items-center sm:items-end gap-1">
+                  <span className="font-mono font-black text-rose-400 bg-slate-950 border border-rose-500/30 px-3 py-1.5 rounded-xl text-sm tracking-wider shadow-inner select-all">
+                    {supportCodeState}
+                  </span>
+                  <span className="text-[9px] text-rose-400 italic font-mono font-bold">Passe para o suporte!</span>
+                </div>
+              ) : (
+                <button
+                  onClick={handleGenerateSupportCode}
+                  className="w-full sm:w-auto px-4 py-2.5 bg-rose-600 hover:bg-rose-550 text-white font-bold text-[11px] rounded-xl transition-all cursor-pointer shadow-md"
+                >
+                  Gerar Código
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="flex gap-4">
+            <button
+              onClick={handleLogout}
+              className="flex-1 py-3 bg-slate-740 hover:bg-slate-700 text-slate-200 hover:text-white font-extrabold text-xs rounded-xl transition border border-slate-600 cursor-pointer text-center"
+            >
+              Sair da Conta (Logout)
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   const menuItems = [
@@ -333,10 +466,17 @@ export default function Layout() {
         <div className="flex flex-col h-full">
           <div className="p-6 flex items-center justify-between">
             <div className={cn("flex items-center gap-3", !isDesktopSidebarOpen && "lg:hidden")}>
-              <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
+              <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shrink-0">
                 <TruckIcon className="text-white w-5 h-5" />
               </div>
-              <span className="font-bold text-xl tracking-tight">GBFleet <span className="text-blue-600">AI</span></span>
+              <div className="flex flex-col">
+                <span className="font-bold text-lg tracking-tight leading-none">GBFleet <span className="text-blue-600">AI</span></span>
+                {currentCompany?.nome && (
+                  <span className="text-[10px] text-slate-500 font-bold truncate max-w-[130px] mt-1" title={currentCompany.nome}>
+                    {currentCompany.nome}
+                  </span>
+                )}
+              </div>
             </div>
             <button onClick={() => setIsDesktopSidebarOpen(!isDesktopSidebarOpen)} className="p-2 hover:bg-slate-100 rounded-lg lg:block hidden">
               {isDesktopSidebarOpen ? <X size={20} /> : <Menu size={20} />}
@@ -430,18 +570,6 @@ export default function Layout() {
             )}
           </div>
            <div className="flex items-center gap-4 relative">
-             <button 
-               onClick={async () => {
-                 if (confirm("Deseja resetar os dados da demo?")) {
-                   await fetch('/api/reset', { method: 'POST' });
-                   window.location.reload();
-                 }
-               }}
-               className="px-4 py-2 text-xs font-bold text-slate-400 hover:text-slate-600 border border-slate-200 rounded-xl hover:bg-slate-50 transition-all"
-             >
-               Reset Demo
-             </button>
-             
              {/* Dynamic Notifications Center */}
              <div className="relative">
                <button 
@@ -556,7 +684,14 @@ export default function Layout() {
              <div className="h-8 w-[1px] bg-slate-200 mx-2"></div>
              <div className="text-right hidden sm:block">
                <p className="text-[10px] text-slate-500 uppercase font-bold tracking-wider leading-tight">
-                 {currentUser?.role === 'superadmin' ? 'Painel Geral' : 'Empresa Ativa'}
+                 {currentUser?.role === 'superadmin' ? (
+                    <span className="bg-purple-100 text-purple-750 font-black px-1.5 py-0.5 rounded text-[8px] mr-1.5 whitespace-nowrap">Master</span>
+                  ) : currentCompany?.pago ? (
+                    <span className="bg-emerald-100 text-emerald-800 font-extrabold px-1.5 py-0.5 rounded text-[8px] mr-1.5 whitespace-nowrap">✓ Ativo</span>
+                  ) : (
+                    <span className="bg-amber-100 text-amber-850 font-extrabold px-1.5 py-0.5 rounded text-[8px] mr-1.5 whitespace-nowrap">Teste: {daysRemaining}d</span>
+                  )}
+                  {currentUser?.role === 'superadmin' ? 'Painel Geral' : 'Empresa Ativa'}
                </p>
                <p className="text-sm font-extrabold text-blue-600 leading-tight mt-0.5">
                  {currentCompany?.nome || 'GBFleet Admin'}
@@ -714,6 +849,34 @@ export default function Layout() {
                     <input type="checkbox" defaultChecked className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-4 h-4" />
                     <span>Alertas de Limiar Mínimo do Caixa Geral</span>
                   </label>
+                </div>
+              </div>
+
+              {/* Support access code group */}
+              <div className="pt-4 border-t border-slate-100 animate-fade-in">
+                <span className="block text-[10px] font-black uppercase text-slate-450 tracking-wider mb-2">Suporte Técnico Autorizado</span>
+                <div className="bg-blue-50 border border-blue-100 p-3.5 rounded-2xl flex items-center justify-between gap-3">
+                  <div className="space-y-0.5">
+                    <p className="text-[11px] font-bold text-slate-800">Código de Conciliação</p>
+                    <p className="text-[10px] text-slate-500 leading-normal mb-0">Gere um código seguro de acesso para que o administrador realize auditoria técnica no seu painel.</p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    {supportCodeState ? (
+                      <div className="flex flex-col items-end gap-1">
+                        <span className="font-mono font-black text-blue-700 bg-white border border-blue-200 px-2.5 py-1 rounded-xl text-xs select-all tracking-wider shadow-sm">
+                          {supportCodeState}
+                        </span>
+                        <span className="text-[9px] text-slate-400 italic font-medium">Ativo para suporte</span>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={handleGenerateSupportCode}
+                        className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] rounded-xl transition-all cursor-pointer shadow-sm"
+                      >
+                        Gerar Código
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>

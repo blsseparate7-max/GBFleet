@@ -27,6 +27,16 @@ interface CompanyMeta {
   freightCount: number;
   userCount: number;
   balance: number;
+  status: string;
+  pago: boolean;
+  trialDays: number;
+  daysRemaining: number;
+  supportCode: string | null;
+  adminUser?: {
+    id: string;
+    nome: string;
+    email: string;
+  } | null;
 }
 
 interface SaaSAdminProps {
@@ -48,6 +58,19 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
   const [adminEmail, setAdminEmail] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+
+  // Edit Subscription Modal States
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [selectedCompany, setSelectedCompany] = useState<CompanyMeta | null>(null);
+  const [editNome, setEditNome] = useState("");
+  const [editPlano, setEditPlano] = useState("Pro");
+  const [editStatus, setEditStatus] = useState("ativo");
+  const [editPago, setEditPago] = useState(false);
+  const [editTrialDays, setEditTrialDays] = useState(30);
+  const [editCreatedAt, setEditCreatedAt] = useState("");
+  const [editAdminNome, setEditAdminNome] = useState("");
+  const [editAdminEmail, setEditAdminEmail] = useState("");
+  const [editAdminPassword, setEditAdminPassword] = useState("");
 
   const fetchCompanies = async () => {
     setIsLoading(true);
@@ -169,6 +192,65 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
     }
   };
 
+  const handleOpenEditModal = (company: CompanyMeta) => {
+    setSelectedCompany(company);
+    setEditNome(company.nome);
+    setEditPlano(company.plano);
+    setEditStatus(company.status || "ativo");
+    setEditPago(!!company.pago);
+    setEditTrialDays(company.trialDays !== undefined ? company.trialDays : 30);
+    setEditCreatedAt(company.createdAt ? company.createdAt.substring(0, 10) : new Date().toISOString().substring(0, 10));
+    setEditAdminNome(company.adminUser?.nome || "");
+    setEditAdminEmail(company.adminUser?.email || "");
+    setEditAdminPassword("");
+    setIsEditModalOpen(true);
+  };
+
+  const handleUpdateCompanySubscription = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedCompany) return;
+
+    try {
+      let isoCreatedAt = selectedCompany.createdAt;
+      if (editCreatedAt) {
+        isoCreatedAt = new Date(editCreatedAt + "T12:00:00.000Z").toISOString();
+      }
+
+      const res = await fetch(`/api/superadmin/companies/${selectedCompany.id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-id": currentUserId,
+        },
+        body: JSON.stringify({
+          nome: editNome,
+          plano: editPlano,
+          status: editStatus,
+          pago: editPago,
+          trialDays: Number(editTrialDays),
+          createdAt: isoCreatedAt,
+          adminNome: editAdminNome,
+          adminEmail: editAdminEmail,
+          adminPassword: editAdminPassword
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Erro ao atualizar assinatura.");
+      }
+
+      setSuccessMsg(`Sucesso: Cadastro e assinatura de "${editNome}" atualizados!`);
+      setIsEditModalOpen(false);
+      setSelectedCompany(null);
+      fetchCompanies();
+      setTimeout(() => setSuccessMsg(null), 4000);
+    } catch (err: any) {
+      console.error(err);
+      alert(err.message || "Não foi possível atualizar os limites comerciais.");
+    }
+  };
+
   // Aggregated System Metrics
   const totalCompanies = companies.length;
   const totalTrucks = companies.reduce((sum, c) => sum + c.truckCount, 0);
@@ -205,7 +287,7 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
       )}
 
       {/* Grid of System-wide Metrics */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
         <div className="bg-white border border-slate-200/80 p-6 rounded-2xl shadow-sm space-y-4">
           <div className="flex justify-between items-start">
             <span className="text-xs text-slate-500 font-bold uppercase tracking-wider">Empresas Ativas</span>
@@ -242,21 +324,6 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
           <div>
             <h3 className="text-2xl font-extrabold text-slate-900">{totalDrivers}</h3>
             <p className="text-xs text-slate-500 mt-1">Motoristas cadastrados no SaaS</p>
-          </div>
-        </div>
-
-        <div className="bg-white border border-slate-200/80 p-6 rounded-2xl shadow-sm space-y-4">
-          <div className="flex justify-between items-start">
-            <span className="text-xs text-slate-500 font-bold uppercase tracking-wider">Vendas e Operações</span>
-            <div className="p-2 bg-pink-50 text-pink-600 rounded-xl">
-              <TrendingUp size={18} />
-            </div>
-          </div>
-          <div>
-            <h3 className="text-2xl font-extrabold text-slate-900">
-              {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(totalConsolidatedBalance)}
-            </h3>
-            <p className="text-xs text-slate-500 mt-1">Somas financeiras em trânsito</p>
           </div>
         </div>
       </div>
@@ -297,7 +364,6 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
                   <th className="py-4 px-6">Frota Ativa</th>
                   <th className="py-4 px-6">Motoristas</th>
                   <th className="py-4 px-6">Lançamentos / Fretes</th>
-                  <th className="py-4 px-6">Balanço Financeiro</th>
                   <th className="py-4 px-6">Data de Criação</th>
                   <th className="py-4 px-6 text-right">Suporte & Controles</th>
                 </tr>
@@ -323,9 +389,18 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
                             <span className="font-bold text-slate-900 text-sm block">
                               {company.nome}
                             </span>
-                            <span className="text-[10px] text-slate-500 font-mono block">
-                              ID: {company.id}
-                            </span>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <span className="text-[10px] text-slate-400 font-mono">
+                                ID: {company.id}
+                              </span>
+                              {company.status === "inativo" ? (
+                                <span className="bg-rose-50 text-rose-600 px-1.5 py-0.5 rounded text-[8px] font-black uppercase">SVA / Inativo</span>
+                              ) : company.pago ? (
+                                <span className="bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded text-[8px] font-black uppercase">✓ Liberado</span>
+                              ) : (
+                                <span className="bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded text-[8px] font-black uppercase">Teste: {company.daysRemaining}d</span>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </td>
@@ -353,18 +428,19 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
                       <td className="py-4 px-6 text-slate-500">
                         {company.freightCount} fretes ({company.userCount} usuário)
                       </td>
-                      <td className="py-4 px-6 font-bold text-slate-900">
-                        <span className={cn(
-                          company.balance >= 0 ? "text-emerald-700" : "text-rose-600"
-                        )}>
-                          {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(company.balance)}
-                        </span>
-                      </td>
                       <td className="py-4 px-6 text-slate-500">
                         {new Date(company.createdAt).toLocaleDateString('pt-BR')}
                       </td>
                       <td className="py-4 px-6 text-right">
                         <div className="flex items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEditModal(company)}
+                            className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[11px] rounded-xl transition border border-transparent hover:border-slate-300 flex items-center gap-1 cursor-pointer"
+                            title="Gerenciar período de teste, pagamentos e bloqueios"
+                          >
+                            <span>Assinatura</span>
+                          </button>
                           <button
                             type="button"
                             onClick={() => onImpersonate(company.id)}
@@ -400,8 +476,8 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
       {/* Modal - Create Company */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm">
-          <div className="bg-white rounded-3xl w-full max-w-xl shadow-2xl overflow-hidden border border-slate-200">
-            <div className="p-6 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
+          <div className="bg-white rounded-3xl w-full max-w-xl shadow-2xl overflow-hidden border border-slate-200 max-h-[90vh] flex flex-col">
+            <div className="p-6 bg-slate-50 border-b border-slate-100 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center">
                   <Building className="text-white w-5 h-5" />
@@ -419,7 +495,7 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
               </button>
             </div>
 
-            <form onSubmit={handleCreateCompany} className="p-6 space-y-4">
+            <form onSubmit={handleCreateCompany} className="p-6 space-y-4 overflow-y-auto flex-1">
               {/* Seção Dados da Empresa */}
               <div>
                 <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-3">1. Dados da Transportadora</h4>
@@ -506,6 +582,208 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
                   className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-blue-100 cursor-pointer"
                 >
                   Ativar Cliente
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {/* Modal - Edit Subscription */}
+      {isEditModalOpen && selectedCompany && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl w-full max-w-xl shadow-2xl overflow-hidden border border-slate-200 animate-fade-in max-h-[90vh] flex flex-col">
+            <div className="p-6 bg-slate-50 border-b border-slate-100 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-slate-100 text-blue-600 rounded-xl flex items-center justify-center border border-slate-200">
+                  <CreditCard className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-slate-900 text-base">Controle de Assinatura & Tempo</h3>
+                  <p className="text-[11px] text-slate-500">Soberania completa sobre prazos, faturas e status de <strong>{selectedCompany.nome}</strong></p>
+                </div>
+              </div>
+              <button 
+                onClick={() => {
+                  setIsEditModalOpen(false);
+                  setSelectedCompany(null);
+                }}
+                className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-500 cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateCompanySubscription} className="p-6 space-y-5 overflow-y-auto flex-1">
+              
+              {/* Seção Dados Básicos e Comercial */}
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold text-slate-600 block">Razão Social / Nome Fantasia</label>
+                    <input
+                      type="text"
+                      required
+                      value={editNome}
+                      onChange={(e) => setEditNome(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-semibold"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold text-slate-600 block">Plano de Assinatura</label>
+                    <select
+                      value={editPlano}
+                      onChange={(e) => setEditPlano(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-bold"
+                    >
+                      <option value="Basic">Basic (Até 3 cam.)</option>
+                      <option value="Pro">Pro (Até 15 cam.)</option>
+                      <option value="Enterprise">Enterprise (Ilimit.)</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Seção Autonomia Comercial: Dias de Trial / Pago / Status */}
+                <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200/60 space-y-4">
+                  <h4 className="text-[10px] font-black uppercase tracking-wider text-slate-450">Parâmetros Ativos de Liberação</h4>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Status da Conta: Ativo ou Inativo (Bloqueia o painel geral de acesso) */}
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-bold text-slate-600 block">Status da Conta</label>
+                      <select
+                        value={editStatus}
+                        onChange={(e) => setEditStatus(e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-bold"
+                      >
+                        <option value="ativo">Ativo (Acesso autorizado)</option>
+                        <option value="inativo">Inativo / Bloqueado (Impede login e navegação)</option>
+                      </select>
+                    </div>
+
+                    {/* Pago ou Não Pago: Se falso, calcula daysRemaining e bloqueia após expirar */}
+                    <div className="space-y-2">
+                      <label className="text-[11px] font-bold text-slate-600 block">Status de Faturamento (Asaas)</label>
+                      <label className="flex items-center gap-2.5 bg-white border border-slate-200 p-2.5 rounded-xl cursor-pointer select-none">
+                        <input 
+                          type="checkbox" 
+                          checked={editPago}
+                          onChange={(e) => setEditPago(e.target.checked)}
+                          className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 w-4.5 h-4.5" 
+                        />
+                        <div className="text-left leading-tight">
+                          <p className="text-xs font-bold text-slate-800">Liberado / Pago</p>
+                          <p className="text-[9px] text-slate-400">Ignora limite de tempo de teste</p>
+                        </div>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-slate-200/60">
+                    {/* Trial dias de teste */}
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-bold text-slate-600 block">Período de Testes (Dias)</label>
+                      <div className="relative">
+                        <input
+                          type="number"
+                          required
+                          min="0"
+                          max="365"
+                          value={editTrialDays}
+                          onChange={(e) => setEditTrialDays(Number(e.target.value))}
+                          className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-bold font-mono"
+                        />
+                        <span className="absolute right-3 top-2 text-[10px] uppercase font-bold text-slate-400">Dias</span>
+                      </div>
+                    </div>
+
+                    {/* CreatedAt to simulate/adjust start date */}
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-bold text-slate-600 block">Data de Adesão / Início</label>
+                      <input
+                        type="date"
+                        required
+                        value={editCreatedAt}
+                        onChange={(e) => setEditCreatedAt(e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-bold font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="text-[10px] text-slate-400 italic leading-relaxed pt-1 flex items-start gap-1">
+                    <span className="text-rose-500 font-bold">*</span>
+                    <p>Caso o faturamento esteja como "Aguardando pagamento" (não marcado como Liberado), o painel verificará se a data de adesão somada aos dias de teste é maior que o dia de hoje para autorizar ou bloquear o painel principal.</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Seção Gestor / Cadastro do Cliente */}
+              <div className="p-4 bg-blue-50/20 rounded-2xl border border-blue-100/50 space-y-3">
+                <h4 className="text-[10px] font-black uppercase tracking-wider text-blue-700 flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
+                  Dados Cadastrais do Gestor (Admin)
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold text-slate-600 block">Nome do Gestor</label>
+                    <input
+                      type="text"
+                      value={editAdminNome}
+                      onChange={(e) => setEditAdminNome(e.target.value)}
+                      className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-semibold"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-bold text-slate-600 block">E-mail Comercial (Login)</label>
+                    <input
+                      type="email"
+                      value={editAdminEmail}
+                      onChange={(e) => setEditAdminEmail(e.target.value)}
+                      className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-semibold font-mono"
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1.5 pt-1.5">
+                  <label className="text-[11px] font-bold text-slate-600 block">Alterar Senha do Cliente</label>
+                  <input
+                    type="password"
+                    placeholder="Deixe em branco para manter a senha atual"
+                    value={editAdminPassword}
+                    onChange={(e) => setEditAdminPassword(e.target.value)}
+                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-semibold"
+                  />
+                  <p className="text-[9px] text-slate-400">A senha é mantida oculta por privacidade. Preencha acima se desejar definir uma nova senha para este gestor.</p>
+                </div>
+              </div>
+
+              {/* Support context if exists */}
+              {selectedCompany.supportCode && (
+                <div className="p-3 bg-blue-50/60 border border-blue-100 rounded-2xl flex items-center justify-between text-xs text-blue-800">
+                  <div className="space-y-0.5">
+                    <p className="font-bold">Código de Suporte Fornecido</p>
+                    <p className="text-[10px] text-slate-500">Este cliente forneceu um código para assistência atualmente.</p>
+                  </div>
+                  <div className="font-mono bg-white px-2.5 py-1 rounded-xl border border-blue-200 font-black text-xs tracking-wider">
+                    {selectedCompany.supportCode}
+                  </div>
+                </div>
+              )}
+
+              <div className="pt-4 border-t border-slate-100 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsEditModalOpen(false);
+                    setSelectedCompany(null);
+                  }}
+                  className="px-4 py-2 border border-slate-200 rounded-xl text-slate-600 text-xs font-bold hover:bg-slate-50 cursor-pointer"
+                >
+                  Fechar
+                </button>
+                <button
+                  type="submit"
+                  className="px-6 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-emerald-100 cursor-pointer"
+                >
+                  Salvar Alterações
                 </button>
               </div>
             </form>

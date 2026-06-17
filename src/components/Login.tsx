@@ -47,12 +47,6 @@ export default function Login({ onLoginSuccess }: LoginProps) {
     }
   };
 
-  const fillQuickCredentials = (e: string, p: string) => {
-    setEmail(e);
-    setPassword(p);
-    setError(null);
-  };
-
   return (
     <div className="min-h-screen bg-slate-950 flex flex-col justify-center items-center px-4 relative overflow-hidden font-sans">
       {/* Decorative gradient glowing backgrounds */}
@@ -148,23 +142,6 @@ export default function Login({ onLoginSuccess }: LoginProps) {
             {isLoading ? "Acessando painel..." : "Entrar no Sistema"}
           </button>
         </form>
-
-        {/* Quick Credentials Utility Box for Admin Support */}
-        <div className="mt-8 pt-5 border-t border-slate-850 block">
-          <p className="text-slate-500 text-[10px] uppercase font-bold tracking-wider mb-2 text-center">
-            Portal do Administrador SaaS
-          </p>
-          <div className="flex justify-center text-[11px]">
-            <button
-              type="button"
-              onClick={() => fillQuickCredentials("super@gbfleet.ai", "super")}
-              className="py-2.5 px-4 bg-slate-950 border border-slate-800/80 hover:border-violet-900 rounded-xl text-slate-400 hover:text-violet-400 font-medium transition-all text-center flex items-center gap-2 cursor-pointer"
-            >
-              <span className="w-1.5 h-1.5 bg-violet-500 rounded-full animate-pulse" />
-              Preencher Credenciais Master
-            </button>
-          </div>
-        </div>
       </motion.div>
 
       <p className="text-slate-600 text-xs mt-6">
