@@ -30,23 +30,31 @@ app.use((req, res, next) => {
 const isVercel = !!(process.env.VERCEL || process.env.NOW_BUILD);
 const DB_FILE = isVercel ? path.join("/tmp", "db.json") : path.join(process.cwd(), "db.json");
 
-// Initialize Firebase Admin configuration if present
+// Initialize Firebase Admin configuration if present or from Environment Variables
 let firestoreDb: any = null;
 try {
+  let projectId = process.env.FIREBASE_PROJECT_ID;
+  let firestoreDatabaseId = process.env.FIREBASE_DATABASE_ID;
+
   const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
   if (fs.existsSync(firebaseConfigPath)) {
     const config = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf-8"));
     if (config.projectId) {
-      const appInstance = admin.initializeApp({
-        projectId: config.projectId,
-      });
-      if (config.firestoreDatabaseId && config.firestoreDatabaseId !== "(default)") {
-        firestoreDb = getFirestore(appInstance, config.firestoreDatabaseId);
-      } else {
-        firestoreDb = getFirestore();
-      }
-      console.log(`[Firebase] Conectado com sucesso ao Firestore (DatabaseId: ${config.firestoreDatabaseId || "(default)"})`);
+      projectId = config.projectId;
+      firestoreDatabaseId = config.firestoreDatabaseId;
     }
+  }
+
+  if (projectId) {
+    const appInstance = admin.apps.length === 0
+      ? admin.initializeApp({ projectId: projectId })
+      : admin.app();
+    if (firestoreDatabaseId && firestoreDatabaseId !== "(default)") {
+      firestoreDb = getFirestore(appInstance, firestoreDatabaseId);
+    } else {
+      firestoreDb = getFirestore(appInstance);
+    }
+    console.log(`[Firebase] Conectado com sucesso ao Firestore (DatabaseId: ${firestoreDatabaseId || "(default)"})`);
   }
 } catch (err: any) {
   console.error("[Firebase] Falha ao inicializar o Firebase Admin SDK:", err.message);
@@ -1392,5 +1400,15 @@ app.use(ensureDBSynced);
       });
     }
   }
+
+  // Global Error Handling Middleware to surface the exact stack trace of 500 errors to the client
+  app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    console.error("Unhandled Server Error:", err);
+    res.status(500).json({
+      error: err.message || "Erro interno do servidor.",
+      stack: err.stack,
+      hint: "Consulte o console do servidor para obter mais informações."
+    });
+  });
 
 export default app;
