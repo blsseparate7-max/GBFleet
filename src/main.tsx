@@ -32,7 +32,7 @@ const safeStorage = {
 
 // Deteta de forma segura o endereço do backend vindo do .env do Vite
 const getBackendUrl = () => {
-  const envUrl = import.meta.env?.VITE_APP_URL;
+  const envUrl = (import.meta as any).env?.VITE_APP_URL;
   if (envUrl) {
     return envUrl.endsWith('/') ? envUrl.slice(0, -1) : envUrl;
   }

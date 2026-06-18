@@ -5,134 +5,148 @@ import fs from "fs";
 import * as admin from "firebase-admin";
 import { getFirestore } from "firebase-admin/firestore";
 
-async function startServer() {
-  const app = express();
-  const PORT = 3000;
+const app = express();
+const PORT = 3000;
 
-  app.use(express.json());
+app.use(express.json());
 
-  // CORS Middleware to allow requests from Vercel (or any other domain) and handle custom headers
-  app.use((req, res, next) => {
-    const origin = req.headers.origin || "*";
-    res.setHeader("Access-Control-Allow-Origin", origin);
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, x-user-id, x-impersonate-company-id, Authorization");
-    res.setHeader("Access-Control-Allow-Credentials", "true");
+// CORS Middleware to allow requests from Vercel (or any other domain) and handle custom headers
+app.use((req, res, next) => {
+  const origin = req.headers.origin || "*";
+  res.setHeader("Access-Control-Allow-Origin", origin);
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, x-user-id, x-impersonate-company-id, Authorization");
+  res.setHeader("Access-Control-Allow-Credentials", "true");
 
-    // Handle OPTIONS pre-flight request
-    if (req.method === "OPTIONS") {
-      res.sendStatus(200);
-      return;
-    }
-    next();
-  });
-
-  // Simple JSON-based database for persistence in the sandbox and local cache
-  const DB_FILE = path.join(process.cwd(), "db.json");
-
-  // Initialize Firebase Admin configuration if present
-  let firestoreDb: any = null;
-  try {
-    const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
-    if (fs.existsSync(firebaseConfigPath)) {
-      const config = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf-8"));
-      if (config.projectId) {
-        const appInstance = admin.initializeApp({
-          projectId: config.projectId,
-        });
-        if (config.firestoreDatabaseId && config.firestoreDatabaseId !== "(default)") {
-          firestoreDb = getFirestore(appInstance, config.firestoreDatabaseId);
-        } else {
-          firestoreDb = getFirestore();
-        }
-        console.log(`[Firebase] Conectado com sucesso ao Firestore (DatabaseId: ${config.firestoreDatabaseId || "(default)"})`);
-      }
-    }
-  } catch (err: any) {
-    console.error("[Firebase] Falha ao inicializar o Firebase Admin SDK:", err.message);
+  // Handle OPTIONS pre-flight request
+  if (req.method === "OPTIONS") {
+    res.sendStatus(200);
+    return;
   }
-  
-  const getInitialData = () => ({
-    companies: [],
-    users: [],
-    categories_entrada: [
-      "Faturamento de Frete",
-      "Aporte de Capital",
-      "Estadia de Viagem",
-      "Reembolso de Despesas",
-      "Outros Recebíveis"
-    ],
-    categories_saida: [
-      "Diesel (Abastecimento)",
-      "Pedágios",
-      "Manutenção e Peças",
-      "Motorista (Diária/Comissão)",
-      "Pneus",
-      "Seguros & Rastreamento",
-      "Administrativo & Escritório",
-      "Impostos/Licenciamento",
-      "Outras Despesas"
-    ],
-    trucks: [],
-    drivers: [],
-    fuel_logs: [],
-    expenses: [],
-    cash_flow: [],
-    freights: [],
-    maintenance_alerts: [],
-    routes: [],
-    chat_logs: []
-  });
+  next();
+});
 
-  if (!fs.existsSync(DB_FILE)) {
-    fs.writeFileSync(DB_FILE, JSON.stringify(getInitialData(), null, 2));
-  }
+// Detect environment to choose writeable folder on Vercel
+const isVercel = !!(process.env.VERCEL || process.env.NOW_BUILD);
+const DB_FILE = isVercel ? path.join("/tmp", "db.json") : path.join(process.cwd(), "db.json");
 
-  // Hydrate local cache on startup using remote Firestore
-  if (firestoreDb) {
-    try {
-      console.log("[Firebase] Sincronizando banco de dados com Firestore remoto...");
-      const docRef = firestoreDb.collection("system_state").doc("gbfleet_db");
-      const docSnap = await docRef.get();
-      if (docSnap.exists) {
-        let remoteData = docSnap.data();
-        if (remoteData && Object.keys(remoteData).length > 0) {
-          // SCRUB SYSTEM FROM ANY MOCK/DEMO SYSTEM STATE IF LOADED
-          let scrubbed = false;
-          if (remoteData.companies && remoteData.companies.some((c: any) => c.id === "comp_1")) {
-            remoteData.companies = remoteData.companies.filter((c: any) => c.id !== "comp_1");
-            scrubbed = true;
-          }
-          if (remoteData.users && remoteData.users.some((u: any) => u.id === "user_1" || u.companyId === "comp_1")) {
-            remoteData.users = remoteData.users.filter((u: any) => u.id !== "user_1" && u.companyId !== "comp_1");
-            scrubbed = true;
-          }
-          const arrayKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes"];
-          arrayKeys.forEach(key => {
-            if (remoteData[key] && remoteData[key].some((item: any) => item.companyId === "comp_1" || item.id?.includes("init"))) {
-              remoteData[key] = remoteData[key].filter((item: any) => item.companyId !== "comp_1" && !item.id?.includes("init"));
-              scrubbed = true;
-            }
-          });
-
-          if (scrubbed) {
-            console.log("[Firebase] Expurgo de dados de demonstração (comp_1) efetuado no Firestore!");
-            await docRef.set(remoteData);
-          }
-          
-          fs.writeFileSync(DB_FILE, JSON.stringify(remoteData, null, 2));
-          console.log("[Firebase] Cache local configurado e livre de demonstração.");
-        }
+// Initialize Firebase Admin configuration if present
+let firestoreDb: any = null;
+try {
+  const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
+  if (fs.existsSync(firebaseConfigPath)) {
+    const config = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf-8"));
+    if (config.projectId) {
+      const appInstance = admin.initializeApp({
+        projectId: config.projectId,
+      });
+      if (config.firestoreDatabaseId && config.firestoreDatabaseId !== "(default)") {
+        firestoreDb = getFirestore(appInstance, config.firestoreDatabaseId);
       } else {
-        // Bootstrap remote Firestore with our current local DB
-        const localData = JSON.parse(fs.readFileSync(DB_FILE, "utf-8"));
-        await docRef.set(localData);
-        console.log("[Firebase] Banco de dados inicial carregado e salvo no Firestore remoto.");
+        firestoreDb = getFirestore();
       }
-    } catch (err: any) {
-      console.error("[Firebase] Erro na sincronização inicial do Firestore:", err.message);
+      console.log(`[Firebase] Conectado com sucesso ao Firestore (DatabaseId: ${config.firestoreDatabaseId || "(default)"})`);
     }
   }
+} catch (err: any) {
+  console.error("[Firebase] Falha ao inicializar o Firebase Admin SDK:", err.message);
+}
+
+const getInitialData = () => ({
+  companies: [],
+  users: [],
+  categories_entrada: [
+    "Faturamento de Frete",
+    "Aporte de Capital",
+    "Estadia de Viagem",
+    "Reembolso de Despesas",
+    "Outros Recebíveis"
+  ],
+  categories_saida: [
+    "Diesel (Abastecimento)",
+    "Pedágios",
+    "Manutenção e Peças",
+    "Motorista (Diária/Comissão)",
+    "Pneus",
+    "Seguros & Rastreamento",
+    "Administrativo & Escritório",
+    "Impostos/Licenciamento",
+    "Outras Despesas"
+  ],
+  trucks: [],
+  drivers: [],
+  fuel_logs: [],
+  expenses: [],
+  cash_flow: [],
+  freights: [],
+  maintenance_alerts: [],
+  routes: [],
+  chat_logs: []
+});
+
+// Middleware to ensure Database is Synced from Firebase before serving any requests
+let synced = false;
+let syncPromise: Promise<void> | null = null;
+
+const ensureDBSynced = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (!synced) {
+    if (!syncPromise) {
+      syncPromise = (async () => {
+        try {
+          if (!fs.existsSync(DB_FILE)) {
+            fs.writeFileSync(DB_FILE, JSON.stringify(getInitialData(), null, 2));
+          }
+
+          if (firestoreDb) {
+            console.log("[Firebase] Sincronizando banco de dados com Firestore remoto...");
+            const docRef = firestoreDb.collection("system_state").doc("gbfleet_db");
+            const docSnap = await docRef.get();
+            if (docSnap.exists) {
+              let remoteData = docSnap.data();
+              if (remoteData && Object.keys(remoteData).length > 0) {
+                let scrubbed = false;
+                if (remoteData.companies && remoteData.companies.some((c: any) => c.id === "comp_1")) {
+                  remoteData.companies = remoteData.companies.filter((c: any) => c.id !== "comp_1");
+                  scrubbed = true;
+                }
+                if (remoteData.users && remoteData.users.some((u: any) => u.id === "user_1" || u.companyId === "comp_1")) {
+                  remoteData.users = remoteData.users.filter((u: any) => u.id !== "user_1" && u.companyId !== "comp_1");
+                  scrubbed = true;
+                }
+                const arrayKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes"];
+                arrayKeys.forEach(key => {
+                  if (remoteData[key] && remoteData[key].some((item: any) => item.companyId === "comp_1" || item.id?.includes("init"))) {
+                    remoteData[key] = remoteData[key].filter((item: any) => item.companyId !== "comp_1" && !item.id?.includes("init"));
+                    scrubbed = true;
+                  }
+                });
+
+                if (scrubbed) {
+                  console.log("[Firebase] Expurgo de dados de demonstração (comp_1) efetuado no Firestore!");
+                  await docRef.set(remoteData);
+                }
+                
+                fs.writeFileSync(DB_FILE, JSON.stringify(remoteData, null, 2));
+                console.log("[Firebase] Cache local configurado e livre de demonstração.");
+              }
+            } else {
+              const localData = JSON.parse(fs.readFileSync(DB_FILE, "utf-8"));
+              await docRef.set(localData);
+              console.log("[Firebase] Banco de dados inicial carregado e salvo no Firestore remoto.");
+            }
+          }
+        } catch (err: any) {
+          console.error("[Firebase] Erro na sincronização do Firestore:", err.message);
+        }
+        synced = true;
+      })();
+    }
+    await syncPromise;
+  }
+  next();
+};
+
+app.use(ensureDBSynced);
 
   const readDB = () => {
     const db = JSON.parse(fs.readFileSync(DB_FILE, "utf-8"));
@@ -1353,23 +1367,30 @@ async function startServer() {
   });
 
   // Vite middleware for development
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
+  if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
+    createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
+    }).then(vite => {
+      app.use(vite.middlewares);
+      app.listen(PORT, "0.0.0.0", () => {
+        console.log(`Server running on http://localhost:${PORT}`);
+      });
+    }).catch(err => {
+      console.error("Vite server failed to start:", err);
     });
-    app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
+
+    if (!process.env.VERCEL) {
+      app.listen(PORT, "0.0.0.0", () => {
+        console.log(`Server running on http://localhost:${PORT}`);
+      });
+    }
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
-}
-
-startServer();
+export default app;
