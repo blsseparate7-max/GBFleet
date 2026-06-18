@@ -2,7 +2,7 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import fs from "fs";
-import * as admin from "firebase-admin";
+import { initializeApp, getApps, getApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 
 const app = express();
@@ -46,9 +46,9 @@ try {
   }
 
   if (projectId) {
-    const appInstance = admin.apps.length === 0
-      ? admin.initializeApp({ projectId: projectId })
-      : admin.app();
+    const appInstance = getApps().length === 0
+      ? initializeApp({ projectId: projectId })
+      : getApp();
     if (firestoreDatabaseId && firestoreDatabaseId !== "(default)") {
       firestoreDb = getFirestore(appInstance, firestoreDatabaseId);
     } else {
@@ -61,8 +61,30 @@ try {
 }
 
 const getInitialData = () => ({
-  companies: [],
-  users: [],
+  companies: [
+    {
+      id: "comp_superadmin",
+      nome: "GBFleet Gestão",
+      plano: "Enterprise",
+      createdAt: "2026-06-18T20:29:40.116Z",
+      status: "ativo",
+      pago: true,
+      trialDays: 30,
+      supportCode: null,
+      supportCodeCreatedAt: null,
+      supportAuthorizedUntil: null
+    }
+  ],
+  users: [
+    {
+      id: "super_1",
+      companyId: "comp_superadmin",
+      role: "superadmin",
+      nome: "Admin Master",
+      email: "super@gbfleet.ai",
+      password: "super"
+    }
+  ],
   categories_entrada: [
     "Faturamento de Frete",
     "Aporte de Capital",
@@ -102,7 +124,14 @@ const ensureDBSynced = async (req: express.Request, res: express.Response, next:
       syncPromise = (async () => {
         try {
           if (!fs.existsSync(DB_FILE)) {
-            fs.writeFileSync(DB_FILE, JSON.stringify(getInitialData(), null, 2));
+            const templateDbPath = path.join(process.cwd(), "db.json");
+            if (fs.existsSync(templateDbPath)) {
+              fs.copyFileSync(templateDbPath, DB_FILE);
+              console.log("[Vercel] Sincronizado db.json base para o /tmp/db.json com sucesso!");
+            } else {
+              fs.writeFileSync(DB_FILE, JSON.stringify(getInitialData(), null, 2));
+              console.log("[Vercel] Template db.json não encontrado. Criado novo bano de dados em /tmp/db.json!");
+            }
           }
 
           if (firestoreDb) {
