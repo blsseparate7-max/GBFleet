@@ -42,102 +42,110 @@ if (!isVercel) {
 }
 
 // Initialize Firebase Admin configuration if present or from Environment Variables
+// Opção 1: Banco de dados local puro via arquivo db.json (Ativado por padrão para evitar erros de Conta de Serviço do Firebase).
+// Se de fato desejar ligar o Firebase/Firestore remoto, adicione ENABLE_FIREBASE=true e as chaves nas variáveis de ambiente.
+const ENABLE_FIREBASE = process.env.ENABLE_FIREBASE === "true";
+
 let firestoreDb: any = null;
 let firestoreDatabaseId: string | undefined = undefined;
-try {
-  let projectId = process.env.FIREBASE_PROJECT_ID;
-  firestoreDatabaseId = process.env.FIREBASE_DATABASE_ID;
 
-  const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
-  if (fs.existsSync(firebaseConfigPath)) {
-    const config = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf-8"));
-    if (config.projectId) {
-      projectId = config.projectId;
-      firestoreDatabaseId = config.firestoreDatabaseId;
-    }
-  }
+if (!ENABLE_FIREBASE) {
+  console.log("[Database] Rodando no caminho mais simples (Opção 1): Banco de Dados Local puro via arquivo 'db.json'. Firebase/Firestore desativado.");
+} else {
+  try {
+    let projectId = process.env.FIREBASE_PROJECT_ID;
+    firestoreDatabaseId = process.env.FIREBASE_DATABASE_ID;
 
-  if (projectId) {
-    let canInitialize = true;
-
-    // Em ambiente Vercel Serverless, se não houver FIREBASE_SERVICE_ACCOUNT nas variáveis de ambiente,
-    // não temos credenciais para acessar o Firestore externo. Nesse caso, pulamos para evitar crash ADC/timeouts.
-    if (isVercel && !process.env.FIREBASE_SERVICE_ACCOUNT) {
-      console.warn("[Firebase] Ambiente Vercel sem FIREBASE_SERVICE_ACCOUNT detectado. Desativando Firestore remoto para evitar erros ADC ou travamentos.");
-      canInitialize = false;
+    const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
+    if (fs.existsSync(firebaseConfigPath)) {
+      const config = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf-8"));
+      if (config.projectId) {
+        projectId = config.projectId;
+        firestoreDatabaseId = config.firestoreDatabaseId;
+      }
     }
 
-    if (canInitialize) {
-      const appConfig: any = { projectId };
-      let credentialLoaded = false;
-      
-      if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-        try {
-          let saStr = process.env.FIREBASE_SERVICE_ACCOUNT.trim();
-          
-          // Se parecer codificado em Base64 (comum no Vercel para evitar problemas de formatação de JSON/Quebra de linha)
-          if (saStr.startsWith("ey") || (!saStr.startsWith("{") && !saStr.startsWith("["))) {
-            try {
-              saStr = Buffer.from(saStr, "base64").toString("utf8");
-            } catch (b64err: any) {
-              console.warn("[Firebase] O valor do service account não é Base64 puro ou falhou ao decodificar, usando original:", b64err.message);
-            }
-          }
+    if (projectId) {
+      let canInitialize = true;
 
-          let serviceAccount: any = null;
-          try {
-            serviceAccount = JSON.parse(saStr);
-          } catch (jsonErr: any) {
-            console.warn("[Firebase] Primeira tentativa de parse JSON falhou. Tentando limpar quebras de linha reais para parse...", jsonErr.message);
-            try {
-              // Limpa quebras reais que podem desformatar o JSON no Vercel
-              const sanitized = saStr.replace(/[\r\n]+/g, " ");
-              serviceAccount = JSON.parse(sanitized);
-            } catch (jsonErr2: any) {
-              console.error("[Firebase Error] Falha de parse JSON absoluta na conta de serviço:", jsonErr2.message);
-              throw jsonErr2;
-            }
-          }
-
-          // Trata a chave privada substituindo os caracteres '\n' por quebras de linha reais APÓS o parsing JSON com sucesso
-          if (serviceAccount && serviceAccount.private_key) {
-            serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, "\n");
-          }
-          
-          appConfig.credential = cert(serviceAccount);
-          credentialLoaded = true;
-
-          // Crucial: O ID do projeto na credencial deve reescrever o ID do config padrão para evitar erros de mismatch de autenticação
-          if (serviceAccount.project_id) {
-            appConfig.projectId = serviceAccount.project_id;
-            console.log(`[Firebase] ID do Projeto atualizado da conta de serviço para evitar incompatibilidade: ${appConfig.projectId}`);
-          }
-
-          console.log("[Firebase] Carregada conta de serviço via FIREBASE_SERVICE_ACCOUNT para autenticação.");
-        } catch (saErr: any) {
-          console.error("[Firebase] Ignorando FIREBASE_SERVICE_ACCOUNT devido a um erro de parsing/leitura:", saErr.message);
-        }
+      // Em ambiente Vercel Serverless, se não houver FIREBASE_SERVICE_ACCOUNT nas variáveis de ambiente,
+      // não temos credenciais para acessar o Firestore externo. Nesse caso, pulamos para evitar crash ADC/timeouts.
+      if (isVercel && !process.env.FIREBASE_SERVICE_ACCOUNT) {
+        console.warn("[Firebase] Ambiente Vercel sem FIREBASE_SERVICE_ACCOUNT detectado. Desativando Firestore remoto para evitar erros ADC ou travamentos.");
+        canInitialize = false;
       }
 
-      // Se no ambiente Vercel não conseguimos carregar as credenciais explicitamente,
-      // cancelamos a inicialização para evitar que o SDK tente buscar credenciais implícitas (ADC)
-      // do Google Cloud Metadata Service, o que causaria um timeout eterno (travando as requisições com 500).
-      if (isVercel && !credentialLoaded) {
-        console.warn("[Firebase] Erro de parsing ou credenciais vazias na Vercel. Desativando Firestore remoto preventivamente para evitar congelamentos de timeout ADC / erro 500.");
-        firestoreDb = null;
-      } else {
-        const appInstance = getApps().length === 0
-          ? initializeApp(appConfig)
-          : getApp();
-          
-        try {
-          if (firestoreDatabaseId && firestoreDatabaseId !== "(default)") {
-            firestoreDb = getFirestore(appInstance, firestoreDatabaseId);
-          } else {
-            firestoreDb = getFirestore(appInstance);
+      if (canInitialize) {
+        const appConfig: any = { projectId };
+        let credentialLoaded = false;
+        
+        if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+          try {
+            let saStr = process.env.FIREBASE_SERVICE_ACCOUNT.trim();
+            
+            // Se parecer codificado em Base64 (comum no Vercel para evitar problemas de formatação de JSON/Quebra de linha)
+            if (saStr.startsWith("ey") || (!saStr.startsWith("{") && !saStr.startsWith("["))) {
+              try {
+                saStr = Buffer.from(saStr, "base64").toString("utf8");
+              } catch (b64err: any) {
+                console.warn("[Firebase] O valor do service account não é Base64 puro ou falhou ao decodificar, usando original:", b64err.message);
+              }
+            }
+
+            let serviceAccount: any = null;
+            try {
+              serviceAccount = JSON.parse(saStr);
+            } catch (jsonErr: any) {
+              console.warn("[Firebase] Primeira tentativa de parse JSON falhou. Tentando limpar quebras de linha reais para parse...", jsonErr.message);
+              try {
+                // Limpa quebras reais que podem desformatar o JSON no Vercel
+                const sanitized = saStr.replace(/[\r\n]+/g, " ");
+                serviceAccount = JSON.parse(sanitized);
+              } catch (jsonErr2: any) {
+                console.error("[Firebase Error] Falha de parse JSON absoluta na conta de serviço:", jsonErr2.message);
+                throw jsonErr2;
+              }
+            }
+
+            // Trata a chave privada substituindo os caracteres '\n' por quebras de linha reais APÓS o parsing JSON com sucesso
+            if (serviceAccount && serviceAccount.private_key) {
+              serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, "\n");
+            }
+            
+            appConfig.credential = cert(serviceAccount);
+            credentialLoaded = true;
+
+            // Crucial: O ID do projeto na credencial deve reescrever o ID do config padrão para evitar erros de mismatch de autenticação
+            if (serviceAccount.project_id) {
+              appConfig.projectId = serviceAccount.project_id;
+              console.log(`[Firebase] ID do Projeto atualizado da conta de serviço para evitar incompatibilidade: ${appConfig.projectId}`);
+            }
+
+            console.log("[Firebase] Carregada conta de serviço via FIREBASE_SERVICE_ACCOUNT para autenticação.");
+          } catch (saErr: any) {
+            console.error("[Firebase] Ignorando FIREBASE_SERVICE_ACCOUNT devido a um erro de parsing/leitura:", saErr.message);
           }
-          console.log(`[Firebase] Conectado ao Firestore com sucesso! (DatabaseId: ${firestoreDatabaseId || "(default)"})`);
-        } catch (dbErr: any) {
+        }
+
+        // Se no ambiente Vercel não conseguimos carregar as credenciais explicitamente,
+        // cancelamos a inicialização para evitar que o SDK tente buscar credenciais implícitas (ADC)
+        // do Google Cloud Metadata Service, o que causaria um timeout eterno (travando as requisições com 500).
+        if (isVercel && !credentialLoaded) {
+          console.warn("[Firebase] Erro de parsing ou credenciais vazias na Vercel. Desativando Firestore remoto preventivamente para evitar congelamentos de timeout ADC / erro 500.");
+          firestoreDb = null;
+        } else {
+          const appInstance = getApps().length === 0
+            ? initializeApp(appConfig)
+            : getApp();
+            
+          try {
+            if (firestoreDatabaseId && firestoreDatabaseId !== "(default)") {
+              firestoreDb = getFirestore(appInstance, firestoreDatabaseId);
+            } else {
+              firestoreDb = getFirestore(appInstance);
+            }
+            console.log(`[Firebase] Conectado ao Firestore com sucesso! (DatabaseId: ${firestoreDatabaseId || "(default)"})`);
+          } catch (dbErr: any) {
           console.warn(`[Firebase] Falha ao obter banco com ID personalizado '${firestoreDatabaseId}', tentando banco padrão:`, dbErr.message);
           try {
             firestoreDb = getFirestore(appInstance);
@@ -149,8 +157,9 @@ try {
       }
     }
   }
-} catch (err: any) {
-  console.error("[Firebase] Falha crítica ao inicializar o Firebase Admin SDK:", err.message);
+  } catch (err: any) {
+    console.error("[Firebase] Falha crítica ao inicializar o Firebase Admin SDK:", err.message);
+  }
 }
 
 const getInitialData = () => ({
@@ -639,71 +648,11 @@ app.use(ensureDBSynced);
     }
   });
 
-  // Registration Endpoint (SaaS tenant signup)
+  // Registration Endpoint (SaaS tenant signup disabled publicly - only admins can register users)
   app.post("/api/auth/register", (req, res) => {
-    try {
-      const db = readDB();
-      const { nome, email, companyName, password } = req.body;
-
-      if (!nome || !email || !companyName || !password) {
-        return res.status(400).json({ error: "Todos os campos (Nome, E-mail, Empresa e Senha) são obrigatórios para cadastro." });
-      }
-
-      const emailStr = String(email).toLowerCase().trim();
-      const passwordStr = String(password);
-      const companyNameStr = String(companyName).trim();
-      const nomeStr = String(nome).trim();
-
-      // Check if user already exists
-      const userExists = db.users.some((u: any) => u.email?.toLowerCase() === emailStr);
-      if (userExists) {
-        return res.status(400).json({ error: "Este endereço de e-mail já está cadastrado por outro usuário." });
-      }
-
-      // Create unique IDs
-      const companyId = `comp_${Date.now()}`;
-      const userId = `user_${Date.now()}`;
-
-      // Create new tenant/company
-      const company = {
-        id: companyId,
-        nome: companyNameStr,
-        plano: "Pro (Grátis 30d)",
-        status: "ativo",
-        pago: true, // Auto active during trial
-        trialDays: 30,
-        createdAt: new Date().toISOString(),
-        supportCode: null,
-        supportCodeCreatedAt: null,
-        supportAuthorizedUntil: null
-      };
-
-      // Create new user (Role admin)
-      const user = {
-        id: userId,
-        companyId: companyId,
-        nome: nomeStr,
-        email: emailStr,
-        password: passwordStr,
-        role: "admin"
-      };
-
-      // Push to DB
-      db.companies.push(company);
-      db.users.push(user);
-
-      // Persist changes
-      writeDB(db);
-
-      res.json({ success: true, user, company });
-    } catch (routeErr: any) {
-      console.error("[Register Route Error] Falha ao cadastrar nova empresa/usuário:", routeErr);
-      res.status(500).json({
-        error: "Erro interno do servidor ao tentar processar o cadastro.",
-        message: routeErr.message,
-        stack: routeErr.stack
-      });
-    }
+    return res.status(403).json({ 
+      error: "O cadastro público de novas empresas está desativado. Entre em contato com o suporte ou utilize o Painel Administrativo para cadastrar novos usuários e empresas."
+    });
   });
 
   // Update Profile Endpoint
