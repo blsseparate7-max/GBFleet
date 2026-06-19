@@ -46,27 +46,38 @@ try {
   }
 
   if (projectId) {
-    const appConfig: any = { projectId };
-    
-    if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-      try {
-        const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-        appConfig.credential = cert(serviceAccount);
-        console.log("[Firebase] Carregada conta de serviço via FIREBASE_SERVICE_ACCOUNT para autenticação.");
-      } catch (saErr: any) {
-        console.error("[Firebase] Ignorando FIREBASE_SERVICE_ACCOUNT com erro de parsing:", saErr.message);
-      }
+    let canInitialize = true;
+
+    // Em ambiente Vercel Serverless, se não houver FIREBASE_SERVICE_ACCOUNT nas variáveis de ambiente,
+    // não temos credenciais para acessar o Firestore externo. Nesse caso, pulamos para evitar crash ADC/timeouts.
+    if (isVercel && !process.env.FIREBASE_SERVICE_ACCOUNT) {
+      console.warn("[Firebase] Ambiente Vercel sem FIREBASE_SERVICE_ACCOUNT detectado. Desativando Firestore remoto para evitar erros ADC ou travamentos.");
+      canInitialize = false;
     }
 
-    const appInstance = getApps().length === 0
-      ? initializeApp(appConfig)
-      : getApp();
-    if (firestoreDatabaseId && firestoreDatabaseId !== "(default)") {
-      firestoreDb = getFirestore(appInstance, firestoreDatabaseId);
-    } else {
-      firestoreDb = getFirestore(appInstance);
+    if (canInitialize) {
+      const appConfig: any = { projectId };
+      
+      if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+        try {
+          const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+          appConfig.credential = cert(serviceAccount);
+          console.log("[Firebase] Carregada conta de serviço via FIREBASE_SERVICE_ACCOUNT para autenticação.");
+        } catch (saErr: any) {
+          console.error("[Firebase] Ignorando FIREBASE_SERVICE_ACCOUNT com erro de parsing:", saErr.message);
+        }
+      }
+
+      const appInstance = getApps().length === 0
+        ? initializeApp(appConfig)
+        : getApp();
+      if (firestoreDatabaseId && firestoreDatabaseId !== "(default)") {
+        firestoreDb = getFirestore(appInstance, firestoreDatabaseId);
+      } else {
+        firestoreDb = getFirestore(appInstance);
+      }
+      console.log(`[Firebase] Conectado com sucesso ao Firestore (DatabaseId: ${firestoreDatabaseId || "(default)"})`);
     }
-    console.log(`[Firebase] Conectado com sucesso ao Firestore (DatabaseId: ${firestoreDatabaseId || "(default)"})`);
   }
 } catch (err: any) {
   console.error("[Firebase] Falha ao inicializar o Firebase Admin SDK:", err.message);
@@ -150,9 +161,16 @@ const ensureDBSynced = async (req: express.Request, res: express.Response, next:
             console.log("[Firebase] Sincronizando banco de dados com Firestore remoto...");
             const docRef = firestoreDb.collection("system_state").doc("gbfleet_db");
             
+            // Helper para prevenir "Unhandled Promise Rejections" caso a operação em background
+            // falhe depois que o Timeout principal já tiver rejeitado a Promise.race.
+            const safePromise = <T>(p: Promise<T>): Promise<T> => {
+              p.catch((err) => console.log("[Firestore Background] Operação em segundo plano prevenida de rejeição não tratada:", err.message));
+              return p;
+            };
+
             // Timeout after 2.5 seconds to prevent serverless function hangs
             const docSnap = await Promise.race([
-              docRef.get(),
+              safePromise(docRef.get()),
               new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout de 2.5s ao obter dados do Firestore")), 2500))
             ]) as any;
 
@@ -179,7 +197,7 @@ const ensureDBSynced = async (req: express.Request, res: express.Response, next:
                 if (scrubbed) {
                   console.log("[Firebase] Expurgo de dados de demonstração (comp_1) efetuado no Firestore!");
                   await Promise.race([
-                    docRef.set(remoteData),
+                    safePromise(docRef.set(remoteData)),
                     new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout ao salvar dados expurgados no Firestore")), 2500))
                   ]);
                 }
@@ -190,7 +208,7 @@ const ensureDBSynced = async (req: express.Request, res: express.Response, next:
             } else {
               const localData = JSON.parse(fs.readFileSync(DB_FILE, "utf-8"));
               await Promise.race([
-                docRef.set(localData),
+                safePromise(docRef.set(localData)),
                 new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout ao salvar dados iniciais no Firestore")), 2500))
               ]);
               console.log("[Firebase] Banco de dados inicial carregado e salvo no Firestore remoto.");
