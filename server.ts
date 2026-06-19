@@ -27,7 +27,19 @@ app.use((req, res, next) => {
 
 // Detect environment to choose writeable folder on Vercel
 const isVercel = !!(process.env.VERCEL || process.env.NOW_BUILD);
-const DB_FILE = isVercel ? path.join("/tmp", "db.json") : path.join(process.cwd(), "db.json");
+let DB_FILE = isVercel ? path.join("/tmp", "db.json") : path.join(process.cwd(), "db.json");
+
+// Dynamic write permission test to identify read-only environments and avoid EROFS crashes
+if (!isVercel) {
+  try {
+    const testPath = path.join(process.cwd(), ".write-test-" + Math.random().toString(36).substring(7));
+    fs.writeFileSync(testPath, "test");
+    fs.unlinkSync(testPath);
+  } catch (err: any) {
+    console.warn("[System] Pasta de trabalho local somente leitura detectada. Usando fallback seguro em /tmp/db.json.");
+    DB_FILE = path.join("/tmp", "db.json");
+  }
+}
 
 // Initialize Firebase Admin configuration if present or from Environment Variables
 let firestoreDb: any = null;
