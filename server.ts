@@ -2,7 +2,7 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import fs from "fs";
-import { initializeApp, getApps, getApp } from "firebase-admin/app";
+import { initializeApp, getApps, getApp, cert } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 
 const app = express();
@@ -46,8 +46,20 @@ try {
   }
 
   if (projectId) {
+    const appConfig: any = { projectId };
+    
+    if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+      try {
+        const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+        appConfig.credential = cert(serviceAccount);
+        console.log("[Firebase] Carregada conta de serviço via FIREBASE_SERVICE_ACCOUNT para autenticação.");
+      } catch (saErr: any) {
+        console.error("[Firebase] Ignorando FIREBASE_SERVICE_ACCOUNT com erro de parsing:", saErr.message);
+      }
+    }
+
     const appInstance = getApps().length === 0
-      ? initializeApp({ projectId: projectId })
+      ? initializeApp(appConfig)
       : getApp();
     if (firestoreDatabaseId && firestoreDatabaseId !== "(default)") {
       firestoreDb = getFirestore(appInstance, firestoreDatabaseId);
@@ -137,7 +149,13 @@ const ensureDBSynced = async (req: express.Request, res: express.Response, next:
           if (firestoreDb) {
             console.log("[Firebase] Sincronizando banco de dados com Firestore remoto...");
             const docRef = firestoreDb.collection("system_state").doc("gbfleet_db");
-            const docSnap = await docRef.get();
+            
+            // Timeout after 2.5 seconds to prevent serverless function hangs
+            const docSnap = await Promise.race([
+              docRef.get(),
+              new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout de 2.5s ao obter dados do Firestore")), 2500))
+            ]) as any;
+
             if (docSnap.exists) {
               let remoteData = docSnap.data();
               if (remoteData && Object.keys(remoteData).length > 0) {
@@ -160,7 +178,10 @@ const ensureDBSynced = async (req: express.Request, res: express.Response, next:
 
                 if (scrubbed) {
                   console.log("[Firebase] Expurgo de dados de demonstração (comp_1) efetuado no Firestore!");
-                  await docRef.set(remoteData);
+                  await Promise.race([
+                    docRef.set(remoteData),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout ao salvar dados expurgados no Firestore")), 2500))
+                  ]);
                 }
                 
                 fs.writeFileSync(DB_FILE, JSON.stringify(remoteData, null, 2));
@@ -168,7 +189,10 @@ const ensureDBSynced = async (req: express.Request, res: express.Response, next:
               }
             } else {
               const localData = JSON.parse(fs.readFileSync(DB_FILE, "utf-8"));
-              await docRef.set(localData);
+              await Promise.race([
+                docRef.set(localData),
+                new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout ao salvar dados iniciais no Firestore")), 2500))
+              ]);
               console.log("[Firebase] Banco de dados inicial carregado e salvo no Firestore remoto.");
             }
           }
@@ -186,7 +210,35 @@ const ensureDBSynced = async (req: express.Request, res: express.Response, next:
 app.use(ensureDBSynced);
 
   const readDB = () => {
-    const db = JSON.parse(fs.readFileSync(DB_FILE, "utf-8"));
+    let db: any;
+    try {
+      if (!fs.existsSync(DB_FILE)) {
+        throw new Error("DB file does not exist");
+      }
+      const fileContent = fs.readFileSync(DB_FILE, "utf-8");
+      if (!fileContent.trim()) {
+        throw new Error("DB file is empty");
+      }
+      db = JSON.parse(fileContent);
+    } catch (parseErr: any) {
+      console.warn("[Database Recovery] Falha ao ler ou analisar o DB local, restaurando a partir do modelo original ou padrao:", parseErr.message);
+      const templateDbPath = path.join(process.cwd(), "db.json");
+      if (fs.existsSync(templateDbPath)) {
+        try {
+          db = JSON.parse(fs.readFileSync(templateDbPath, "utf-8"));
+        } catch (e) {
+          db = getInitialData();
+        }
+      } else {
+        db = getInitialData();
+      }
+      try {
+        fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
+      } catch (writeErr: any) {
+        console.error("[Database Recovery] Erro ao gravar arquivo DB recuperado:", writeErr.message);
+      }
+    }
+
     let updated = false;
 
     const keys = ["companies", "users", "trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "chat_logs"];
@@ -326,7 +378,7 @@ app.use(ensureDBSynced);
       return res.status(401).json({ error: "Sessão expirada. Faça login novamente." });
     }
 
-    const db = JSON.parse(fs.readFileSync(DB_FILE, "utf-8"));
+    const db = readDB();
     const user = db.users.find((u: any) => u.id === userId);
     if (!user) {
       return res.status(401).json({ error: "Usuário inválido ou excluído." });
@@ -358,6 +410,39 @@ app.use(ensureDBSynced);
     }
 
     next();
+  });
+
+  // Health and general diagnostics endpoint for Vercel & server checkups
+  app.get("/api/health", (req, res) => {
+    try {
+      const dbExists = fs.existsSync(DB_FILE);
+      let dbSize = 0;
+      let dbSample = "";
+      if (dbExists) {
+        const stat = fs.statSync(DB_FILE);
+        dbSize = stat.size;
+        const text = fs.readFileSync(DB_FILE, "utf-8");
+        dbSample = text.substring(0, 150);
+      }
+      res.json({
+        status: "ok",
+        env: {
+          VERCEL: process.env.VERCEL,
+          isVercel,
+          DB_FILE,
+          dbExists,
+          dbSize,
+          dbSample
+        },
+        firebase: {
+          projectId: process.env.FIREBASE_PROJECT_ID || "not set",
+          hasConfigJson: fs.existsSync(path.join(process.cwd(), "firebase-applet-config.json")),
+          initialized: !!firestoreDb
+        }
+      });
+    } catch (e: any) {
+      res.status(500).json({ status: "error", message: e.message, stack: e.stack });
+    }
   });
 
   // Login Endpoint (No signup, direct login only as per user instructions)
