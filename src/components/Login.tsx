@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Truck, Lock, Mail, AlertCircle, Eye, EyeOff } from "lucide-react";
+import { Truck, Lock, Mail, AlertCircle, Eye, EyeOff, User, Building2 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
 interface LoginProps {
@@ -13,29 +13,47 @@ export default function Login({ onLoginSuccess }: LoginProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Registration SaaS flow states
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [nome, setNome] = useState("");
+  const [companyName, setCompanyName] = useState("");
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email || !password) {
-      setError("Por favor, preencha todos os campos.");
-      return;
+    
+    if (isRegistering) {
+      if (!nome || !email || !companyName || !password) {
+        setError("Por favor, preencha todos os campos do cadastro.");
+        return;
+      }
+    } else {
+      if (!email || !password) {
+        setError("Por favor, preencha todos os campos.");
+        return;
+      }
     }
 
     setIsLoading(true);
     setError(null);
 
     try {
-      const res = await fetch("/api/auth/login", {
+      const endpoint = isRegistering ? "/api/auth/register" : "/api/auth/login";
+      const payload = isRegistering 
+        ? { nome, email, companyName, password }
+        : { email, password };
+
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify(payload),
       });
 
       const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data.error || "Erro de login");
+        throw new Error(data.error || "Erro ao processar solicitação.");
       }
 
       // Success
@@ -67,8 +85,11 @@ export default function Login({ onLoginSuccess }: LoginProps) {
           <h2 className="text-2xl font-bold text-white tracking-tight">
             GBFleet <span className="text-blue-500">AI</span>
           </h2>
-          <p className="text-xs text-slate-400 mt-1">
-            Gestão inteligente de frotas e controle de custos de frete
+          <p className="text-xs text-slate-400 mt-1 text-center">
+            {isRegistering 
+              ? "Crie sua empresa e comece a gerir sua frota agora"
+              : "Gestão inteligente de frotas e controle de custos de frete"
+            }
           </p>
         </div>
 
@@ -87,8 +108,55 @@ export default function Login({ onLoginSuccess }: LoginProps) {
           )}
         </AnimatePresence>
 
-        {/* Login Form */}
+        {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Registration specific fields */}
+          {isRegistering && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-4"
+            >
+              <div>
+                <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">
+                  Seu Nome Completo
+                </label>
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <User size={16} className="text-slate-500" />
+                  </span>
+                  <input
+                    type="text"
+                    required
+                    value={nome}
+                    onChange={(e) => setNome(e.target.value)}
+                    placeholder="Nome Sobrenome"
+                    className="w-full bg-slate-950 border border-slate-800 hover:border-slate-700 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl pl-10 pr-4 py-3 text-sm text-white focus:outline-none transition-all placeholder:text-slate-600"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">
+                  Nome da Empresa / Transportadora
+                </label>
+                <div className="relative">
+                  <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Building2 size={16} className="text-slate-500" />
+                  </span>
+                  <input
+                    type="text"
+                    required
+                    value={companyName}
+                    onChange={(e) => setCompanyName(e.target.value)}
+                    placeholder="Ex: Transportadora Souza"
+                    className="w-full bg-slate-950 border border-slate-800 hover:border-slate-700 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl pl-10 pr-4 py-3 text-sm text-white focus:outline-none transition-all placeholder:text-slate-600"
+                  />
+                </div>
+              </div>
+            </motion.div>
+          )}
+
           <div>
             <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">
               E-mail Comercial
@@ -139,9 +207,28 @@ export default function Login({ onLoginSuccess }: LoginProps) {
             disabled={isLoading}
             className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3.5 px-4 rounded-xl text-sm transition-all shadow-lg shadow-blue-500/10 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 mt-6"
           >
-            {isLoading ? "Acessando painel..." : "Entrar no Sistema"}
+            {isLoading 
+              ? (isRegistering ? "Criando conta..." : "Acessando painel...")
+              : (isRegistering ? "Cadastrar Empresa (Grátis)" : "Entrar no Sistema")
+            }
           </button>
         </form>
+
+        {/* Register Toggle */}
+        <div className="mt-6 text-center text-xs">
+          <button
+            type="button"
+            onClick={() => {
+              setIsRegistering(!isRegistering);
+              setError(null);
+            }}
+            className="text-blue-500 hover:text-blue-400 font-semibold transition-colors"
+          >
+            {isRegistering
+              ? "Já possui uma senha? Entrar"
+              : "Não possui conta? Cadastrar empresa (Teste Grátis)"}
+          </button>
+        </div>
       </motion.div>
 
       <p className="text-slate-600 text-xs mt-6">
