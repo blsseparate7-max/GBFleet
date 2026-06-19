@@ -31,9 +31,10 @@ const DB_FILE = isVercel ? path.join("/tmp", "db.json") : path.join(process.cwd(
 
 // Initialize Firebase Admin configuration if present or from Environment Variables
 let firestoreDb: any = null;
+let firestoreDatabaseId: string | undefined = undefined;
 try {
   let projectId = process.env.FIREBASE_PROJECT_ID;
-  let firestoreDatabaseId = process.env.FIREBASE_DATABASE_ID;
+  firestoreDatabaseId = process.env.FIREBASE_DATABASE_ID;
 
   const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
   if (fs.existsSync(firebaseConfigPath)) {
@@ -56,6 +57,7 @@ try {
 
     if (canInitialize) {
       const appConfig: any = { projectId };
+      let credentialLoaded = false;
       
       if (process.env.FIREBASE_SERVICE_ACCOUNT) {
         try {
@@ -70,31 +72,68 @@ try {
             }
           }
 
-          // Corrige quebras de linha escapadas comuns em env vars do Vercel/Render
-          saStr = saStr.replace(/\\n/g, "\n");
+          let serviceAccount: any = null;
+          try {
+            serviceAccount = JSON.parse(saStr);
+          } catch (jsonErr: any) {
+            console.warn("[Firebase] Primeira tentativa de parse JSON falhou. Tentando limpar quebras de linha reais para parse...", jsonErr.message);
+            try {
+              // Limpa quebras reais que podem desformatar o JSON no Vercel
+              const sanitized = saStr.replace(/[\r\n]+/g, " ");
+              serviceAccount = JSON.parse(sanitized);
+            } catch (jsonErr2: any) {
+              console.error("[Firebase Error] Falha de parse JSON absoluta na conta de serviço:", jsonErr2.message);
+              throw jsonErr2;
+            }
+          }
+
+          // Trata a chave privada substituindo os caracteres '\n' por quebras de linha reais APÓS o parsing JSON com sucesso
+          if (serviceAccount && serviceAccount.private_key) {
+            serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, "\n");
+          }
           
-          const serviceAccount = JSON.parse(saStr);
           appConfig.credential = cert(serviceAccount);
+          credentialLoaded = true;
+
+          // Crucial: O ID do projeto na credencial deve reescrever o ID do config padrão para evitar erros de mismatch de autenticação
+          if (serviceAccount.project_id) {
+            appConfig.projectId = serviceAccount.project_id;
+            console.log(`[Firebase] ID do Projeto atualizado da conta de serviço para evitar incompatibilidade: ${appConfig.projectId}`);
+          }
+
           console.log("[Firebase] Carregada conta de serviço via FIREBASE_SERVICE_ACCOUNT para autenticação.");
         } catch (saErr: any) {
           console.error("[Firebase] Ignorando FIREBASE_SERVICE_ACCOUNT devido a um erro de parsing/leitura:", saErr.message);
         }
       }
 
-      const appInstance = getApps().length === 0
-        ? initializeApp(appConfig)
-        : getApp();
-        
-      try {
-        if (firestoreDatabaseId && firestoreDatabaseId !== "(default)") {
-          firestoreDb = getFirestore(appInstance, firestoreDatabaseId);
-        } else {
-          firestoreDb = getFirestore(appInstance);
+      // Se no ambiente Vercel não conseguimos carregar as credenciais explicitamente,
+      // cancelamos a inicialização para evitar que o SDK tente buscar credenciais implícitas (ADC)
+      // do Google Cloud Metadata Service, o que causaria um timeout eterno (travando as requisições com 500).
+      if (isVercel && !credentialLoaded) {
+        console.warn("[Firebase] Erro de parsing ou credenciais vazias na Vercel. Desativando Firestore remoto preventivamente para evitar congelamentos de timeout ADC / erro 500.");
+        firestoreDb = null;
+      } else {
+        const appInstance = getApps().length === 0
+          ? initializeApp(appConfig)
+          : getApp();
+          
+        try {
+          if (firestoreDatabaseId && firestoreDatabaseId !== "(default)") {
+            firestoreDb = getFirestore(appInstance, firestoreDatabaseId);
+          } else {
+            firestoreDb = getFirestore(appInstance);
+          }
+          console.log(`[Firebase] Conectado ao Firestore com sucesso! (DatabaseId: ${firestoreDatabaseId || "(default)"})`);
+        } catch (dbErr: any) {
+          console.warn(`[Firebase] Falha ao obter banco com ID personalizado '${firestoreDatabaseId}', tentando banco padrão:`, dbErr.message);
+          try {
+            firestoreDb = getFirestore(appInstance);
+          } catch (stdDbErr: any) {
+            console.error("[Firebase] Falha total ao conectar ao Firestore padrão:", stdDbErr.message);
+            firestoreDb = null;
+          }
         }
-        console.log(`[Firebase] Conectado ao Firestore com sucesso! (DatabaseId: ${firestoreDatabaseId || "(default)"})`);
-      } catch (dbErr: any) {
-        console.warn(`[Firebase] Falha ao obter banco com ID personalizado '${firestoreDatabaseId}', tentando banco padrão:`, dbErr.message);
-        firestoreDb = getFirestore(appInstance);
       }
     }
   }
@@ -244,6 +283,30 @@ const ensureDBSynced = async (req: express.Request, res: express.Response, next:
           }
         } catch (err: any) {
           console.error("[Firebase] Erro ou timeout na sincronização do Firestore:", err.message);
+          
+          // Se for erro de banco de dados não encontrado (mismatch de databaseId), tentamos fazer fallback para o banco padrão "(default)"
+          if (firestoreDb && firestoreDatabaseId && firestoreDatabaseId !== "(default)" && 
+              (err.message?.toLowerCase().includes("database") || err.message?.toLowerCase().includes("not_found") || err.message?.toLowerCase().includes("not found"))) {
+            console.warn("[Firebase] Detectada possível incompatibilidade de ID de banco de dados. Tentando fallback para banco de dados '(default)'...");
+            try {
+              firestoreDatabaseId = "(default)";
+              firestoreDb = getFirestore(getApps()[0]);
+              // Tenta sincronizar de novo immediatamente com o novo firestoreDb
+              const retryDocRef = firestoreDb.collection("system_state").doc("gbfleet_db");
+              const retrySnap = await retryDocRef.get();
+              if (retrySnap.exists) {
+                const remoteData = retrySnap.data();
+                if (remoteData) {
+                  fs.writeFileSync(DB_FILE, JSON.stringify(remoteData, null, 2));
+                  console.log("[Firebase Fallback] Recuperado com sucesso usando o banco '(default)'.");
+                  lastSyncTime = Date.now();
+                }
+              }
+            } catch (fallbackErr: any) {
+              console.error("[Firebase Fallback] Falha no fallback ao conectar com banco padrão:", fallbackErr.message);
+            }
+          }
+          
           // Atualiza lastSyncTime para a metade do TTL para dar espaço para o servidor respirar
           lastSyncTime = Date.now() - (SYNC_TTL_MS / 2);
         } finally {
