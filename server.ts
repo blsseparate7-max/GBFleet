@@ -217,132 +217,149 @@ const getInitialData = () => ({
 });
 
 // Middleware to ensure Database is Synced from Firebase before serving any requests
-// Middleware to ensure Database is Synced from Firebase before serving any requests
 let lastSyncTime = 0;
 const SYNC_TTL_MS = 5000; // 5 segundos de cache local no servidor
 let activeSyncPromise: Promise<void> | null = null;
 
 const ensureDBSynced = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
-  const now = Date.now();
+  try {
+    const now = Date.now();
 
-  // Garantir que o /tmp/db.json exista em qualquer circunstância (primeira execução)
-  if (!fs.existsSync(DB_FILE)) {
+    // Garantir que a pasta /tmp exista (especialmente para Vercel)
     try {
-      const templateDbPath = path.join(process.cwd(), "db.json");
-      if (fs.existsSync(templateDbPath)) {
-        fs.copyFileSync(templateDbPath, DB_FILE);
-        console.log("[Vercel] Sincronizado db.json base para o /tmp/db.json com sucesso!");
-      } else {
-        fs.writeFileSync(DB_FILE, JSON.stringify(getInitialData(), null, 2));
-        console.log("[Vercel] Template db.json não encontrado. Criado novo banco de dados em /tmp/db.json!");
+      const dbDir = path.dirname(DB_FILE);
+      if (!fs.existsSync(dbDir)) {
+        fs.mkdirSync(dbDir, { recursive: true });
       }
-    } catch (err: any) {
-      console.error("[Database Initial] Erro ao carregar arquivo de banco local:", err.message);
+    } catch (e: any) {
+      console.error("[Database Dir] Falha ao criar diretório do DB:", e.message);
     }
-  }
 
-  // Se o Firestore estiver ativo e o cache expirou, inicia sincronização
-  if (firestoreDb && (now - lastSyncTime > SYNC_TTL_MS)) {
-    if (!activeSyncPromise) {
-      activeSyncPromise = (async () => {
-        try {
-          console.log("[Firebase] Cache expirado ou primeira execução. Sincronizando com Firestore remoto...");
-          const docRef = firestoreDb.collection("system_state").doc("gbfleet_db");
+    // Garantir que o /tmp/db.json exista em qualquer circunstância (primeira execução)
+    if (!fs.existsSync(DB_FILE)) {
+      try {
+        const templateDbPath = path.join(process.cwd(), "db.json");
+        if (fs.existsSync(templateDbPath)) {
+          fs.copyFileSync(templateDbPath, DB_FILE);
+          console.log("[Vercel] Sincronizado db.json base para o /tmp/db.json com sucesso!");
+        } else {
+          fs.writeFileSync(DB_FILE, JSON.stringify(getInitialData(), null, 2));
+          console.log("[Vercel] Template db.json não encontrado. Criado novo banco de dados em /tmp/db.json!");
+        }
+      } catch (err: any) {
+        console.error("[Database Initial] Erro ao carregar arquivo de banco local:", err.message);
+      }
+    }
 
-          const safePromise = <T>(p: Promise<T>): Promise<T> => {
-            p.catch((err) => console.log("[Firestore Background] Operação preventiva de rejeição:", err.message));
-            return p;
-          };
+    // Se o Firestore estiver ativo e o cache expirou, inicia sincronização
+    if (firestoreDb && (now - lastSyncTime > SYNC_TTL_MS)) {
+      if (!activeSyncPromise) {
+        activeSyncPromise = (async () => {
+          try {
+            console.log("[Firebase] Cache expirado ou primeira execução. Sincronizando com Firestore remoto...");
+            const docRef = firestoreDb.collection("system_state").doc("gbfleet_db");
 
-          // Timeout de 2.5s para não travar respostas da API
-          const docSnap = await Promise.race([
-            safePromise(docRef.get()),
-            new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout de 2.5s ao obter dados do Firestore")), 2500))
-          ]) as any;
+            const safePromise = <T>(p: Promise<T>): Promise<T> => {
+              p.catch((err) => console.log("[Firestore Background] Operação preventiva de rejeição:", err.message));
+              return p;
+            };
 
-          if (docSnap.exists) {
-            let remoteData = docSnap.data();
-            if (remoteData && Object.keys(remoteData).length > 0) {
-              let scrubbed = false;
-              if (remoteData.companies && remoteData.companies.some((c: any) => c.id === "comp_1")) {
-                remoteData.companies = remoteData.companies.filter((c: any) => c.id !== "comp_1");
-                scrubbed = true;
-              }
-              if (remoteData.users && remoteData.users.some((u: any) => u.id === "user_1" || u.companyId === "comp_1")) {
-                remoteData.users = remoteData.users.filter((u: any) => u.id !== "user_1" && u.companyId !== "comp_1");
-                scrubbed = true;
-              }
-              const arrayKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes"];
-              arrayKeys.forEach(key => {
-                if (remoteData[key] && remoteData[key].some((item: any) => item.companyId === "comp_1" || item.id?.includes("init"))) {
-                  remoteData[key] = remoteData[key].filter((item: any) => item.companyId !== "comp_1" && !item.id?.includes("init"));
+            // Timeout de 2.5s para não travar respostas da API
+            const docSnap = await Promise.race([
+              safePromise(docRef.get()),
+              new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout de 2.5s ao obter dados do Firestore")), 2500))
+            ]) as any;
+
+            if (docSnap.exists) {
+              let remoteData = docSnap.data();
+              if (remoteData && Object.keys(remoteData).length > 0) {
+                let scrubbed = false;
+                if (remoteData.companies && remoteData.companies.some((c: any) => c.id === "comp_1")) {
+                  remoteData.companies = remoteData.companies.filter((c: any) => c.id !== "comp_1");
                   scrubbed = true;
                 }
-              });
+                if (remoteData.users && remoteData.users.some((u: any) => u.id === "user_1" || u.companyId === "comp_1")) {
+                  remoteData.users = remoteData.users.filter((u: any) => u.id !== "user_1" && u.companyId !== "comp_1");
+                  scrubbed = true;
+                }
+                const arrayKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes"];
+                arrayKeys.forEach(key => {
+                  if (remoteData[key] && remoteData[key].some((item: any) => item.companyId === "comp_1" || item.id?.includes("init"))) {
+                    remoteData[key] = remoteData[key].filter((item: any) => item.companyId !== "comp_1" && !item.id?.includes("init"));
+                    scrubbed = true;
+                  }
+                });
 
-              if (scrubbed) {
-                console.log("[Firebase] Expurgo de dados de demonstração efetuado no Firestore!");
-                await Promise.race([
-                  safePromise(docRef.set(remoteData)),
-                  new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout ao salvar dados expurgados")), 2500))
-                ]);
+                if (scrubbed) {
+                  console.log("[Firebase] Expurgo de dados de demonstração efetuado no Firestore!");
+                  await Promise.race([
+                    safePromise(docRef.set(remoteData)),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout ao salvar dados expurgados")), 2500))
+                  ]);
+                }
+
+                fs.writeFileSync(DB_FILE, JSON.stringify(remoteData, null, 2));
+                console.log("[Firebase] Sincronização concluída. Cache local /tmp/db.json atualizado.");
+                lastSyncTime = Date.now();
               }
-
-              fs.writeFileSync(DB_FILE, JSON.stringify(remoteData, null, 2));
-              console.log("[Firebase] Sincronização concluída. Cache local /tmp/db.json atualizado.");
+            } else {
+              // Se o documento no Firestore não existir, criamos a partir do local
+              const localData = JSON.parse(fs.readFileSync(DB_FILE, "utf-8"));
+              await Promise.race([
+                safePromise(docRef.set(localData)),
+                new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout ao salvar dados iniciais no Firestore")), 2500))
+              ]);
+              console.log("[Firebase] Documento criado no Firestore.");
               lastSyncTime = Date.now();
             }
-          } else {
-            // Se o documento no Firestore não existir, criamos a partir do local
-            const localData = JSON.parse(fs.readFileSync(DB_FILE, "utf-8"));
-            await Promise.race([
-              safePromise(docRef.set(localData)),
-              new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout ao salvar dados iniciais no Firestore")), 2500))
-            ]);
-            console.log("[Firebase] Documento criado no Firestore.");
-            lastSyncTime = Date.now();
-          }
-        } catch (err: any) {
-          console.error("[Firebase] Erro ou timeout na sincronização do Firestore:", err.message);
-          
-          // Se for erro de banco de dados não encontrado (mismatch de databaseId), tentamos fazer fallback para o banco padrão "(default)"
-          if (firestoreDb && firestoreDatabaseId && firestoreDatabaseId !== "(default)" && 
-              (err.message?.toLowerCase().includes("database") || err.message?.toLowerCase().includes("not_found") || err.message?.toLowerCase().includes("not found"))) {
-            console.warn("[Firebase] Detectada possível incompatibilidade de ID de banco de dados. Tentando fallback para banco de dados '(default)'...");
-            try {
-              firestoreDatabaseId = "(default)";
-              firestoreDb = getFirestore(getApps()[0]);
-              // Tenta sincronizar de novo immediatamente com o novo firestoreDb
-              const retryDocRef = firestoreDb.collection("system_state").doc("gbfleet_db");
-              const retrySnap = await retryDocRef.get();
-              if (retrySnap.exists) {
-                const remoteData = retrySnap.data();
-                if (remoteData) {
-                  fs.writeFileSync(DB_FILE, JSON.stringify(remoteData, null, 2));
-                  console.log("[Firebase Fallback] Recuperado com sucesso usando o banco '(default)'.");
-                  lastSyncTime = Date.now();
+          } catch (err: any) {
+            console.error("[Firebase] Erro ou timeout na sincronização do Firestore:", err.message);
+            
+            // Se for erro de banco de dados não encontrado (mismatch de databaseId), tentamos fazer fallback para o banco padrão "(default)"
+            if (firestoreDb && firestoreDatabaseId && firestoreDatabaseId !== "(default)" && 
+                (err.message?.toLowerCase().includes("database") || err.message?.toLowerCase().includes("not_found") || err.message?.toLowerCase().includes("not found"))) {
+              console.warn("[Firebase] Detectada possível incompatibilidade de ID de banco de dados. Tentando fallback para banco de dados '(default)'...");
+              try {
+                firestoreDatabaseId = "(default)";
+                firestoreDb = getFirestore(getApps()[0]);
+                // Tenta sincronizar de novo imediatamente com o novo firestoreDb
+                const retryDocRef = firestoreDb.collection("system_state").doc("gbfleet_db");
+                const retrySnap = await retryDocRef.get();
+                if (retrySnap.exists) {
+                  const remoteData = retrySnap.data();
+                  if (remoteData) {
+                    fs.writeFileSync(DB_FILE, JSON.stringify(remoteData, null, 2));
+                    console.log("[Firebase Fallback] Recuperado com sucesso usando o banco '(default)'.");
+                    lastSyncTime = Date.now();
+                  }
                 }
+              } catch (fallbackErr: any) {
+                console.error("[Firebase Fallback] Falha no fallback ao conectar com banco padrão:", fallbackErr.message);
               }
-            } catch (fallbackErr: any) {
-              console.error("[Firebase Fallback] Falha no fallback ao conectar com banco padrão:", fallbackErr.message);
             }
+            
+            // Atualiza lastSyncTime para a metade do TTL para dar espaço para o servidor respirar
+            lastSyncTime = Date.now() - (SYNC_TTL_MS / 2);
+          } finally {
+            activeSyncPromise = null;
           }
-          
-          // Atualiza lastSyncTime para a metade do TTL para dar espaço para o servidor respirar
-          lastSyncTime = Date.now() - (SYNC_TTL_MS / 2);
-        } finally {
-          activeSyncPromise = null;
+        })();
+      }
+
+      // Na primeira execução inicial (lastSyncTime === 0), aguardamos a conclusão crítica
+      if (lastSyncTime === 0) {
+        try {
+          await activeSyncPromise;
+        } catch (e) {
+          console.error("[Firebase Initial Sync] Erro no aguardo inicial:", e);
         }
-      })();
+      }
     }
-
-    // Na primeira execução inicial (lastSyncTime === 0), aguardamos a conclusão crítica
-    if (lastSyncTime === 0) {
-      await activeSyncPromise;
-    }
+  } catch (globalErr: any) {
+    console.error("[ensureDBSynced Critical Error]", globalErr);
+  } finally {
+    next();
   }
-
-  next();
 };
 
 app.use(ensureDBSynced);
