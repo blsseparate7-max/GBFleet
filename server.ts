@@ -1,8 +1,6 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
-import { initializeApp, getApps, getApp, cert } from "firebase-admin/app";
-import { getFirestore } from "firebase-admin/firestore";
 
 const app = express();
 const PORT = 3000;
@@ -88,119 +86,260 @@ console.log("[System] Iniciando servidor em modo Vercel =", !!process.env.VERCEL
 // Se de fato desejar ligar o Firebase/Firestore remoto, adicione ENABLE_FIREBASE=true e as chaves nas variáveis de ambiente.
 const ENABLE_FIREBASE = process.env.ENABLE_FIREBASE === "true";
 
-let firestoreDb: any = null;
-let firestoreDatabaseId: string | undefined = undefined;
+let firestoreRestEnabled = false;
+let firestoreProjId = "";
+let firestoreDbId = "(default)";
+let firebaseServiceAccountObj: any = null;
+let lastOauthToken = "";
+let oauthTokenExpiry = 0;
 
 if (!ENABLE_FIREBASE) {
   console.log("[Database] Rodando no caminho mais simples (Opção 1): Banco de Dados Local puro via arquivo 'db.json'. Firebase/Firestore desativado.");
 } else {
   try {
     let projectId = process.env.FIREBASE_PROJECT_ID;
-    firestoreDatabaseId = process.env.FIREBASE_DATABASE_ID;
+    let databaseId = process.env.FIREBASE_DATABASE_ID || "(default)";
 
     const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
     if (fs.existsSync(firebaseConfigPath)) {
       const config = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf-8"));
       if (config.projectId) {
         projectId = config.projectId;
-        firestoreDatabaseId = config.firestoreDatabaseId;
+        databaseId = config.firestoreDatabaseId || databaseId;
       }
     }
 
     if (projectId) {
-      let canInitialize = true;
+      firestoreProjId = projectId;
+      firestoreDbId = databaseId;
+      let credentialLoaded = false;
 
-      // Em ambiente Vercel Serverless, se não houver FIREBASE_SERVICE_ACCOUNT nas variáveis de ambiente,
-      // não temos credenciais para acessar o Firestore externo. Nesse caso, pulamos para evitar crash ADC/timeouts.
-      if (isVercel && !process.env.FIREBASE_SERVICE_ACCOUNT) {
-        console.warn("[Firebase] Ambiente Vercel sem FIREBASE_SERVICE_ACCOUNT detectado. Desativando Firestore remoto para evitar erros ADC ou travamentos.");
-        canInitialize = false;
+      if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+        try {
+          let saStr = process.env.FIREBASE_SERVICE_ACCOUNT.trim();
+          
+          // Se parecer codificado em Base64 (comum no Vercel para evitar problemas de formatação de JSON/Quebra de linha)
+          if (saStr.startsWith("ey") || (!saStr.startsWith("{") && !saStr.startsWith("["))) {
+            try {
+              saStr = Buffer.from(saStr, "base64").toString("utf8");
+            } catch (b64err: any) {
+              console.warn("[Firebase] O valor do service account não é Base64 puro ou falhou ao decodificar, usando original:", b64err.message);
+            }
+          }
+
+          let serviceAccount: any = null;
+          try {
+            serviceAccount = JSON.parse(saStr);
+          } catch (jsonErr: any) {
+            console.warn("[Firebase] Primeira tentativa de parse JSON falhou. Tentando limpar quebras de linha reais para parse...", jsonErr.message);
+            try {
+              const sanitized = saStr.replace(/[\r\n]+/g, " ");
+              serviceAccount = JSON.parse(sanitized);
+            } catch (jsonErr2: any) {
+              console.error("[Firebase Error] Falha de parse JSON absoluta na conta de serviço:", jsonErr2.message);
+              throw jsonErr2;
+            }
+          }
+
+          if (serviceAccount && serviceAccount.private_key) {
+            serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, "\n");
+          }
+
+          firebaseServiceAccountObj = serviceAccount;
+          credentialLoaded = true;
+
+          if (serviceAccount.project_id) {
+            firestoreProjId = serviceAccount.project_id;
+          }
+
+          console.log("[Firebase] Carregada conta de serviço via FIREBASE_SERVICE_ACCOUNT para autenticação REST.");
+        } catch (saErr: any) {
+          console.error("[Firebase] Ignorando FIREBASE_SERVICE_ACCOUNT devido a um erro de parsing/leitura:", saErr.message);
+        }
       }
 
-      if (canInitialize) {
-        const appConfig: any = { projectId };
-        let credentialLoaded = false;
-        
-        if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-          try {
-            let saStr = process.env.FIREBASE_SERVICE_ACCOUNT.trim();
-            
-            // Se parecer codificado em Base64 (comum no Vercel para evitar problemas de formatação de JSON/Quebra de linha)
-            if (saStr.startsWith("ey") || (!saStr.startsWith("{") && !saStr.startsWith("["))) {
-              try {
-                saStr = Buffer.from(saStr, "base64").toString("utf8");
-              } catch (b64err: any) {
-                console.warn("[Firebase] O valor do service account não é Base64 puro ou falhou ao decodificar, usando original:", b64err.message);
-              }
-            }
-
-            let serviceAccount: any = null;
-            try {
-              serviceAccount = JSON.parse(saStr);
-            } catch (jsonErr: any) {
-              console.warn("[Firebase] Primeira tentativa de parse JSON falhou. Tentando limpar quebras de linha reais para parse...", jsonErr.message);
-              try {
-                // Limpa quebras reais que podem desformatar o JSON no Vercel
-                const sanitized = saStr.replace(/[\r\n]+/g, " ");
-                serviceAccount = JSON.parse(sanitized);
-              } catch (jsonErr2: any) {
-                console.error("[Firebase Error] Falha de parse JSON absoluta na conta de serviço:", jsonErr2.message);
-                throw jsonErr2;
-              }
-            }
-
-            // Trata a chave privada substituindo os caracteres '\n' por quebras de linha reais APÓS o parsing JSON com sucesso
-            if (serviceAccount && serviceAccount.private_key) {
-              serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, "\n");
-            }
-            
-            appConfig.credential = cert(serviceAccount);
-            credentialLoaded = true;
-
-            // Crucial: O ID do projeto na credencial deve reescrever o ID do config padrão para evitar erros de mismatch de autenticação
-            if (serviceAccount.project_id) {
-              appConfig.projectId = serviceAccount.project_id;
-              console.log(`[Firebase] ID do Projeto atualizado da conta de serviço para evitar incompatibilidade: ${appConfig.projectId}`);
-            }
-
-            console.log("[Firebase] Carregada conta de serviço via FIREBASE_SERVICE_ACCOUNT para autenticação.");
-          } catch (saErr: any) {
-            console.error("[Firebase] Ignorando FIREBASE_SERVICE_ACCOUNT devido a um erro de parsing/leitura:", saErr.message);
-          }
-        }
-
-        // Se no ambiente Vercel não conseguimos carregar as credenciais explicitamente,
-        // cancelamos a inicialização para evitar que o SDK tente buscar credenciais implícitas (ADC)
-        // do Google Cloud Metadata Service, o que causaria um timeout eterno (travando as requisições com 500).
-        if (isVercel && !credentialLoaded) {
-          console.warn("[Firebase] Erro de parsing ou credenciais vazias na Vercel. Desativando Firestore remoto preventivamente para evitar congelamentos de timeout ADC / erro 500.");
-          firestoreDb = null;
-        } else {
-          const appInstance = getApps().length === 0
-            ? initializeApp(appConfig)
-            : getApp();
-            
-          try {
-            if (firestoreDatabaseId && firestoreDatabaseId !== "(default)") {
-              firestoreDb = getFirestore(appInstance, firestoreDatabaseId);
-            } else {
-              firestoreDb = getFirestore(appInstance);
-            }
-            console.log(`[Firebase] Conectado ao Firestore com sucesso! (DatabaseId: ${firestoreDatabaseId || "(default)"})`);
-          } catch (dbErr: any) {
-          console.warn(`[Firebase] Falha ao obter banco com ID personalizado '${firestoreDatabaseId}', tentando banco padrão:`, dbErr.message);
-          try {
-            firestoreDb = getFirestore(appInstance);
-          } catch (stdDbErr: any) {
-            console.error("[Firebase] Falha total ao conectar ao Firestore padrão:", stdDbErr.message);
-            firestoreDb = null;
-          }
-        }
+      if (isVercel && !credentialLoaded) {
+        console.warn("[Firebase] Erro de parsing ou credenciais vazias na Vercel. Desativando Firestore remoto preventivamente para evitar congelamentos.");
+        firestoreRestEnabled = false;
+      } else if (credentialLoaded && firestoreProjId) {
+        firestoreRestEnabled = true;
+        console.log(`[Firebase REST] Configurado com sucesso! ProjectId: ${firestoreProjId}, DatabaseId: ${firestoreDbId}`);
       }
     }
-  }
   } catch (err: any) {
-    console.error("[Firebase] Falha crítica ao inicializar o Firebase Admin SDK:", err.message);
+    console.error("[Firebase] Falha crítica ao configurar variáveis de autenticação Firestore REST:", err.message);
+  }
+}
+
+// Helper functions to convert between standard JS objects/values and Firestore REST API format
+function toFirestoreValue(val: any): any {
+  if (val === null || val === undefined) {
+    return { nullValue: null };
+  }
+  if (typeof val === "boolean") {
+    return { booleanValue: val };
+  }
+  if (typeof val === "number") {
+    if (Number.isInteger(val)) {
+      return { integerValue: String(val) };
+    }
+    return { doubleValue: val };
+  }
+  if (typeof val === "string") {
+    return { stringValue: val };
+  }
+  if (Array.isArray(val)) {
+    return {
+      arrayValue: {
+        values: val.map(toFirestoreValue)
+      }
+    };
+  }
+  if (typeof val === "object") {
+    const fields: any = {};
+    for (const k of Object.keys(val)) {
+      fields[k] = toFirestoreValue(val[k]);
+    }
+    return { mapValue: { fields } };
+  }
+  return { stringValue: String(val) };
+}
+
+function fromFirestoreValue(val: any): any {
+  if (!val) return null;
+  if ("nullValue" in val) return null;
+  if ("booleanValue" in val) return val.booleanValue;
+  if ("integerValue" in val) return parseInt(val.integerValue, 10);
+  if ("doubleValue" in val) return Number(val.doubleValue);
+  if ("stringValue" in val) return val.stringValue;
+  if ("arrayValue" in val) {
+    const values = val.arrayValue?.values || [];
+    return values.map(fromFirestoreValue);
+  }
+  if ("mapValue" in val) {
+    const fields = val.mapValue?.fields || {};
+    const res: any = {};
+    for (const k of Object.keys(fields)) {
+      res[k] = fromFirestoreValue(fields[k]);
+    }
+    return res;
+  }
+  return null;
+}
+
+// OAuth2 Token manager to invoke Google Cloud REST Apis
+async function getFirestoreToken(): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  if (lastOauthToken && now < oauthTokenExpiry - 60) {
+    return lastOauthToken;
+  }
+
+  if (!firebaseServiceAccountObj) {
+    throw new Error("Missing Firebase Service Account credentials for REST authentication.");
+  }
+
+  const crypto = await import("crypto");
+  const header = { alg: "RS256", typ: "JWT" };
+  const payload = {
+    iss: firebaseServiceAccountObj.client_email,
+    scope: "https://www.googleapis.com/auth/datastore https://www.googleapis.com/auth/cloud-platform",
+    aud: "https://oauth2.googleapis.com/token",
+    exp: now + 3600,
+    iat: now
+  };
+
+  const encodedHeader = Buffer.from(JSON.stringify(header)).toString("base64url");
+  const encodedPayload = Buffer.from(JSON.stringify(payload)).toString("base64url");
+
+  const sign = crypto.createSign("RSA-SHA256");
+  sign.update(`${encodedHeader}.${encodedPayload}`);
+  const signature = sign.sign(firebaseServiceAccountObj.private_key, "base64url");
+
+  const jwt = `${encodedHeader}.${encodedPayload}.${signature}`;
+
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion: jwt
+    })
+  });
+
+  const data: any = await res.json();
+  if (!data.access_token) {
+    throw new Error("Failed to get Google credentials access token: " + JSON.stringify(data));
+  }
+
+  lastOauthToken = data.access_token;
+  oauthTokenExpiry = now + (data.expires_in || 3600);
+  return lastOauthToken;
+}
+
+async function firestoreGetDoc(): Promise<{ exists: boolean; data: any }> {
+  try {
+    const token = await getFirestoreToken();
+    const dbName = firestoreDbId || "(default)";
+    const url = `https://firestore.googleapis.com/v1/projects/${firestoreProjId}/databases/${dbName}/documents/system_state/gbfleet_db`;
+    
+    const res = await fetch(url, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    });
+
+    if (res.status === 404) {
+      return { exists: false, data: null };
+    }
+
+    if (!res.ok) {
+      const errorText = await res.text();
+      throw new Error(`Firestore REST GET failed (status ${res.status}): ${errorText}`);
+    }
+
+    const doc = await res.json();
+    const fields = doc.fields || {};
+    const data: any = {};
+    for (const k of Object.keys(fields)) {
+      data[k] = fromFirestoreValue(fields[k]);
+    }
+    return { exists: true, data };
+  } catch (err: any) {
+    throw new Error(`[Firestore REST Read Error] ${err.message}`);
+  }
+}
+
+async function firestoreSetDoc(data: any): Promise<void> {
+  try {
+    const token = await getFirestoreToken();
+    const dbName = firestoreDbId || "(default)";
+    const url = `https://firestore.googleapis.com/v1/projects/${firestoreProjId}/databases/${dbName}/documents/system_state/gbfleet_db`;
+
+    const fields: any = {};
+    const queryParams = new URLSearchParams();
+    for (const k of Object.keys(data)) {
+      fields[k] = toFirestoreValue(data[k]);
+      queryParams.append("updateMask.fieldPaths", k);
+    }
+
+    const res = await fetch(`${url}?${queryParams.toString()}`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        fields
+      })
+    });
+
+    if (!res.ok) {
+      const errorText = await res.text();
+      throw new Error(`Firestore REST PATCH failed (status ${res.status}): ${errorText}`);
+    }
+  } catch (err: any) {
+    throw new Error(`[Firestore REST Write Error] ${err.message}`);
   }
 }
 
@@ -293,27 +432,26 @@ const ensureDBSynced = async (req: express.Request, res: express.Response, next:
       }
     }
 
-    // Se o Firestore estiver ativo e o cache expirou, inicia sincronização
-    if (firestoreDb && (now - lastSyncTime > SYNC_TTL_MS)) {
+    // Se o Firestore REST estiver ativo e o cache expirou, inicia sincronização
+    if (firestoreRestEnabled && (now - lastSyncTime > SYNC_TTL_MS)) {
       if (!activeSyncPromise) {
         activeSyncPromise = (async () => {
           try {
-            console.log("[Firebase] Cache expirado ou primeira execução. Sincronizando com Firestore remoto...");
-            const docRef = firestoreDb.collection("system_state").doc("gbfleet_db");
+            console.log("[Firebase REST] Cache expirado ou primeira execução. Sincronizando com Firestore remoto...");
 
             const safePromise = <T>(p: Promise<T>): Promise<T> => {
               p.catch((err) => console.log("[Firestore Background] Operação preventiva de rejeição:", err.message));
               return p;
             };
 
-            // Timeout de 2.5s para não travar respostas da API
-            const docSnap = await Promise.race([
-              safePromise(docRef.get()),
-              new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout de 2.5s ao obter dados do Firestore")), 2500))
-            ]) as any;
+            // Timeout de 4.5s para não travar respostas da API
+            const result = await Promise.race([
+              safePromise(firestoreGetDoc()),
+              new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout de 4.5s ao obter dados do Firestore")), 4500))
+            ]) as { exists: boolean; data: any };
 
-            if (docSnap.exists) {
-              let remoteData = docSnap.data();
+            if (result.exists) {
+              let remoteData = result.data;
               if (remoteData && Object.keys(remoteData).length > 0) {
                 let scrubbed = false;
                 if (remoteData.companies && remoteData.companies.some((c: any) => c.id === "comp_1")) {
@@ -333,50 +471,44 @@ const ensureDBSynced = async (req: express.Request, res: express.Response, next:
                 });
 
                 if (scrubbed) {
-                  console.log("[Firebase] Expurgo de dados de demonstração efetuado no Firestore!");
+                  console.log("[Firebase REST] Expurgo de dados de demonstração efetuado!");
                   await Promise.race([
-                    safePromise(docRef.set(remoteData)),
-                    new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout ao salvar dados expurgados")), 2500))
+                    safePromise(firestoreSetDoc(remoteData)),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout ao salvar dados expurgados")), 3100))
                   ]);
                 }
 
                 fs.writeFileSync(DB_FILE, JSON.stringify(remoteData, null, 2));
-                console.log("[Firebase] Sincronização concluída. Cache local /tmp/db.json atualizado.");
+                console.log("[Firebase REST] Sincronização concluída. Cache local /tmp/db.json atualizado.");
                 lastSyncTime = Date.now();
               }
             } else {
               // Se o documento no Firestore não existir, criamos a partir do local
               const localData = JSON.parse(fs.readFileSync(DB_FILE, "utf-8"));
               await Promise.race([
-                safePromise(docRef.set(localData)),
-                new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout ao salvar dados iniciais no Firestore")), 2500))
+                safePromise(firestoreSetDoc(localData)),
+                new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout ao salvar dados iniciais no Firestore")), 3100))
               ]);
-              console.log("[Firebase] Documento criado no Firestore.");
+              console.log("[Firebase REST] Documento criado no Firestore.");
               lastSyncTime = Date.now();
             }
           } catch (err: any) {
-            console.error("[Firebase] Erro ou timeout na sincronização do Firestore:", err.message);
+            console.error("[Firebase REST] Erro ou timeout na sincronização do Firestore:", err.message);
             
             // Se for erro de banco de dados não encontrado (mismatch de databaseId), tentamos fazer fallback para o banco padrão "(default)"
-            if (firestoreDb && firestoreDatabaseId && firestoreDatabaseId !== "(default)" && 
+            if (firestoreDbId && firestoreDbId !== "(default)" && 
                 (err.message?.toLowerCase().includes("database") || err.message?.toLowerCase().includes("not_found") || err.message?.toLowerCase().includes("not found"))) {
-              console.warn("[Firebase] Detectada possível incompatibilidade de ID de banco de dados. Tentando fallback para banco de dados '(default)'...");
+              console.warn("[Firebase REST] Detectada possível incompatibilidade de ID de banco de dados. Tentando fallback para banco de dados '(default)'...");
               try {
-                firestoreDatabaseId = "(default)";
-                firestoreDb = getFirestore(getApps()[0]);
-                // Tenta sincronizar de novo imediatamente com o novo firestoreDb
-                const retryDocRef = firestoreDb.collection("system_state").doc("gbfleet_db");
-                const retrySnap = await retryDocRef.get();
-                if (retrySnap.exists) {
-                  const remoteData = retrySnap.data();
-                  if (remoteData) {
-                    fs.writeFileSync(DB_FILE, JSON.stringify(remoteData, null, 2));
-                    console.log("[Firebase Fallback] Recuperado com sucesso usando o banco '(default)'.");
-                    lastSyncTime = Date.now();
-                  }
+                firestoreDbId = "(default)";
+                const retryResult = await firestoreGetDoc();
+                if (retryResult.exists && retryResult.data) {
+                  fs.writeFileSync(DB_FILE, JSON.stringify(retryResult.data, null, 2));
+                  console.log("[Firebase REST Fallback] Recuperado com sucesso usando o banco '(default)'.");
+                  lastSyncTime = Date.now();
                 }
               } catch (fallbackErr: any) {
-                console.error("[Firebase Fallback] Falha no fallback ao conectar com banco padrão:", fallbackErr.message);
+                console.error("[Firebase REST Fallback] Falha no fallback ao conectar com banco padrão:", fallbackErr.message);
               }
             }
             
@@ -393,7 +525,7 @@ const ensureDBSynced = async (req: express.Request, res: express.Response, next:
         try {
           await activeSyncPromise;
         } catch (e) {
-          console.error("[Firebase Initial Sync] Erro no aguardo inicial:", e);
+          console.error("[Firebase REST Initial Sync] Erro no aguardo inicial:", e);
         }
       }
     }
@@ -554,13 +686,13 @@ app.use(ensureDBSynced);
 
   const writeDB = (data: any) => {
     fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
-    if (firestoreDb) {
-      lastWritePromise = firestoreDb.collection("system_state").doc("gbfleet_db").set(data)
+    if (firestoreRestEnabled) {
+      lastWritePromise = firestoreSetDoc(data)
         .then(() => {
-          console.log("[Firebase] Banco de dados salvo com sucesso no Firestore remoto.");
+          console.log("[Firebase REST] Banco de dados salvo com sucesso no Firestore remoto.");
         })
         .catch((err: any) => {
-          console.error("[Firebase] Erro ao persistir dados no Firestore:", err.message);
+          console.error("[Firebase REST] Erro ao persistir dados no Firestore:", err.message);
         });
     }
   };
@@ -677,7 +809,7 @@ app.use(ensureDBSynced);
         firebase: {
           projectId: process.env.FIREBASE_PROJECT_ID || "not set",
           hasConfigJson: fs.existsSync(path.join(process.cwd(), "firebase-applet-config.json")),
-          initialized: !!firestoreDb
+          initialized: firestoreRestEnabled
         },
         database: {
           usersCount,
