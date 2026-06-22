@@ -42,6 +42,53 @@ if (!isVercel) {
 }
 
 // Initialize Firebase Admin configuration if present or from Environment Variables
+// Diagnostics logs store to facilitate remote debugging of Serverless 500 errors in Vercel
+const startupLogs: string[] = [];
+const maxLogs = 100;
+
+const originalLog = globalThis.console.log;
+const originalWarn = globalThis.console.warn;
+const originalError = globalThis.console.error;
+
+globalThis.console.log = (msg?: any, ...optionalParams: any[]) => {
+  try {
+    const formatted = `[INFO] ${msg !== undefined ? msg : ""} ${optionalParams.map(a => {
+      if (a instanceof Error) return a.message + "\n" + a.stack;
+      return typeof a === "object" ? JSON.stringify(a) : String(a);
+    }).join(' ')}`;
+    startupLogs.push(`[${new Date().toISOString()}] ${formatted}`);
+    if (startupLogs.length > maxLogs) startupLogs.shift();
+  } catch (e) {}
+  originalLog(msg, ...optionalParams);
+};
+
+globalThis.console.warn = (msg?: any, ...optionalParams: any[]) => {
+  try {
+    const formatted = `[WARN] ${msg !== undefined ? msg : ""} ${optionalParams.map(a => {
+      if (a instanceof Error) return a.message + "\n" + a.stack;
+      return typeof a === "object" ? JSON.stringify(a) : String(a);
+    }).join(' ')}`;
+    startupLogs.push(`[${new Date().toISOString()}] ${formatted}`);
+    if (startupLogs.length > maxLogs) startupLogs.shift();
+  } catch (e) {}
+  originalWarn(msg, ...optionalParams);
+};
+
+globalThis.console.error = (msg?: any, ...optionalParams: any[]) => {
+  try {
+    const formatted = `[ERROR] ${msg !== undefined ? msg : ""} ${optionalParams.map(a => {
+      if (a instanceof Error) return a.message + "\n" + a.stack;
+      return typeof a === "object" ? JSON.stringify(a) : String(a);
+    }).join(' ')}`;
+    startupLogs.push(`[${new Date().toISOString()}] ${formatted}`);
+    if (startupLogs.length > maxLogs) startupLogs.shift();
+  } catch (e) {}
+  originalError(msg, ...optionalParams);
+};
+
+// Hook into initial system state
+console.log("[System] Iniciando servidor em modo Vercel =", !!process.env.VERCEL, "com arquivo DB =", DB_FILE);
+
 // Opção 1: Banco de dados local puro via arquivo db.json (Ativado por padrão para evitar erros de Conta de Serviço do Firebase).
 // Se de fato desejar ligar o Firebase/Firestore remoto, adicione ENABLE_FIREBASE=true e as chaves nas variáveis de ambiente.
 const ENABLE_FIREBASE = process.env.ENABLE_FIREBASE === "true";
@@ -604,12 +651,24 @@ app.use(ensureDBSynced);
       const dbExists = fs.existsSync(DB_FILE);
       let dbSize = 0;
       let dbSample = "";
+      let usersCount = 0;
+      let usersEmails: string[] = [];
+      
       if (dbExists) {
         const stat = fs.statSync(DB_FILE);
         dbSize = stat.size;
         const text = fs.readFileSync(DB_FILE, "utf-8");
         dbSample = text.substring(0, 150);
       }
+
+      try {
+        const db = readDB();
+        usersCount = db.users ? db.users.length : 0;
+        usersEmails = db.users ? db.users.map((u: any) => u.email) : [];
+      } catch (dbErr: any) {
+        console.warn("[Health] Falha ao analisar banco durante diagnostics:", dbErr.message);
+      }
+
       res.json({
         status: "ok",
         env: {
@@ -624,7 +683,12 @@ app.use(ensureDBSynced);
           projectId: process.env.FIREBASE_PROJECT_ID || "not set",
           hasConfigJson: fs.existsSync(path.join(process.cwd(), "firebase-applet-config.json")),
           initialized: !!firestoreDb
-        }
+        },
+        database: {
+          usersCount,
+          usersEmails
+        },
+        diagnostics: startupLogs
       });
     } catch (e: any) {
       res.status(500).json({ status: "error", message: e.message, stack: e.stack });
@@ -634,9 +698,11 @@ app.use(ensureDBSynced);
   // Login Endpoint (No signup, direct login only as per user instructions)
   app.post("/api/auth/login", (req, res) => {
     try {
+      console.log("[Login] Requisição recebida:", { bodyKeys: req.body ? Object.keys(req.body) : null });
       const db = readDB();
-      const { email, password } = req.body;
+      const { email, password } = req.body || {};
       if (!email || !password) {
+        console.warn("[Login Warning] email ou senha faltando");
         return res.status(400).json({ error: "E-mail e senha são obrigatórios." });
       }
 
@@ -645,15 +711,18 @@ app.use(ensureDBSynced);
 
       const user = db.users.find((u: any) => u.email?.toLowerCase() === emailStr);
       if (!user) {
+        console.warn("[Login Failed] Usuário não encontrado:", emailStr);
         return res.status(401).json({ error: "E-mail ou senha incorretos." });
       }
 
       const correctPassword = String(user.password || "demo");
       if (correctPassword !== passwordStr) {
+        console.warn("[Login Failed] Senha incorreta para o usuário:", emailStr);
         return res.status(401).json({ error: "E-mail ou senha incorretos." });
       }
 
       const company = db.companies.find((c: any) => c.id === user.companyId) || { id: user.companyId, nome: "GBFleet Demo" };
+      console.log("[Login Success] Login efetuado com sucesso para usuário:", emailStr, "da empresa:", company.nome);
       res.json({ success: true, user, company });
     } catch (routeErr: any) {
       console.error("[Login Route Error] Falha ao processar o login:", routeErr);
