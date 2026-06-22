@@ -44,46 +44,41 @@ if (!isVercel) {
 // Initialize Firebase Admin configuration if present or from Environment Variables
 // Diagnostics logs store to facilitate remote debugging of Serverless 500 errors in Vercel
 const startupLogs: string[] = [];
-const maxLogs = 100;
 
-const originalLog = globalThis.console.log;
-const originalWarn = globalThis.console.warn;
-const originalError = globalThis.console.error;
-
-globalThis.console.log = (msg?: any, ...optionalParams: any[]) => {
+const logSystem = (msg?: any, ...optionalParams: any[]) => {
   try {
     const formatted = `[INFO] ${msg !== undefined ? msg : ""} ${optionalParams.map(a => {
       if (a instanceof Error) return a.message + "\n" + a.stack;
       return typeof a === "object" ? JSON.stringify(a) : String(a);
     }).join(' ')}`;
     startupLogs.push(`[${new Date().toISOString()}] ${formatted}`);
-    if (startupLogs.length > maxLogs) startupLogs.shift();
+    if (startupLogs.length > 100) startupLogs.shift();
   } catch (e) {}
-  originalLog(msg, ...optionalParams);
+  console.log(msg, ...optionalParams);
 };
 
-globalThis.console.warn = (msg?: any, ...optionalParams: any[]) => {
+const warnSystem = (msg?: any, ...optionalParams: any[]) => {
   try {
     const formatted = `[WARN] ${msg !== undefined ? msg : ""} ${optionalParams.map(a => {
       if (a instanceof Error) return a.message + "\n" + a.stack;
       return typeof a === "object" ? JSON.stringify(a) : String(a);
     }).join(' ')}`;
     startupLogs.push(`[${new Date().toISOString()}] ${formatted}`);
-    if (startupLogs.length > maxLogs) startupLogs.shift();
+    if (startupLogs.length > 100) startupLogs.shift();
   } catch (e) {}
-  originalWarn(msg, ...optionalParams);
+  console.warn(msg, ...optionalParams);
 };
 
-globalThis.console.error = (msg?: any, ...optionalParams: any[]) => {
+const errorSystem = (msg?: any, ...optionalParams: any[]) => {
   try {
     const formatted = `[ERROR] ${msg !== undefined ? msg : ""} ${optionalParams.map(a => {
       if (a instanceof Error) return a.message + "\n" + a.stack;
       return typeof a === "object" ? JSON.stringify(a) : String(a);
     }).join(' ')}`;
     startupLogs.push(`[${new Date().toISOString()}] ${formatted}`);
-    if (startupLogs.length > maxLogs) startupLogs.shift();
+    if (startupLogs.length > 100) startupLogs.shift();
   } catch (e) {}
-  originalError(msg, ...optionalParams);
+  console.error(msg, ...optionalParams);
 };
 
 // Hook into initial system state
