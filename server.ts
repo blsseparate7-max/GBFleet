@@ -693,8 +693,20 @@ app.use(ensureDBSynced);
   // Login Endpoint (No signup, direct login only as per user instructions)
   app.post("/api/auth/login", (req, res) => {
     try {
+      console.log("STEP 1");
       console.log("[Login] Requisição recebida:", { bodyKeys: req.body ? Object.keys(req.body) : null });
+      console.log("STEP 1 - Status das Variáveis de Ambiente no Login:", {
+        FIREBASE_API_KEY: process.env.FIREBASE_API_KEY ? "DEFINED" : "UNDEFINED",
+        FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID ? "DEFINED" : "UNDEFINED",
+        FIREBASE_PRIVATE_KEY: process.env.FIREBASE_PRIVATE_KEY ? "DEFINED" : "UNDEFINED",
+        FIREBASE_CLIENT_EMAIL: process.env.FIREBASE_CLIENT_EMAIL ? "DEFINED" : "UNDEFINED",
+        JWT_SECRET: process.env.JWT_SECRET ? "DEFINED" : "UNDEFINED"
+      });
+
       const db = readDB();
+      console.log("STEP 2");
+      console.log("STEP 2 - Banco de dados local lido com sucesso. Verificando credenciais para:", req.body?.email);
+
       const { email, password } = req.body || {};
       if (!email || !password) {
         console.warn("[Login Warning] email ou senha faltando");
@@ -717,10 +729,15 @@ app.use(ensureDBSynced);
       }
 
       const company = db.companies.find((c: any) => c.id === user.companyId) || { id: user.companyId, nome: "GBFleet Demo" };
+      console.log("STEP 3");
       console.log("[Login Success] Login efetuado com sucesso para usuário:", emailStr, "da empresa:", company.nome);
       res.json({ success: true, user, company });
     } catch (routeErr: any) {
-      console.error("[Login Route Error] Falha ao processar o login:", routeErr);
+      console.error("Erro capturado em POST /api/auth/login:");
+      console.error(routeErr);
+      if (routeErr && routeErr.stack) {
+        console.error(routeErr.stack);
+      }
       res.status(500).json({
         error: "Erro interno do servidor ao tentar processar o login.",
         message: routeErr.message,
