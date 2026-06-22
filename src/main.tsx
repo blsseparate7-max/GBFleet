@@ -36,8 +36,17 @@ const getBackendUrl = () => {
   if (envUrl) {
     return envUrl.endsWith('/') ? envUrl.slice(0, -1) : envUrl;
   }
-  // Se não encontrar o .env (como na Vercel), usa a própria origem atual
-  return window.location.origin;
+  // Se não encontrar o .env (como na Vercel), usa a própria origem atual.
+  // Trata o caso de iframes ou abas privadas no Safari onde window.location.origin pode retornar "null",
+  // o que causaria URLs inválidas como "null/api/auth/login" e erro de sintáxis no fetch.
+  try {
+    if (window.location.origin && window.location.origin !== "null") {
+      return window.location.origin;
+    }
+  } catch (e) {
+    // Ignore e retorna vazio para usar rotas relativas seguras
+  }
+  return "";
 };
 
 const baseUrl = getBackendUrl();
@@ -47,9 +56,11 @@ const originalFetch = window.fetch;
 const customFetch = async function (input: RequestInfo | URL, init?: RequestInit) {
   let url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
   
-  // Se a rota for relativa (ex: /api/auth/login), anexa a URL correta do servidor
+  // Se a rota for relativa (ex: /api/auth/login), anexa a URL correta do servidor se houver baseUrl absoluta
   if (url.startsWith('/api/')) {
-    url = `${baseUrl}${url}`;
+    if (baseUrl && baseUrl !== "null") {
+      url = `${baseUrl}${url}`;
+    }
   }
 
   // Mantém a lógica original de validação de rotas do seu projeto (ignora o login na injeção de headers)
