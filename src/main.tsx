@@ -32,15 +32,31 @@ const safeStorage = {
 
 // Deteta de forma segura o endereço do backend vindo do .env do Vite
 const getBackendUrl = () => {
-  const envUrl = (import.meta as any).env?.VITE_APP_URL;
-  if (envUrl) {
+  let envUrl = (import.meta as any).env?.VITE_APP_URL;
+  if (envUrl && typeof envUrl === 'string') {
+    // Remove aspas simples/duplas e espaçosextras da variável de ambiente
+    envUrl = envUrl.replace(/^["']|["']$/g, '').trim();
+    
+    // Se estivermos rodando no ambiente de visualização do AI Studio (Cloud Run) ou localhost,
+    // usamos rotas relativas ("") para que o app chame o próprio contêiner correto e ativo,
+    // evitando bloqueios de CORS e sandbox por parte de navegadores como Safari.
+    const currentHost = window.location.hostname;
+    if (currentHost && (
+      currentHost.includes('run.app') || 
+      currentHost.includes('localhost') || 
+      currentHost.includes('127.0.0.1') || 
+      currentHost.includes('aistudio.google') ||
+      currentHost.includes('googleusercontent')
+    )) {
+      return "";
+    }
+    
     return envUrl.endsWith('/') ? envUrl.slice(0, -1) : envUrl;
   }
-  // Se não encontrar o .env (como na Vercel), usa a própria origem atual.
-  // Trata o caso de iframes ou abas privadas no Safari onde window.location.origin pode retornar "null",
-  // o que causaria URLs inválidas como "null/api/auth/login" e erro de sintáxis no fetch.
+  
+  // Se não encontrar o .env (como na Vercel), usa a própria origem atual como fallback relativo ou absoluto
   try {
-    if (window.location.origin && window.location.origin !== "null") {
+    if (window.location.origin && window.location.origin !== "null" && !window.location.origin.startsWith('null')) {
       return window.location.origin;
     }
   } catch (e) {
