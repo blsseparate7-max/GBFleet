@@ -1,7 +1,7 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore, doc, getDoc, setDoc } from "firebase/firestore";
-import configJson from "../../firebase-applet-config.json";
-import dbTemplate from "../../db.json";
+import { configJson } from "./configJson";
+import { dbTemplate } from "./dbTemplate";
 
 // Initialize Firebase Web SDK Client
 const firebaseConfig = {
