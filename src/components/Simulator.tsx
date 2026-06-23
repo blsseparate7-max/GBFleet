@@ -121,6 +121,66 @@ export default function Simulator({ data, onUpdate }: SimulatorProps) {
   const [isManageRoutesOpen, setIsManageRoutesOpen] = useState(false);
   const [editingRoute, setEditingRoute] = useState<any | null>(null);
 
+  // States for logging simulated freights directly into operational tracker
+  const [isLaunchModalOpen, setIsLaunchModalOpen] = useState(false);
+  const [launchTruckPlaca, setLaunchTruckPlaca] = useState('');
+  const [launchDriverId, setLaunchDriverId] = useState('');
+  const [launchDate, setLaunchDate] = useState(new Date().toISOString().split('T')[0]);
+  const [isLaunching, setIsLaunching] = useState(false);
+  const [launchSuccessAlert, setLaunchSuccessAlert] = useState(false);
+
+  const handleOpenLaunchModal = () => {
+    setLaunchTruckPlaca(selectedTruckPlaca || (data?.trucks?.[0]?.placa || ''));
+    setLaunchDriverId(data?.drivers?.[0]?.id || '');
+    setLaunchDate(new Date().toISOString().split('T')[0]);
+    setIsLaunchModalOpen(true);
+  };
+
+  const handleConfirmLaunch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLaunching(true);
+    try {
+      const response = await fetch('/api/freights', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          companyId: 'comp_1',
+          truckId: launchTruckPlaca,
+          driverId: launchDriverId,
+          origem: origem,
+          destino: destino,
+          valorBruto: Number(freightValue),
+          pedagio: Number(tolls),
+          combustivel: Number(fuelCostTotal),
+          motorista: Number(driverRate),
+          outrasDespesas: Number(otherCosts),
+          status: 'Confirmado',
+          data: launchDate,
+          distanciaKm: Number(distance),
+          resultadoLiquido: Number(netEarnings)
+        })
+      });
+
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || "Falha ao despachar frete.");
+      }
+
+      setIsLaunchModalOpen(false);
+      setLaunchSuccessAlert(true);
+      setTimeout(() => setLaunchSuccessAlert(false), 4000);
+      
+      if (onUpdate) {
+        onUpdate();
+      }
+    } catch (err: any) {
+      console.error(err);
+      alert(err.message || "Erro ao efetuar o lançamento de frete real.");
+    } finally {
+      setIsLaunching(false);
+    }
+  };
+
   // Form parameters for custom route template
   const [formNome, setFormNome] = useState('');
   const [formOrigem, setFormOrigem] = useState('');
@@ -1109,6 +1169,19 @@ Consumido Estimado: ${consumption} km/l | Óleo Diesel: R$ ${dieselPrice.toFixed
                   <p className="font-bold text-sm text-blue-400 font-mono">R$ {totalCosts.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}</p>
                 </div>
               </div>
+
+              {/* Directly launch / dispatch as physically active freight */}
+              <div className="border-t border-slate-800/80 pt-4 mt-3">
+                <button
+                  id="btn-dispatch-simulation"
+                  type="button"
+                  onClick={handleOpenLaunchModal}
+                  className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 active:scale-[0.98] text-white font-bold rounded-2xl text-[11px] uppercase tracking-wider flex items-center justify-center gap-2 transition-all shadow-md shadow-blue-950 cursor-pointer select-none"
+                >
+                  <TruckIcon size={14} className="text-blue-100" />
+                  <span>Despachar Frete Real</span>
+                </button>
+              </div>
             </div>
 
             {/* White Card: Efficiency indicators list */}
@@ -1188,6 +1261,161 @@ Consumido Estimado: ${consumption} km/l | Óleo Diesel: R$ ${dieselPrice.toFixed
           <span>Modelo de rota cadastrado no banco de dados e sincronizado!</span>
         </div>
       )}
+
+      {/* Floating launch success alerts */}
+      {launchSuccessAlert && (
+        <div className="fixed bottom-6 right-6 bg-slate-900 text-white border border-slate-800 p-4 rounded-2xl flex items-center gap-3 z-50 text-xs font-bold animate-fade-in shadow-2xl animate-bounce">
+          <Check className="text-emerald-500 shrink-0" size={18} />
+          <span>Viagem despachada com sucesso! Ela foi lançada nas abas de Controle Operacional de Fretes e no Fluxo de Caixa.</span>
+        </div>
+      )}
+
+      {/* Modal: Despachar Frete Real a partir da Simulação */}
+      <Modal
+        isOpen={isLaunchModalOpen}
+        onClose={() => setIsLaunchModalOpen(false)}
+        title="Escalar e Despachar Frete Real"
+        size="large"
+      >
+        <form onSubmit={handleConfirmLaunch} className="p-6 space-y-6 text-slate-700">
+          <div className="bg-blue-50/70 p-4 border border-blue-100 rounded-2xl text-[11px] leading-relaxed text-slate-600">
+            <h5 className="font-bold text-blue-900 mb-1 flex items-center gap-1">
+              <Info size={14} className="text-blue-600 shrink-0" /> Integração Direta com Controle e Caixa
+            </h5>
+            Ao despachar esta viagem simulada, ela será registrada instantaneamente como frete ativo na aba <strong>Gestão de Fretes</strong>. O faturamento e os custos operacionais correspondentes (diesel, comissão, pedágios) serão automaticamente provisionados no <strong>Fluxo de Caixa</strong> e nos dashboards em tempo real do sistema.
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+            {/* Trajeto e Dados Principais */}
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex flex-col justify-between">
+              <div>
+                <span className="text-[9px] font-black tracking-wider text-slate-400 uppercase block mb-2">Origem ➔ Destino Simulados</span>
+                <div className="space-y-1">
+                  <p className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0"></span>
+                    {origem}
+                  </p>
+                  <p className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0"></span>
+                    {destino}
+                  </p>
+                </div>
+                <p className="text-[10px] text-slate-500 mt-3 font-mono font-bold">Estrada estimada: {distance} KM</p>
+              </div>
+            </div>
+
+            {/* Demonstração Financeira */}
+            <div className="bg-slate-900 text-white p-4 rounded-xl flex flex-col justify-between">
+              <div className="space-y-1.5">
+                <span className="text-[9px] font-black tracking-wider text-slate-400 uppercase block mb-1">Demonstrativo de Resultado</span>
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-slate-400 font-semibold">Receita Frete:</span>
+                  <span className="font-bold font-mono">R$ {Number(freightValue).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                </div>
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-slate-400 font-semibold">Margem de Custos:</span>
+                  <span className="font-bold text-rose-400 font-mono">R$ {totalCosts.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                </div>
+              </div>
+              <div className="border-t border-slate-800 pt-2 flex justify-between items-center text-xs">
+                <span className="text-slate-400 font-bold uppercase text-[9px]">Saldo Operacional:</span>
+                <span className={cn("font-black font-mono text-sm", netEarnings >= 0 ? "text-emerald-400" : "text-rose-400")}>
+                  R$ {netEarnings.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} ({profitMarginPercent.toFixed(1)}%)
+                </span>
+              </div>
+            </div>
+
+            {/* Selecionar Veículo de Escala */}
+            <div>
+              <label className="block text-[10px] font-black uppercase text-slate-500 mb-2">Escalar Veículo do Painel *</label>
+              <select
+                required
+                value={launchTruckPlaca}
+                onChange={e => setLaunchTruckPlaca(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-250 rounded-xl px-3 py-2.5 text-xs font-bold text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              >
+                <option value="">-- Selecione a Placa --</option>
+                {(data?.trucks || []).map((t: any) => (
+                  <option key={t.id} value={t.placa}>{t.placa} ({t.modelo})</option>
+                ))}
+              </select>
+              {!(data?.trucks || []).length && (
+                <p className="text-[10px] text-rose-500 font-extrabold mt-1">A frota está vazia! Cadastre veículos antes.</p>
+              )}
+            </div>
+
+            {/* Selecionar Motorista da Viagem */}
+            <div>
+              <label className="block text-[10px] font-black uppercase text-slate-500 mb-2">Escalar Motorista *</label>
+              <select
+                required
+                value={launchDriverId}
+                onChange={e => setLaunchDriverId(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-250 rounded-xl px-3 py-2.5 text-xs font-bold text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              >
+                <option value="">-- Escolha o Motorista --</option>
+                {(data?.drivers || []).map((d: any) => (
+                  <option key={d.id} value={d.id}>{d.nome} (CNH {d.categoriaCnh || 'D'})</option>
+                ))}
+              </select>
+              {!(data?.drivers || []).length && (
+                <p className="text-[10px] text-rose-500 font-extrabold mt-1">Nenhum motorista cadastrado ainda no sistema.</p>
+              )}
+            </div>
+
+            {/* Data de Saída */}
+            <div>
+              <label className="block text-[10px] font-black uppercase text-slate-500 mb-2">Data de Despacho Operacional *</label>
+              <input
+                type="date"
+                required
+                value={launchDate}
+                onChange={e => setLaunchDate(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-250 rounded-xl px-3 py-2 text-xs font-mono font-bold focus:outline-none text-slate-700"
+              />
+            </div>
+
+            {/* Detalhes Ocultos de Custos Provisionados */}
+            <div className="bg-amber-50/50 p-3.5 rounded-xl border border-amber-200/40 text-[11px] leading-tight text-slate-600 flex flex-col justify-between">
+              <div>
+                <span className="font-extrabold text-amber-900 uppercase text-[9px] block mb-1">Custos Automatizados no Caixa</span>
+                <ul className="space-y-1.5 font-sans font-medium text-slate-500">
+                  <li>⛽ Combustível (Diesel): <strong className="text-slate-700">R$ {fuelCostTotal.toFixed(2)}</strong></li>
+                  <li>Pedágio Rodoviário: <strong className="text-slate-700">R$ {Number(tolls).toFixed(2)}</strong></li>
+                  <li>💵 Diária Motorista: <strong className="text-slate-700">R$ {Number(driverRate).toFixed(2)}</strong></li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-3 pt-5 border-t border-slate-100">
+            <button
+              type="button"
+              onClick={() => setIsLaunchModalOpen(false)}
+              className="px-5 py-2.5 border border-slate-200 hover:bg-slate-50 text-slate-500 font-bold rounded-xl text-xs transition-colors cursor-pointer"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={isLaunching || !launchTruckPlaca || !launchDriverId}
+              className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-xl text-xs flex items-center gap-1.5 transition-colors shadow-md shadow-emerald-100 cursor-pointer"
+            >
+              {isLaunching ? (
+                <>
+                  <RefreshCw className="animate-spin text-emerald-100" size={14} />
+                  <span>Despachando viagem...</span>
+                </>
+              ) : (
+                <>
+                  <Check size={14} className="text-emerald-100" />
+                  <span>Confirmar e Despachar Viagem</span>
+                </>
+              )}
+            </button>
+          </div>
+        </form>
+      </Modal>
 
       {/* Modal: Create and Edit route presets */}
       <Modal

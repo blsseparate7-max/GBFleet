@@ -98,16 +98,22 @@ export default function Dashboard({ data, onNavigate }: { data: any, onNavigate?
 
   const avgConsumption = totalLitersCombined > 0 
     ? (totalDistanceCombined / totalLitersCombined).toFixed(2)
-    : "3.10"; // standard truck km/l fallback
+    : "0.00"; // starting at 0 for clean accounts
 
   // 4. Monthly Financial Data Grouping (making it dynamic!)
   const groupedMonths: { [key: string]: { entr: number; said: number } } = {
-    '01': { entr: 42000, said: 25000 },
-    '02': { entr: 48000, said: 29000 },
-    '03': { entr: 52000, said: 31000 },
+    '01': { entr: 0, said: 0 },
+    '02': { entr: 0, said: 0 },
+    '03': { entr: 0, said: 0 },
     '04': { entr: 0, said: 0 },
-    '05': { entr: 56000, said: 35000 },
-    '06': { entr: 0, said: 0 }
+    '05': { entr: 0, said: 0 },
+    '06': { entr: 0, said: 0 },
+    '07': { entr: 0, said: 0 },
+    '08': { entr: 0, said: 0 },
+    '09': { entr: 0, said: 0 },
+    '10': { entr: 0, said: 0 },
+    '11': { entr: 0, said: 0 },
+    '12': { entr: 0, said: 0 }
   };
 
   data.cash_flow.forEach((c: any) => {

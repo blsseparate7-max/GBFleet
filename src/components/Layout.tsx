@@ -22,7 +22,8 @@ import {
   AlertCircle,
   Calendar,
   Lock,
-  Mail
+  Mail,
+  FileText
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { onDBSync } from '../lib/firebaseClientDb';
@@ -39,8 +40,9 @@ import Drivers from './Drivers';
 import Simulator from './Simulator';
 import Login from './Login';
 import SaaSAdmin from './SaaSAdmin';
+import Reports from './Reports';
 
-type Tab = 'home' | 'dashboard' | 'trucks' | 'fuel' | 'expenses' | 'cash' | 'freights' | 'maintenance' | 'drivers' | 'simulator' | 'saas';
+type Tab = 'home' | 'dashboard' | 'trucks' | 'fuel' | 'expenses' | 'cash' | 'freights' | 'maintenance' | 'drivers' | 'simulator' | 'reports' | 'saas';
 
 export default function Layout() {
   const [currentUser, setCurrentUser] = useState<any>(() => {
@@ -446,6 +448,7 @@ export default function Layout() {
     ...(currentUser?.role === 'superadmin' ? [{ id: 'saas', label: 'Gestão SaaS', icon: Shield }] : []),
     { id: 'home', label: 'Início', icon: HomeIcon },
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'reports', label: 'Relatórios', icon: FileText },
     { id: 'trucks', label: 'Frota', icon: TruckIcon },
     { id: 'drivers', label: 'Motoristas', icon: Users },
     { id: 'fuel', label: 'Abastecimentos', icon: Fuel },
@@ -736,6 +739,7 @@ export default function Layout() {
               {activeTab === 'saas' && <SaaSAdmin currentUserId={currentUser?.id} onImpersonate={handleImpersonate} activeImpersonatedId={impersonatedCompanyId} />}
               {activeTab === 'home' && <Home data={data} onNavigate={(tab) => setActiveTab(tab as Tab)} currentUser={currentUser} />}
               {activeTab === 'dashboard' && <Dashboard data={data} onNavigate={(tab) => setActiveTab(tab as Tab)} />}
+              {activeTab === 'reports' && <Reports data={data} />}
               {activeTab === 'trucks' && <Trucks data={data} onUpdate={fetchData} />}
               {activeTab === 'fuel' && <FuelLogs data={data} onUpdate={fetchData} />}
               {activeTab === 'expenses' && <Expenses data={data} onUpdate={fetchData} />}

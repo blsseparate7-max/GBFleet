@@ -106,7 +106,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="seu-nome@empresa.com"
+                placeholder="insira seu e-mail aqui"
                 className="w-full bg-slate-950 border border-slate-800 hover:border-slate-700 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 rounded-xl pl-10 pr-4 py-3 text-sm text-white focus:outline-none transition-all placeholder:text-slate-600"
               />
             </div>

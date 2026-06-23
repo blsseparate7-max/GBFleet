@@ -643,23 +643,64 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
 
     // 17) POST & PUT /api/freights
     if (cleanPath === "/api/freights" && method === "POST") {
+      const isNumericMotorista = typeof body.motorista === "number" || (!isNaN(Number(body.motorista)) && String(body.motorista).trim() !== "");
+      const motoristaCost = isNumericMotorista ? Number(body.motorista) : Number(body.comissao || 0);
+      const motoristaIdOrName = body.driverId || (!isNumericMotorista ? String(body.motorista || "") : "");
+
+      // Find driver name for logging/reference
+      let driverName = "Não especificado";
+      if (motoristaIdOrName) {
+        const foundDriver = (liveDb.drivers || []).find((d: any) => d.id === motoristaIdOrName || d.nome === motoristaIdOrName);
+        if (foundDriver) {
+          driverName = foundDriver.nome;
+        } else {
+          driverName = motoristaIdOrName;
+        }
+      }
+
+      const orderNumber = body.numeroOrdem || "OS-" + Math.floor(100000 + Math.random() * 900000);
+      const dateVal = body.data || body.dataSaida || new Date().toISOString().split("T")[0];
+
       const newFreight = {
         id: "frt_" + Math.random().toString(36).substr(2, 9),
         companyId: ctx.companyId,
-        numeroOrdem: body.numeroOrdem || "OS-" + Math.floor(100000 + Math.random() * 900000),
+        numeroOrdem: orderNumber,
         origem: body.origem,
         destino: body.destino,
-        motorista: body.motorista,
-        caminhao: body.caminhao,
+        
+        // Support both schemas: caminhao (string placa) and truckId (string placa or ID)
+        caminhao: body.caminhao || body.truckId || "Não especificado",
+        truckId: body.truckId || body.caminhao || "Não especificado",
+        
+        driverId: body.driverId || (!isNumericMotorista ? body.motorista : ""),
+        
         status: body.status || "Em Trânsito",
-        valorBruto: Number(body.valorBruto),
+        valorBruto: Number(body.valorBruto || 0),
         pedagio: Number(body.pedagio || 0),
-        comissao: Number(body.comissao || 0),
-        dieselPrevisto: Number(body.dieselPrevisto || 0),
-        outrosCustos: Number(body.outrosCustos || 0),
+        
+        // comissao is the driver's travel fee/motorista expense
+        comissao: motoristaCost,
+        motorista: motoristaCost, // In Freights.tsx, freight.motorista is a number representing driver cost
+        
+        combustivel: Number(body.combustivel || body.dieselPrevisto || 0),
+        dieselPrevisto: Number(body.dieselPrevisto || body.combustivel || 0),
+        
+        outrasDespesas: Number(body.outrasDespesas || body.outrosCustos || 0),
+        outrosCustos: Number(body.outrosCustos || body.outrasDespesas || 0),
+        
         resultadoLiquido: Number(body.resultadoLiquido || 0),
         distanciaKm: Number(body.distanciaKm || 0),
-        dataSaida: body.dataSaida || new Date().toISOString().split("T")[0]
+        
+        data: dateVal,
+        dataSaida: dateVal,
+
+        // Premium travel notes
+        localAbastecimento: body.localAbastecimento || "",
+        fotoAbastecimento: body.fotoAbastecimento || "",
+        localPedagio: body.localPedagio || "",
+        localMotorista: body.localMotorista || "",
+        outrosDetalhes: body.outrosDetalhes || "",
+        fotoComprovanteGeral: body.fotoComprovanteGeral || ""
       };
       liveDb.freights.push(newFreight);
       
@@ -669,33 +710,45 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
         companyId: ctx.companyId,
         tipo: "entrada",
         categoria: "Faturamento de Frete",
-        valor: Number(body.valorBruto),
-        data: body.dataSaida || new Date().toISOString().split("T")[0],
+        valor: Number(newFreight.valorBruto),
+        data: dateVal,
         descricao: `Receita Frete ${newFreight.numeroOrdem} (${body.origem} -> ${body.destino})`
       };
       liveDb.cash_flow.push(entryCash);
 
-      if (Number(body.pedagio) > 0) {
+      if (Number(newFreight.pedagio) > 0) {
         liveDb.cash_flow.push({
           id: "cash_" + Math.random().toString(36).substr(2, 9),
           companyId: ctx.companyId,
           tipo: "saida",
           categoria: "Pedágios",
-          valor: Number(body.pedagio),
-          data: body.dataSaida || new Date().toISOString().split("T")[0],
+          valor: Number(newFreight.pedagio),
+          data: dateVal,
           descricao: `Custo Pedágio OS ${newFreight.numeroOrdem}`
         });
       }
 
-      if (Number(body.comissao) > 0) {
+      if (motoristaCost > 0) {
         liveDb.cash_flow.push({
           id: "cash_" + Math.random().toString(36).substr(2, 9),
           companyId: ctx.companyId,
           tipo: "saida",
           categoria: "Motorista (Diária/Comissão)",
-          valor: Number(body.comissao),
-          data: body.dataSaida || new Date().toISOString().split("T")[0],
-          descricao: `Comissão Motorista ${body.motorista} - OS ${newFreight.numeroOrdem}`
+          valor: motoristaCost,
+          data: dateVal,
+          descricao: `Diária/Comissão Motorista (${driverName}) - OS ${newFreight.numeroOrdem}`
+        });
+      }
+
+      if (Number(newFreight.combustivel) > 0) {
+        liveDb.cash_flow.push({
+          id: "cash_" + Math.random().toString(36).substr(2, 9),
+          companyId: ctx.companyId,
+          tipo: "saida",
+          categoria: "Diesel (Abastecimento)",
+          valor: Number(newFreight.combustivel),
+          data: dateVal,
+          descricao: `Combustível Previsto OS ${newFreight.numeroOrdem}`
         });
       }
 
