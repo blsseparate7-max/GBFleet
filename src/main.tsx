@@ -2,6 +2,7 @@ import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
+import { emulateApiCall } from './lib/firebaseClientDb';
 
 // --- CAMINHO 2: Invólucro Seguro com Fallback em Cookies (Funciona em todas as abas e abas privadas) ---
 const safeStorage = {
@@ -79,86 +80,69 @@ const customFetch = async function (input: RequestInfo | URL, init?: RequestInit
     url = (input as any).url;
   }
 
-  // Se a rota for relativa (ex: /api/auth/login), anexa a URL correta do servidor se houver baseUrl absoluta
-  if (url && url.startsWith('/api/')) {
-    if (baseUrl && baseUrl !== "null") {
-      url = `${baseUrl}${url}`;
-    }
-  }
-
-  // Mantém a lógica original de validação de rotas do seu projeto (ignora o login na injeção de headers)
-  const isApiCall = url && (url.includes('/api/')) && !url.includes('/api/auth/login');
+  // Intercept any API routes and route them directly to our client-side Firebase Web SDK emulator!
+  const isApiCall = url && url.includes('/api/');
 
   if (isApiCall) {
+    const apiIndex = url.indexOf('/api/');
+    const apiPath = url.slice(apiIndex);
+
+    const newInit = init ? { ...init } : {};
+    const headersObj: Record<string, string> = {};
+
+    if (newInit.headers) {
+      if (typeof (newInit.headers as any).forEach === 'function') {
+        try {
+          (newInit.headers as any).forEach((value: string, name: string) => {
+            if (name) {
+              headersObj[name.toLowerCase()] = value;
+            }
+          });
+        } catch (e) {
+          // fallback
+        }
+      } else if (Array.isArray(newInit.headers)) {
+        newInit.headers.forEach((item) => {
+          if (Array.isArray(item) && item.length >= 2) {
+            const name = String(item[0]);
+            const value = String(item[1]);
+            if (name) {
+              headersObj[name.toLowerCase()] = value;
+            }
+          }
+        });
+      } else if (typeof newInit.headers === 'object') {
+        try {
+          Object.entries(newInit.headers).forEach(([name, value]) => {
+            if (name && value !== undefined && value !== null) {
+              headersObj[name.toLowerCase()] = String(value);
+            }
+          });
+        } catch (e) {
+          // fallback
+        }
+      }
+    }
+
     const userStr = safeStorage.getItem('gbfleet_user');
     let user: any = null;
     try {
       user = userStr ? JSON.parse(userStr) : null;
     } catch (e) {
-      // Ignora erro de JSON
+      // ignore
     }
     const impersonateId = safeStorage.getItem('gbfleet_impersonate');
 
     if (user && user.id) {
-      const newInit = init ? { ...init } : {};
-
-      // Normaliza os cabeçalhos para um record de string plano para evitar bugs no Safari e frames inter-área (cross-realm)
-      const headersObj: Record<string, string> = {};
-
-      if (newInit.headers) {
-        if (typeof (newInit.headers as any).forEach === 'function') {
-          try {
-            (newInit.headers as any).forEach((value: string, name: string) => {
-              if (name) {
-                headersObj[name.toLowerCase()] = value;
-              }
-            });
-          } catch (e) {
-            // fallback se falhar
-          }
-        } else if (Array.isArray(newInit.headers)) {
-          newInit.headers.forEach((item) => {
-            if (Array.isArray(item) && item.length >= 2) {
-              const name = String(item[0]);
-              const value = String(item[1]);
-              if (name) {
-                headersObj[name.toLowerCase()] = value;
-              }
-            }
-          });
-        } else if (typeof newInit.headers === 'object') {
-          try {
-            Object.entries(newInit.headers).forEach(([name, value]) => {
-              if (name && value !== undefined && value !== null) {
-                headersObj[name.toLowerCase()] = String(value);
-              }
-            });
-          } catch (e) {
-            // fallback
-          }
-        }
-      }
-
-      // Injeta as credenciais de tenant de forma ultra-segura e compatível com todos os browsers
       headersObj['x-user-id'] = String(user.id);
-      if (impersonateId) {
-        headersObj['x-impersonate-company-id'] = String(impersonateId);
-      }
-
-      newInit.headers = headersObj;
-
-      // Se 'input' for originalmente um RequestInfo complexo (não URL de texto), passamos como string ou mantemos o input padrão
-      if (typeof input === 'string') {
-        return originalFetch(url, newInit);
-      } else {
-        return originalFetch(input, newInit);
-      }
     }
-  }
+    if (impersonateId) {
+      headersObj['x-impersonate-company-id'] = String(impersonateId);
+    }
 
-  // Se o input era uma string e modificamos a url com o baseUrl, usamos a URL modificada
-  if (typeof input === 'string' && url !== input) {
-    return originalFetch(url, init);
+    newInit.headers = headersObj;
+
+    return emulateApiCall(apiPath, newInit);
   }
 
   return originalFetch(input, init);

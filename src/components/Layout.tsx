@@ -25,6 +25,7 @@ import {
   Mail
 } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { onDBSync } from '../lib/firebaseClientDb';
 import Home from './Home';
 import Dashboard from './Dashboard';
 import Chat from './Chat';
@@ -289,6 +290,14 @@ export default function Layout() {
       fetchData();
     }
   }, [currentUser, impersonatedCompanyId]);
+
+  useEffect(() => {
+    return onDBSync(() => {
+      if (currentUser) {
+        fetchData();
+      }
+    });
+  }, [currentUser]);
 
   const handleLogout = () => {
     setCurrentUser(null);
