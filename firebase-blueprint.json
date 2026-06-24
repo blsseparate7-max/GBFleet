@@ -1,0 +1,16 @@
+{
+  "entities": {
+    "SystemState": {
+      "title": "System State",
+      "description": "Entire application database state stored in a single document",
+      "type": "object",
+      "properties": {}
+    }
+  },
+  "firestore": {
+    "system_state/{docId}": {
+      "schema": "SystemState",
+      "description": "The root document for the gbfleet database"
+    }
+  }
+}
