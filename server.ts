@@ -462,7 +462,34 @@ const ensureDBSynced = async (req: express.Request, res: express.Response, next:
                   remoteData.users = remoteData.users.filter((u: any) => u.id !== "user_1" && u.companyId !== "comp_1");
                   scrubbed = true;
                 }
-                const arrayKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes"];
+                // Merge Strategy: preserve newly created local companies, users, or other records from local DB cache to prevent automatic deletion
+                 try {
+                   if (fs.existsSync(DB_FILE)) {
+                     const localData = JSON.parse(fs.readFileSync(DB_FILE, "utf-8"));
+                     const allKeys = ["companies", "users", "trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "chat_logs"];
+                     allKeys.forEach(key => {
+                       if (!remoteData[key]) {
+                         remoteData[key] = [];
+                       }
+                       if (localData && localData[key] && Array.isArray(localData[key])) {
+                         localData[key].forEach((localItem: any) => {
+                           if (localItem && localItem.id) {
+                             const existsRemote = remoteData[key].some((remoteItem: any) => remoteItem && remoteItem.id === localItem.id);
+                             if (!existsRemote) {
+                               remoteData[key].push(localItem);
+                               scrubbed = true;
+                               console.log(`[Firebase REST Server Sync] Preserved local-only item in ${key}:`, localItem.id);
+                             }
+                           }
+                         });
+                       }
+                     });
+                   }
+                 } catch (mergeErr: any) {
+                   console.error("[Firebase REST Server Sync] Error merging local data:", mergeErr.message);
+                 }
+
+                 const arrayKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes"];
                 arrayKeys.forEach(key => {
                   if (remoteData[key] && remoteData[key].some((item: any) => item.companyId === "comp_1" || item.id?.includes("init"))) {
                     remoteData[key] = remoteData[key].filter((item: any) => item.companyId !== "comp_1" && !item.id?.includes("init"));
@@ -471,7 +498,9 @@ const ensureDBSynced = async (req: express.Request, res: express.Response, next:
                 });
 
                 if (scrubbed) {
-                  console.log("[Firebase REST] Expurgo de dados de demonstração efetuado!");
+
+
+                  console.log("[Firebase REST] Expurgo ou mesclagem de dados efetuada!");
                   await Promise.race([
                     safePromise(firestoreSetDoc(remoteData)),
                     new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout ao salvar dados expurgados")), 3100))
