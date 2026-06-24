@@ -716,13 +716,16 @@ app.use(ensureDBSynced);
   const writeDB = (data: any) => {
     fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
     if (firestoreRestEnabled) {
-      lastWritePromise = firestoreSetDoc(data)
-        .then(() => {
-          console.log("[Firebase REST] Banco de dados salvo com sucesso no Firestore remoto.");
-        })
-        .catch((err: any) => {
-          console.error("[Firebase REST] Erro ao persistir dados no Firestore:", err.message);
-        });
+      // Chain the promise sequentially to ensure that concurrent updates on the server do not collision
+      lastWritePromise = lastWritePromise.then(() => {
+        return firestoreSetDoc(data)
+          .then(() => {
+            console.log("[Firebase REST] Banco de dados salvo com sucesso no Firestore remoto.");
+          })
+          .catch((err: any) => {
+            console.error("[Firebase REST] Erro ao persistir dados no Firestore:", err.message);
+          });
+      });
     }
   };
 

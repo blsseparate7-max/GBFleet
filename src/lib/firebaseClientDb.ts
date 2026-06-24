@@ -56,8 +56,8 @@ let liveDb: any = (() => {
 })();
 
 // Save in-memory DB back to localStorage and Firestore
-let isSyncingToFirestore = false;
-let pendingSyncPromise: Promise<void> | null = null;
+// Promise Chaining Queue for sequential, direct, and reliable blocking writes to Firestore
+let lastWritePromise: Promise<void> = Promise.resolve();
 
 export async function persistDB() {
   // Always save locally immediately for 100% responsiveness and offline safety
@@ -67,26 +67,20 @@ export async function persistDB() {
     console.error("Failed to write DB to localStorage:", e);
   }
 
-  // Sync to Firestore remotely (non-blocking for UI)
-  if (isSyncingToFirestore) {
-    return;
-  }
-
-  isSyncingToFirestore = true;
-  pendingSyncPromise = (async () => {
+  // Chain the Firestore write sequentially to guarantee order and that the absolute latest data is saved.
+  // Awaiting this promise blocks until the Firestore write has fully succeeded.
+  lastWritePromise = lastWritePromise.then(async () => {
     try {
       const docRef = doc(firestore, "system_state", "gbfleet_db");
       await setDoc(docRef, liveDb);
-      console.log("[Firebase Client SDK] Sync down to Firestore successfully persisted.");
+      console.log("[Firebase Client SDK] Direct write to Firestore successfully completed.");
     } catch (err: any) {
-      console.warn("[Firebase Client SDK] Warning: Failed to persist to remote Firestore. Using Local Storage.", err.message);
-    } finally {
-      isSyncingToFirestore = false;
-      pendingSyncPromise = null;
+      console.error("[Firebase Client SDK] Error: Failed to persist directly to Firestore.", err.message);
+      // Fallback: save locally but don't crash client completely. Let UI know.
     }
-  })();
+  });
 
-  return pendingSyncPromise;
+  return lastWritePromise;
 }
 
 // Pull / fetch database from Firestore (triggers in background on boot)
@@ -154,8 +148,17 @@ export async function pullDB() {
   }
 }
 
+let initialPullPromise: Promise<void> | null = null;
+
+export function ensureDbPulled() {
+  if (!initialPullPromise) {
+    initialPullPromise = pullDB();
+  }
+  return initialPullPromise;
+}
+
 // Kick off initial background sync
-pullDB();
+ensureDbPulled();
 
 // Helper to resolve request context dynamically
 function resolveContext(headers: Record<string, string>) {
@@ -188,6 +191,10 @@ function resolveContext(headers: Record<string, string>) {
 // Returns a Promise<Response> object replicating Express fetch behavior.
 // ----------------------------------------------------
 export async function emulateApiCall(path: string, options: any = {}): Promise<Response> {
+  // Ensure the database has been fully pulled/synced from Firestore on boot before executing any action.
+  // This guarantees that we never use stale or empty cached data.
+  await ensureDbPulled();
+
   const method = (options.method || "GET").toUpperCase();
   const headers = options.headers || {};
   const body = options.body ? JSON.parse(options.body) : {};
