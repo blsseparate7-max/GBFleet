@@ -19,6 +19,14 @@ export const dbTemplate = {
       "companyId": "comp_superadmin",
       "role": "superadmin",
       "nome": "Admin Master",
+      "email": "gbfleet@admin.ai",
+      "password": "Gb9119130312"
+    },
+    {
+      "id": "super_2",
+      "companyId": "comp_superadmin",
+      "role": "superadmin",
+      "nome": "Super Admin GBFleet",
       "email": "super@gbfleet.ai",
       "password": "super"
     }
