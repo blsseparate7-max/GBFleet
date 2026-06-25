@@ -201,7 +201,7 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
     // Fuel - if filtered plate, look at logs of plate. If not, look at all.
     // Also cross match with freight fuel values. To be balanced, we group fuel logs and manual diesel expenses.
     const despesasDieselManual = manualExpensesFiltered
-      .filter((e: any) => isCombustivelByTipo(e.tipo))
+      .filter((e: any) => isCombustivelByTipo(e.tipo) && e.documento !== "Auto-Abastecimento")
       .reduce((sum: number, e: any) => sum + (Number(e.valor) || 0), 0);
     const custoDiesel = fuelLogsFiltered.reduce((sum: number, l: any) => sum + (Number(l.valor) || 0), 0) + despesasDieselManual;
     
@@ -235,7 +235,7 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
 
     // Add manual despesas matching 'Manutenção'
     const despesasManutencaoManual = manualExpensesFiltered
-      .filter((e: any) => isMaintenanceByTipo(e.tipo))
+      .filter((e: any) => isMaintenanceByTipo(e.tipo) && !e.documento?.startsWith("Auto-Manutenção"))
       .reduce((sum: number, e: any) => sum + (Number(e.valor) || 0), 0);
 
     const mntsTotal = custoManutencaoAlerta + despesasManutencaoManual;
@@ -270,8 +270,10 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
       .filter((c: any) => {
         // Exclude synced freights and synced expenses to avoid double count
         const isTripSync = c.id.includes('cash_freight_out') || c.id.includes('cash_freight_in');
-        const isExpSync = c.descricao.startsWith('Despesa:');
-        return c.tipo === 'saida' && !isTripSync && !isExpSync;
+        const isExpSync = c.descricao.startsWith('Despesa');
+        const isFuelSync = c.descricao.startsWith('Combustível') || c.categoria?.includes('Diesel');
+        const isMaintSync = c.descricao.startsWith('Conclusão Manutenção') || c.descricao.startsWith('Despesa Manutenção') || c.categoria?.includes('Manutenção');
+        return c.tipo === 'saida' && !isTripSync && !isExpSync && !isFuelSync && !isMaintSync;
       })
       .reduce((sum: number, c: any) => sum + (Number(c.valor) || 0), 0);
 

@@ -36,40 +36,49 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
     status: 'Ativo'
   });
 
+  const [isSaving, setIsSaving] = useState(false);
+
   const handleSave = async () => {
-    if (!newLog.truckId || !newLog.driverId || !newLog.km || !newLog.litros || !newLog.valor) return;
+    if (!newLog.truckId || !newLog.driverId || !newLog.km || !newLog.litros || !newLog.valor || isSaving) return;
 
-    const companyId = data?.company?.id || 'comp_1';
+    setIsSaving(true);
+    try {
+      const companyId = data?.company?.id || 'comp_1';
 
-    await fetch('/api/fuel_logs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ...newLog,
-        companyId,
-        km: Number(newLog.km),
-        litros: Number(newLog.litros),
-        valor: Number(newLog.valor),
-        comprovante: newLog.comprovante
-      })
-    });
+      await fetch('/api/fuel_logs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...newLog,
+          companyId,
+          km: Number(newLog.km),
+          litros: Number(newLog.litros),
+          valor: Number(newLog.valor),
+          comprovante: newLog.comprovante
+        })
+      });
 
-    // Notify chat (simulated for demo)
-    await fetch('/api/chat_logs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        companyId,
-        userId: 'user_1',
-        mensagem: `Registro manual de abastecimento: ${newLog.truckId}`,
-        resposta: `Abastecimento de R$ ${Number(newLog.valor).toLocaleString('pt-BR')} registrado com sucesso no caminhão ${newLog.truckId}. O caixa e a DRE foram atualizados.`,
-        acaoGerada: 'REGISTER_FUEL'
-      })
-    });
+      // Notify chat (simulated for demo)
+      await fetch('/api/chat_logs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          companyId,
+          userId: 'user_1',
+          mensagem: `Registro manual de abastecimento: ${newLog.truckId}`,
+          resposta: `Abastecimento de R$ ${Number(newLog.valor).toLocaleString('pt-BR')} registrado com sucesso no caminhão ${newLog.truckId}. O caixa e a DRE foram atualizados.`,
+          acaoGerada: 'REGISTER_FUEL'
+        })
+      });
 
-    setIsModalOpen(false);
-    setNewLog({ truckId: '', driverId: '', gasStationId: '', data: new Date().toISOString().split('T')[0], km: '', litros: '', valor: '', comprovante: '' });
-    onUpdate();
+      setIsModalOpen(false);
+      setNewLog({ truckId: '', driverId: '', gasStationId: '', data: new Date().toISOString().split('T')[0], km: '', litros: '', valor: '', comprovante: '' });
+      onUpdate();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleSaveStation = async () => {
@@ -592,9 +601,10 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
             <button 
               id="btn-submit-fuel-log"
               onClick={handleSave}
-              className="flex-1 px-4 py-3 rounded-xl font-semibold bg-blue-600 text-white hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200"
+              disabled={isSaving}
+              className={`flex-1 px-4 py-3 rounded-xl font-semibold text-white transition-colors shadow-lg shadow-blue-200 ${isSaving ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
             >
-              Salvar Registro
+              {isSaving ? "Salvando..." : "Salvar Registro"}
             </button>
           </div>
         </div>

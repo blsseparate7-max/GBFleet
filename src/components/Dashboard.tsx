@@ -53,7 +53,9 @@ export default function Dashboard({ data, onNavigate }: { data: any, onNavigate?
 
   // 1. Basic Stats Calculation
   const totalFuel = data.fuel_logs.reduce((acc: number, curr: any) => acc + curr.valor, 0);
-  const totalExpenses = data.expenses.reduce((acc: number, curr: any) => acc + curr.valor, 0);
+  const totalExpenses = data.expenses
+    .filter((e: any) => e.documento !== "Auto-Abastecimento")
+    .reduce((acc: number, curr: any) => acc + curr.valor, 0);
   const totalSpent = totalFuel + totalExpenses;
 
   const totalIncome = data.cash_flow
@@ -75,7 +77,7 @@ export default function Dashboard({ data, onNavigate }: { data: any, onNavigate?
   const travelingDriversCount = data.drivers.filter((d: any) => d.status === 'Em Viagem').length;
 
   // 2. Cost Category Breakdown for Pie Chart
-  const manualDiesel = data.expenses.filter((e: any) => isCombustivelByTipo(e.tipo)).reduce((acc: number, curr: any) => acc + curr.valor, 0);
+  const manualDiesel = data.expenses.filter((e: any) => isCombustivelByTipo(e.tipo) && e.documento !== "Auto-Abastecimento").reduce((acc: number, curr: any) => acc + curr.valor, 0);
   const pedagiosValue = data.expenses.filter((e: any) => isPedagioByTipo(e.tipo)).reduce((acc: number, curr: any) => acc + curr.valor, 0);
   const manutencoesValue = data.expenses.filter((e: any) => isMaintenanceByTipo(e.tipo)).reduce((acc: number, curr: any) => acc + curr.valor, 0);
   const outrosValue = data.expenses.filter((e: any) => 

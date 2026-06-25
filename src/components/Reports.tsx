@@ -103,7 +103,7 @@ export default function Reports({ data }: ReportsProps) {
   const filteredMaintenance = useMemo(() => {
     return maintenance.filter((m: any) => {
       const matchTruck = !selectedTruck || m.truckId === selectedTruck;
-      const matchDates = isWithinDateRange(m.realizadoData);
+      const matchDates = isWithinDateRange(m.dataRealizada);
       return matchTruck && matchDates && m.status === 'Realizado';
     });
   }, [maintenance, selectedTruck, startDate, endDate]);
@@ -115,7 +115,7 @@ export default function Reports({ data }: ReportsProps) {
 
   const totalFuelCost = useMemo(() => {
     const realFuel = filteredFuelLogs.reduce((acc, f) => acc + Number(f.valor || 0), 0);
-    const manualFuel = filteredExpenses.filter((e: any) => isCombustivelByTipo(e.tipo)).reduce((acc, e) => acc + Number(e.valor || 0), 0);
+    const manualFuel = filteredExpenses.filter((e: any) => isCombustivelByTipo(e.tipo) && e.documento !== "Auto-Abastecimento").reduce((acc, e) => acc + Number(e.valor || 0), 0);
     return realFuel + manualFuel;
   }, [filteredFuelLogs, filteredExpenses]);
 
@@ -146,7 +146,7 @@ export default function Reports({ data }: ReportsProps) {
 
   const maintenanceExpenses = useMemo(() => {
     const realMaint = filteredMaintenance.reduce((acc, m) => acc + Number(m.custo || 0), 0);
-    const manualMaint = filteredExpenses.filter((e: any) => isMaintenanceByTipo(e.tipo)).reduce((acc, e) => acc + Number(e.valor || 0), 0);
+    const manualMaint = filteredExpenses.filter((e: any) => isMaintenanceByTipo(e.tipo) && !e.documento?.startsWith("Auto-Manutenção")).reduce((acc, e) => acc + Number(e.valor || 0), 0);
     return realMaint + manualMaint;
   }, [filteredMaintenance, filteredExpenses]);
 

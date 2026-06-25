@@ -835,20 +835,24 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       const matchMaint = liveDb.maintenance_alerts.find((m: any) => m.id === targetId);
       if (!matchMaint) return jsonResponse({ error: "Manutenção não encontrada." }, 404);
 
-      matchMaint.status = "Concluído";
-      matchMaint.resolvedAt = new Date().toISOString().split("T")[0];
+      const finalCost = Number(body.custo || body.custoFinal || 0);
+      const completionDate = body.dataRealizada || new Date().toISOString().split("T")[0];
+
+      matchMaint.status = "Realizado";
+      matchMaint.custo = finalCost;
+      matchMaint.dataRealizada = completionDate;
+      matchMaint.resolvedAt = completionDate;
 
       // Automatically register real-world cost
-      const finalCost = Number(body.custoFinal || 0);
       if (finalCost > 0) {
         liveDb.expenses.push({
           id: "exp_" + Math.random().toString(36).substr(2, 9),
           companyId: ctx.companyId,
           truckId: matchMaint.truckId,
-          tipo: "Manutenção e Peças",
+          tipo: "Manutenção",
           valor: finalCost,
-          data: matchMaint.resolvedAt,
-          documento: "Manutenção " + matchMaint.id.toUpperCase(),
+          data: completionDate,
+          documento: "Auto-Manutenção " + matchMaint.id.toUpperCase(),
           descritivo: `Peça/Revisão concluída de: ${matchMaint.item}`
         });
 
@@ -858,8 +862,8 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
           tipo: "saida",
           categoria: "Manutenção e Peças",
           valor: finalCost,
-          data: matchMaint.resolvedAt,
-          descricao: `Conclusão Manutenção - ${matchMaint.truckId} (${matchMaint.item})`
+          data: completionDate,
+          descricao: `Despesa Manutenção - Placa ${matchMaint.truckId}`
         });
       }
 
