@@ -33,6 +33,21 @@ import {
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
+const isMaintenanceByTipo = (tipo: string) => {
+  const t = (tipo || "").toLowerCase();
+  return t.includes("manut") || t.includes("peça") || t.includes("oficina") || t.includes("mecan");
+};
+
+const isPedagioByTipo = (tipo: string) => {
+  const t = (tipo || "").toLowerCase();
+  return t.includes("pedág") || t.includes("pedag");
+};
+
+const isCombustivelByTipo = (tipo: string) => {
+  const t = (tipo || "").toLowerCase();
+  return t.includes("diesel") || t.includes("combust") || t.includes("gasol") || t.includes("abastec");
+};
+
 export default function Dashboard({ data, onNavigate }: { data: any, onNavigate?: (tab: string) => void }) {
   if (!data) return <div className="flex items-center justify-center h-full text-slate-500 font-medium font-sans">Carregando dados da frota...</div>;
 
@@ -60,12 +75,17 @@ export default function Dashboard({ data, onNavigate }: { data: any, onNavigate?
   const travelingDriversCount = data.drivers.filter((d: any) => d.status === 'Em Viagem').length;
 
   // 2. Cost Category Breakdown for Pie Chart
-  const pedagiosValue = data.expenses.filter((e: any) => e.tipo === 'Pedágio').reduce((acc: number, curr: any) => acc + curr.valor, 0);
-  const manutencoesValue = data.expenses.filter((e: any) => e.tipo === 'Manutenção').reduce((acc: number, curr: any) => acc + curr.valor, 0);
-  const outrosValue = data.expenses.filter((e: any) => e.tipo !== 'Pedágio' && e.tipo !== 'Manutenção').reduce((acc: number, curr: any) => acc + curr.valor, 0);
+  const manualDiesel = data.expenses.filter((e: any) => isCombustivelByTipo(e.tipo)).reduce((acc: number, curr: any) => acc + curr.valor, 0);
+  const pedagiosValue = data.expenses.filter((e: any) => isPedagioByTipo(e.tipo)).reduce((acc: number, curr: any) => acc + curr.valor, 0);
+  const manutencoesValue = data.expenses.filter((e: any) => isMaintenanceByTipo(e.tipo)).reduce((acc: number, curr: any) => acc + curr.valor, 0);
+  const outrosValue = data.expenses.filter((e: any) => 
+    !isPedagioByTipo(e.tipo) && 
+    !isMaintenanceByTipo(e.tipo) && 
+    !isCombustivelByTipo(e.tipo)
+  ).reduce((acc: number, curr: any) => acc + curr.valor, 0);
 
   const costBreakdownData = [
-    { name: 'Diesel', value: totalFuel, color: '#3b82f6' },
+    { name: 'Diesel', value: totalFuel + manualDiesel, color: '#3b82f6' },
     { name: 'Pedágios', value: pedagiosValue, color: '#f59e0b' },
     { name: 'Manutenção', value: manutencoesValue, color: '#ef4444' },
     { name: 'Outras Custas', value: outrosValue, color: '#10b981' },

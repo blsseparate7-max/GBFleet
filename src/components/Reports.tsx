@@ -27,6 +27,26 @@ interface ReportsProps {
 
 type RankingTab = 'vehicles' | 'drivers' | 'routes' | 'expenses';
 
+const isMaintenanceByTipo = (tipo: string) => {
+  const t = (tipo || "").toLowerCase();
+  return t.includes("manut") || t.includes("peça") || t.includes("oficina") || t.includes("mecan");
+};
+
+const isPedagioByTipo = (tipo: string) => {
+  const t = (tipo || "").toLowerCase();
+  return t.includes("pedág") || t.includes("pedag");
+};
+
+const isCombustivelByTipo = (tipo: string) => {
+  const t = (tipo || "").toLowerCase();
+  return t.includes("diesel") || t.includes("combust") || t.includes("gasol") || t.includes("abastec");
+};
+
+const isMotoristaByTipo = (tipo: string) => {
+  const t = (tipo || "").toLowerCase();
+  return t.includes("motorista") || t.includes("diária") || t.includes("diaria") || t.includes("comissão") || t.includes("comissao");
+};
+
 export default function Reports({ data }: ReportsProps) {
   const [activeRankTab, setActiveRankTab] = useState<RankingTab>('vehicles');
   const [startDate, setStartDate] = useState('2026-05-01');
@@ -94,26 +114,41 @@ export default function Reports({ data }: ReportsProps) {
   }, [filteredFreights]);
 
   const totalFuelCost = useMemo(() => {
-    return filteredFuelLogs.reduce((acc, f) => acc + Number(f.valor || 0), 0);
-  }, [filteredFuelLogs]);
+    const realFuel = filteredFuelLogs.reduce((acc, f) => acc + Number(f.valor || 0), 0);
+    const manualFuel = filteredExpenses.filter((e: any) => isCombustivelByTipo(e.tipo)).reduce((acc, e) => acc + Number(e.valor || 0), 0);
+    return realFuel + manualFuel;
+  }, [filteredFuelLogs, filteredExpenses]);
 
   const directFreightExpenses = useMemo(() => {
-    return filteredFreights.reduce((acc, f) => {
+    const freightDirect = filteredFreights.reduce((acc, f) => {
       const motoristaCost = Number(f.comissao || f.motorista || 0);
       const pedagio = Number(f.pedagio || 0);
-      const fuelFromFreight = Number(f.combustivel || f.dieselPrevisto || 0);
       const otherCosts = Number(f.outrasDespesas || f.outrosCustos || 0);
-      return acc + motoristaCost + pedagio + fuelFromFreight + otherCosts;
+      return acc + motoristaCost + pedagio + otherCosts;
     }, 0);
-  }, [filteredFreights]);
+
+    const manualPedagios = filteredExpenses.filter((e: any) => isPedagioByTipo(e.tipo)).reduce((acc, e) => acc + Number(e.valor || 0), 0);
+    const manualMotoristas = filteredExpenses.filter((e: any) => isMotoristaByTipo(e.tipo)).reduce((acc, e) => acc + Number(e.valor || 0), 0);
+
+    return freightDirect + manualPedagios + manualMotoristas;
+  }, [filteredFreights, filteredExpenses]);
 
   const administrativeExpenses = useMemo(() => {
-    return filteredExpenses.reduce((acc, e) => acc + Number(e.valor || 0), 0);
+    return filteredExpenses
+      .filter((e: any) => 
+        !isCombustivelByTipo(e.tipo) && 
+        !isMaintenanceByTipo(e.tipo) && 
+        !isPedagioByTipo(e.tipo) && 
+        !isMotoristaByTipo(e.tipo)
+      )
+      .reduce((acc, e) => acc + Number(e.valor || 0), 0);
   }, [filteredExpenses]);
 
   const maintenanceExpenses = useMemo(() => {
-    return filteredMaintenance.reduce((acc, m) => acc + Number(m.custo || 0), 0);
-  }, [filteredMaintenance]);
+    const realMaint = filteredMaintenance.reduce((acc, m) => acc + Number(m.custo || 0), 0);
+    const manualMaint = filteredExpenses.filter((e: any) => isMaintenanceByTipo(e.tipo)).reduce((acc, e) => acc + Number(e.valor || 0), 0);
+    return realMaint + manualMaint;
+  }, [filteredMaintenance, filteredExpenses]);
 
   const totalCosts = useMemo(() => {
     return totalFuelCost + administrativeExpenses + maintenanceExpenses + directFreightExpenses;
@@ -301,33 +336,39 @@ export default function Reports({ data }: ReportsProps) {
   const expensesRanking = useMemo(() => {
     const rawCategorias: { [key: string]: number } = {};
 
-    // 1. Direct travel categories
-    filteredFreights.forEach((f: any) => {
-      const fuelFromFreight = Number(f.combustivel || f.dieselPrevisto || 0);
-      const pedagio = Number(f.pedagio || 0);
-      const motoristaCommission = Number(f.comissao || f.motorista || 0);
-      const otherCosts = Number(f.outrasDespesas || f.outrosCustos || 0);
+    // 1. Fuel (Diesel)
+    rawCategorias['Diesel (Abastecimento)'] = totalFuelCost;
 
-      if (fuelFromFreight > 0) rawCategorias['Diesel (Abastecimento)'] = (rawCategorias['Diesel (Abastecimento)'] || 0) + fuelFromFreight;
-      if (pedagio > 0) rawCategorias['Pedágios'] = (rawCategorias['Pedágios'] || 0) + pedagio;
-      if (motoristaCommission > 0) rawCategorias['Motorista (Diária/Comissão)'] = (rawCategorias['Motorista (Diária/Comissão)'] || 0) + motoristaCommission;
-      if (otherCosts > 0) rawCategorias['Outras Despesas'] = (rawCategorias['Outras Despesas'] || 0) + otherCosts;
-    });
+    // 2. Maintenance
+    rawCategorias['Manutenção e Peças'] = maintenanceExpenses;
 
-    // 2. Separate Fuel Logs entries
-    filteredFuelLogs.forEach((log: any) => {
-      rawCategorias['Diesel (Abastecimento)'] = (rawCategorias['Diesel (Abastecimento)'] || 0) + Number(log.valor || 0);
-    });
+    // 3. Tolls (Pedágios)
+    const freightPedagios = filteredFreights.reduce((acc, f) => acc + Number(f.pedagio || 0), 0);
+    const manualPedagios = filteredExpenses.filter((e: any) => isPedagioByTipo(e.tipo)).reduce((acc, e) => acc + Number(e.valor || 0), 0);
+    rawCategorias['Pedágios'] = freightPedagios + manualPedagios;
 
-    // 3. Separate Expenses
+    // 4. Drivers (Comissions / Diaries)
+    const freightDrivers = filteredFreights.reduce((acc, f) => acc + Number(f.comissao || f.motorista || 0), 0);
+    const manualDrivers = filteredExpenses.filter((e: any) => isMotoristaByTipo(e.tipo)).reduce((acc, e) => acc + Number(e.valor || 0), 0);
+    rawCategorias['Motorista (Diária/Comissão)'] = freightDrivers + manualDrivers;
+
+    // 5. Trip Other
+    const freightOthers = filteredFreights.reduce((acc, f) => acc + Number(f.outrasDespesas || f.outrosCustos || 0), 0);
+    if (freightOthers > 0) {
+      rawCategorias['Outras Despesas de Viagem'] = freightOthers;
+    }
+
+    // 6. Manual Others (Insurances, Multas, etc.)
     filteredExpenses.forEach((exp: any) => {
-      const cat = exp.tipo || 'Outros Administrativos';
-      rawCategorias[cat] = (rawCategorias[cat] || 0) + Number(exp.valor || 0);
-    });
-
-    // 4. Separate Maintenance
-    filteredMaintenance.forEach((m: any) => {
-      rawCategorias['Manutenção e Peças'] = (rawCategorias['Manutenção e Peças'] || 0) + Number(m.custo || 0);
+      if (
+        !isCombustivelByTipo(exp.tipo) &&
+        !isMaintenanceByTipo(exp.tipo) &&
+        !isPedagioByTipo(exp.tipo) &&
+        !isMotoristaByTipo(exp.tipo)
+      ) {
+        const cat = exp.tipo || 'Outros Administrativos';
+        rawCategorias[cat] = (rawCategorias[cat] || 0) + Number(exp.valor || 0);
+      }
     });
 
     const list = Object.entries(rawCategorias).map(([category, sum]) => ({
@@ -337,7 +378,7 @@ export default function Reports({ data }: ReportsProps) {
     }));
 
     return list.sort((a, b) => b.sum - a.sum);
-  }, [filteredFreights, filteredFuelLogs, filteredExpenses, filteredMaintenance, totalCosts]);
+  }, [filteredFreights, filteredFuelLogs, filteredExpenses, filteredMaintenance, totalFuelCost, maintenanceExpenses, totalCosts]);
 
 
   // 5. Intelligent Insights Engine (Dynamic heuristic analysis of operational patterns)

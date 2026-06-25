@@ -54,6 +54,14 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
     const t = (tipo || "").toLowerCase();
     return t.includes("segur") || t.includes("rastre");
   };
+  const isCombustivelByTipo = (tipo: string) => {
+    const t = (tipo || "").toLowerCase();
+    return t.includes("diesel") || t.includes("combust") || t.includes("gasol") || t.includes("abastec");
+  };
+  const isMotoristaByTipo = (tipo: string) => {
+    const t = (tipo || "").toLowerCase();
+    return t.includes("motorista") || t.includes("diária") || t.includes("diaria") || t.includes("comissão") || t.includes("comissao");
+  };
 
   const [activeSubTab, setActiveSubTab] = useState<'dre' | 'manual' | 'charts'>('dre');
   
@@ -191,14 +199,20 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
 
     // 2. CUSTOS VARIÁVEIS DA OPERAÇÃO (Viagens)
     // Fuel - if filtered plate, look at logs of plate. If not, look at all.
-    // Also cross match with freight fuel values. To be balanced, we group fuel logs.
-    const custoDiesel = fuelLogsFiltered.reduce((sum: number, l: any) => sum + (Number(l.valor) || 0), 0);
+    // Also cross match with freight fuel values. To be balanced, we group fuel logs and manual diesel expenses.
+    const despesasDieselManual = manualExpensesFiltered
+      .filter((e: any) => isCombustivelByTipo(e.tipo))
+      .reduce((sum: number, e: any) => sum + (Number(e.valor) || 0), 0);
+    const custoDiesel = fuelLogsFiltered.reduce((sum: number, l: any) => sum + (Number(l.valor) || 0), 0) + despesasDieselManual;
     
     // Tolls (Pedágios)
     const custoPedagios = freightsFiltered.reduce((sum: number, f: any) => sum + (Number(f.pedagio) || 0), 0);
 
     // Driver commissions / diaries
-    const custoMotoristas = freightsFiltered.reduce((sum: number, f: any) => sum + (Number(f.motorista) || 0), 0);
+    const despesasMotoristasManual = manualExpensesFiltered
+      .filter((e: any) => isMotoristaByTipo(e.tipo))
+      .reduce((sum: number, e: any) => sum + (Number(e.valor) || 0), 0);
+    const custoMotoristas = freightsFiltered.reduce((sum: number, f: any) => sum + (Number(f.motorista) || 0), 0) + despesasMotoristasManual;
 
     // Other trip variables (diaries, support)
     const custoOutrasDespesasViagem = freightsFiltered.reduce((sum: number, f: any) => sum + (Number(f.outrasDespesas) || 0), 0);
@@ -241,7 +255,14 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
       .reduce((sum: number, e: any) => sum + (Number(e.valor) || 0), 0);
 
     const despesaOutros = manualExpensesFiltered
-      .filter((e: any) => !isMaintenanceByTipo(e.tipo) && !isPedagioByTipo(e.tipo) && !isMultaByTipo(e.tipo) && !isSeguroByTipo(e.tipo))
+      .filter((e: any) => 
+        !isMaintenanceByTipo(e.tipo) && 
+        !isPedagioByTipo(e.tipo) && 
+        !isMultaByTipo(e.tipo) && 
+        !isSeguroByTipo(e.tipo) &&
+        !isCombustivelByTipo(e.tipo) &&
+        !isMotoristaByTipo(e.tipo)
+      )
       .reduce((sum: number, e: any) => sum + (Number(e.valor) || 0), 0);
     
     // Sum cash flow Saídas not already synced from freights or manual expenses

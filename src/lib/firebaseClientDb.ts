@@ -109,23 +109,12 @@ export async function pullDB() {
           }
         });
 
-        // Merge Strategy: preserve newly created local records (excluding companies/users to prevent deleted accounts resurrection) that are not in remoteData yet
+        // No merging of old local storage items is performed to prevent resurrection of deleted/modified records.
+        // Firestore is the absolute source of truth. We only ensure that required array fields exist on the pulled data.
         const allKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "gas_stations", "chat_logs"];
         allKeys.forEach(key => {
           if (!remoteData[key]) {
             remoteData[key] = [];
-          }
-          if (liveDb && liveDb[key] && Array.isArray(liveDb[key])) {
-            liveDb[key].forEach((localItem: any) => {
-              if (localItem && localItem.id) {
-                const existsRemote = remoteData[key].some((remoteItem: any) => remoteItem && remoteItem.id === localItem.id);
-                if (!existsRemote) {
-                  remoteData[key].push(localItem);
-                  scrubbed = true;
-                  console.log(`[Firebase Client DB Sync] Preserved local-only item in ${key}:`, localItem.id);
-                }
-              }
-            });
           }
         });
 
