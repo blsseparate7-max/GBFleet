@@ -8,6 +8,7 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
 
   // Abastecimentos states
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedLog, setSelectedLog] = useState<any>(null);
   const [newLog, setNewLog] = useState({
     truckId: '',
     driverId: '',
@@ -45,33 +46,51 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
     try {
       const companyId = data?.company?.id || 'comp_1';
 
-      await fetch('/api/fuel_logs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...newLog,
-          companyId,
-          km: Number(newLog.km),
-          litros: Number(newLog.litros),
-          valor: Number(newLog.valor),
-          comprovante: newLog.comprovante
-        })
-      });
+      if (selectedLog) {
+        // Edit
+        await fetch(`/api/fuel_logs/${selectedLog.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...newLog,
+            companyId,
+            km: Number(newLog.km),
+            litros: Number(newLog.litros),
+            valor: Number(newLog.valor),
+            comprovante: newLog.comprovante
+          })
+        });
+      } else {
+        // New
+        await fetch('/api/fuel_logs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...newLog,
+            companyId,
+            km: Number(newLog.km),
+            litros: Number(newLog.litros),
+            valor: Number(newLog.valor),
+            comprovante: newLog.comprovante
+          })
+        });
 
-      // Notify chat (simulated for demo)
-      await fetch('/api/chat_logs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          companyId,
-          userId: 'user_1',
-          mensagem: `Registro manual de abastecimento: ${newLog.truckId}`,
-          resposta: `Abastecimento de R$ ${Number(newLog.valor).toLocaleString('pt-BR')} registrado com sucesso no caminhão ${newLog.truckId}. O caixa e a DRE foram atualizados.`,
-          acaoGerada: 'REGISTER_FUEL'
-        })
-      });
+        // Notify chat (simulated for demo)
+        await fetch('/api/chat_logs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            companyId,
+            userId: 'user_1',
+            mensagem: `Registro manual de abastecimento: ${newLog.truckId}`,
+            resposta: `Abastecimento de R$ ${Number(newLog.valor).toLocaleString('pt-BR')} registrado com sucesso no caminhão ${newLog.truckId}. O caixa e a DRE foram atualizados.`,
+            acaoGerada: 'REGISTER_FUEL'
+          })
+        });
+      }
 
       setIsModalOpen(false);
+      setSelectedLog(null);
       setNewLog({ truckId: '', driverId: '', gasStationId: '', data: new Date().toISOString().split('T')[0], km: '', litros: '', valor: '', comprovante: '' });
       onUpdate();
     } catch (err) {
@@ -79,6 +98,34 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const handleDeleteLog = async (id: string) => {
+    if (!confirm('Deseja realmente excluir este abastecimento? Isso também removerá os registros financeiros de despesa e fluxo de caixa associados.')) return;
+
+    try {
+      await fetch(`/api/fuel_logs/${id}`, {
+        method: 'DELETE'
+      });
+      onUpdate();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const openEditLog = (log: any) => {
+    setSelectedLog(log);
+    setNewLog({
+      truckId: log.truckId || '',
+      driverId: log.driverId || '',
+      gasStationId: log.gasStationId || '',
+      data: log.data || new Date().toISOString().split('T')[0],
+      km: log.km ? String(log.km) : '',
+      litros: log.litros ? String(log.litros) : '',
+      valor: log.valor ? String(log.valor) : '',
+      comprovante: log.comprovante || ''
+    });
+    setIsModalOpen(true);
   };
 
   const handleSaveStation = async () => {

@@ -511,8 +511,9 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
 
     // 12) POST /api/fuel_logs
     if (cleanPath === "/api/fuel_logs" && method === "POST") {
+      const logId = "fuel_" + Math.random().toString(36).substr(2, 9);
       const newLog = {
-        id: "fuel_" + Math.random().toString(36).substr(2, 9),
+        id: logId,
         companyId: ctx.companyId,
         truckId: body.truckId,
         driverId: body.driverId || "",
@@ -529,6 +530,7 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       // Trigger automatic operation expense
       const rawExpense = {
         id: "exp_" + Math.random().toString(36).substr(2, 9),
+        fuelLogId: logId,
         companyId: ctx.companyId,
         truckId: body.truckId,
         tipo: "Diesel (Abastecimento)",
@@ -542,6 +544,7 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       // Trigger auto flow cash
       const rawCash = {
         id: "cash_" + Math.random().toString(36).substr(2, 9),
+        fuelLogId: logId,
         companyId: ctx.companyId,
         tipo: "saida",
         categoria: "Diesel (Abastecimento)",
@@ -553,6 +556,69 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
 
       await persistDB();
       return jsonResponse({ success: true, fuelLog: newLog });
+    }
+
+    if (cleanPath.startsWith("/api/fuel_logs/") && method === "PUT") {
+      const parts = cleanPath.split("/");
+      const targetId = parts[parts.length - 1];
+
+      const matchLog = liveDb.fuel_logs.find((f: any) => f.id === targetId);
+      if (!matchLog) return jsonResponse({ error: "Abastecimento não encontrado." }, 404);
+
+      const oldLog = { ...matchLog };
+
+      matchLog.truckId = body.truckId;
+      matchLog.driverId = body.driverId || "";
+      matchLog.gasStationId = body.gasStationId || "";
+      matchLog.litros = Number(body.litros);
+      matchLog.valor = Number(body.valor);
+      matchLog.km = Number(body.km);
+      matchLog.data = body.data || new Date().toISOString().split("T")[0];
+      matchLog.comprovante = body.comprovante || "";
+
+      // Sync corresponding expense
+      const matchedExp = liveDb.expenses.find((e: any) => e.fuelLogId === targetId || (e.documento === "Auto-Abastecimento" && e.truckId === oldLog.truckId && Number(e.valor) === Number(oldLog.valor) && e.data === oldLog.data));
+      if (matchedExp) {
+        matchedExp.truckId = body.truckId;
+        matchedExp.valor = Number(body.valor);
+        matchedExp.data = body.data || new Date().toISOString().split("T")[0];
+        matchedExp.descritivo = `Abastecimento automático via painel / chat (${body.litros} Litros)`;
+        matchedExp.fuelLogId = targetId;
+      }
+
+      // Sync corresponding cash flow
+      const matchedCash = liveDb.cash_flow.find((c: any) => c.fuelLogId === targetId || (c.tipo === "saida" && c.categoria === "Diesel (Abastecimento)" && Number(c.valor) === Number(oldLog.valor) && c.data === oldLog.data && c.descricao?.includes(oldLog.truckId)));
+      if (matchedCash) {
+        matchedCash.valor = Number(body.valor);
+        matchedCash.data = body.data || new Date().toISOString().split("T")[0];
+        matchedCash.descricao = `Combustível Placa ${body.truckId}`;
+        matchedCash.fuelLogId = targetId;
+      }
+
+      await persistDB();
+      return jsonResponse({ success: true, fuelLog: matchLog });
+    }
+
+    if (cleanPath.startsWith("/api/fuel_logs/") && method === "DELETE") {
+      const parts = cleanPath.split("/");
+      const targetId = parts[parts.length - 1];
+
+      const oldLogIndex = liveDb.fuel_logs.findIndex((f: any) => f.id === targetId);
+      if (oldLogIndex === -1) {
+        return jsonResponse({ error: "Abastecimento não encontrado." }, 404);
+      }
+      const oldLog = liveDb.fuel_logs[oldLogIndex];
+
+      liveDb.fuel_logs.splice(oldLogIndex, 1);
+
+      // Remove associated expense
+      liveDb.expenses = liveDb.expenses.filter((e: any) => !(e.fuelLogId === targetId || (e.documento === "Auto-Abastecimento" && e.truckId === oldLog.truckId && Number(e.valor) === Number(oldLog.valor) && e.data === oldLog.data)));
+
+      // Remove associated cash flow
+      liveDb.cash_flow = liveDb.cash_flow.filter((c: any) => !(c.fuelLogId === targetId || (c.tipo === "saida" && c.categoria === "Diesel (Abastecimento)" && Number(c.valor) === Number(oldLog.valor) && c.data === oldLog.data && c.descricao?.includes(oldLog.truckId))));
+
+      await persistDB();
+      return jsonResponse({ success: true });
     }
 
     // 13) POST & DELETE /api/expenses
