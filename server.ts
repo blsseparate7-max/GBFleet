@@ -466,7 +466,7 @@ const ensureDBSynced = async (req: express.Request, res: express.Response, next:
                  try {
                    if (fs.existsSync(DB_FILE)) {
                      const localData = JSON.parse(fs.readFileSync(DB_FILE, "utf-8"));
-                     const allKeys = ["companies", "users", "trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "chat_logs"];
+                     const allKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "gas_stations", "chat_logs"];
                      allKeys.forEach(key => {
                        if (!remoteData[key]) {
                          remoteData[key] = [];
@@ -489,7 +489,7 @@ const ensureDBSynced = async (req: express.Request, res: express.Response, next:
                    console.error("[Firebase REST Server Sync] Error merging local data:", mergeErr.message);
                  }
 
-                 const arrayKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes"];
+                 const arrayKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "gas_stations"];
                 arrayKeys.forEach(key => {
                   if (remoteData[key] && remoteData[key].some((item: any) => item.companyId === "comp_1" || item.id?.includes("init"))) {
                     remoteData[key] = remoteData[key].filter((item: any) => item.companyId !== "comp_1" && !item.id?.includes("init"));
@@ -599,7 +599,7 @@ app.use(ensureDBSynced);
 
     let updated = false;
 
-    const keys = ["companies", "users", "trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "chat_logs"];
+    const keys = ["companies", "users", "trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "gas_stations", "chat_logs"];
     keys.forEach((key: string) => {
       if (!db[key]) {
         db[key] = [];
@@ -1475,6 +1475,7 @@ app.use(ensureDBSynced);
         id: `fuel_sync_${freight.id}`,
         companyId: freight.companyId,
         truckId: freight.truckId,
+        driverId: freight.driverId || "",
         data: freight.data,
         km: latestKm,
         litros: Math.round(freight.combustivel / 5.8) || 1,
@@ -1715,6 +1716,59 @@ app.use(ensureDBSynced);
       return res.status(403).json({ error: "Não autorizado." });
     }
     db.drivers = db.drivers.filter((d: any) => d.id !== id);
+    writeDB(db);
+    res.json({ success: true });
+  });
+
+  // Gas Stations Endpoints (Postos de Abastecimento)
+  app.post("/api/gas_stations", (req, res) => {
+    const db = readDB();
+    const companyId = (req as any).companyId;
+    const newStation = {
+      ...req.body,
+      id: `gas_${Date.now()}`,
+      companyId,
+      precoDiesel: parseFloat(req.body.precoDiesel || 0)
+    };
+    if (!db.gas_stations) db.gas_stations = [];
+    db.gas_stations.push(newStation);
+    writeDB(db);
+    res.json(newStation);
+  });
+
+  app.put("/api/gas_stations/:id", (req, res) => {
+    const db = readDB();
+    const { id } = req.params;
+    const companyId = (req as any).companyId;
+    if (!db.gas_stations) db.gas_stations = [];
+    const idx = db.gas_stations.findIndex((g: any) => g.id === id);
+    if (idx === -1) {
+      return res.status(404).json({ error: "Posto não encontrado" });
+    }
+    if (db.gas_stations[idx].companyId !== companyId) {
+      return res.status(403).json({ error: "Não autorizado." });
+    }
+    db.gas_stations[idx] = {
+      ...db.gas_stations[idx],
+      ...req.body,
+      id,
+      companyId,
+      precoDiesel: parseFloat(req.body.precoDiesel || db.gas_stations[idx].precoDiesel || 0)
+    };
+    writeDB(db);
+    res.json(db.gas_stations[idx]);
+  });
+
+  app.delete("/api/gas_stations/:id", (req, res) => {
+    const db = readDB();
+    const { id } = req.params;
+    const companyId = (req as any).companyId;
+    if (!db.gas_stations) db.gas_stations = [];
+    const prevMatched = db.gas_stations.find((g: any) => g.id === id);
+    if (prevMatched && prevMatched.companyId !== companyId) {
+      return res.status(403).json({ error: "Não autorizado." });
+    }
+    db.gas_stations = db.gas_stations.filter((g: any) => g.id !== id);
     writeDB(db);
     res.json({ success: true });
   });

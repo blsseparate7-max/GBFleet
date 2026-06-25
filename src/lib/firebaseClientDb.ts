@@ -101,7 +101,7 @@ export async function pullDB() {
           remoteData.users = remoteData.users.filter((u: any) => u.id !== "user_1" && u.companyId !== "comp_1");
           scrubbed = true;
         }
-        const arrayKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes"];
+        const arrayKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "gas_stations"];
         arrayKeys.forEach(key => {
           if (remoteData[key] && remoteData[key].some((item: any) => item.companyId === "comp_1" || item.id?.includes("init"))) {
             remoteData[key] = remoteData[key].filter((item: any) => item.companyId !== "comp_1" && !item.id?.includes("init"));
@@ -109,8 +109,8 @@ export async function pullDB() {
           }
         });
 
-        // Merge Strategy: preserve newly created local companies, users, or other records that are not in remoteData yet
-        const allKeys = ["companies", "users", "trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "chat_logs"];
+        // Merge Strategy: preserve newly created local records (excluding companies/users to prevent deleted accounts resurrection) that are not in remoteData yet
+        const allKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "gas_stations", "chat_logs"];
         allKeys.forEach(key => {
           if (!remoteData[key]) {
             remoteData[key] = [];
@@ -318,6 +318,7 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       const filteredFreights = (liveDb.freights || []).filter((f: any) => f.companyId === targetCompId);
       const filteredMaintenanceAlerts = (liveDb.maintenance_alerts || []).filter((m: any) => m.companyId === targetCompId);
       const filteredRoutes = (liveDb.routes || []).filter((r: any) => r.companyId === targetCompId);
+      const filteredGasStations = (liveDb.gas_stations || []).filter((g: any) => g.companyId === targetCompId);
 
       const categoriesEntrada = currentCompany?.categories_entrada || liveDb.categories_entrada || [];
       const categoriesSaida = currentCompany?.categories_saida || liveDb.categories_saida || [];
@@ -334,6 +335,7 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
         freights: filteredFreights,
         maintenance_alerts: filteredMaintenanceAlerts,
         routes: filteredRoutes,
+        gas_stations: filteredGasStations,
         categories_entrada: categoriesEntrada,
         categories_saida: categoriesSaida,
         chat_logs: (liveDb.chat_logs || []).filter((cl: any) => cl.companyId === targetCompId)
@@ -413,6 +415,28 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       if (body.status !== undefined) comp.status = body.status;
       if (body.pago !== undefined) comp.pago = body.pago;
       if (body.trialDays !== undefined) comp.trialDays = Number(body.trialDays);
+      if (body.createdAt !== undefined) comp.createdAt = body.createdAt;
+
+      // Associated Admin user edit (dados cadastrais e redefinição de senha)
+      const companyAdmin = liveDb.users.find((u: any) => u.companyId === targetId && u.role === "admin");
+      if (companyAdmin) {
+        if (body.adminNome !== undefined && body.adminNome.trim() !== "") {
+          companyAdmin.nome = body.adminNome.trim();
+        }
+        if (body.adminEmail !== undefined && body.adminEmail.trim() !== "") {
+          const emailClean = body.adminEmail.toLowerCase().trim();
+          if (emailClean !== companyAdmin.email?.toLowerCase().trim()) {
+            const emailExists = liveDb.users.some((u: any) => u.email?.toLowerCase() === emailClean && u.id !== companyAdmin.id);
+            if (emailExists) {
+              return jsonResponse({ error: "O e-mail fornecido já está em uso por outro usuário." }, 400);
+            }
+            companyAdmin.email = emailClean;
+          }
+        }
+        if (body.adminPassword !== undefined && body.adminPassword.trim() !== "") {
+          companyAdmin.password = body.adminPassword.trim();
+        }
+      }
 
       await persistDB();
       return jsonResponse({ success: true, company: comp });
@@ -431,7 +455,7 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       liveDb.users = liveDb.users.filter((u: any) => u.companyId !== targetId);
       
       // Cascade delete rest data
-      const subKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "chat_logs"];
+      const subKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "gas_stations", "chat_logs"];
       subKeys.forEach(k => {
         if (liveDb[k]) {
           liveDb[k] = liveDb[k].filter((item: any) => item.companyId !== targetId);
@@ -502,10 +526,13 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
         id: "fuel_" + Math.random().toString(36).substr(2, 9),
         companyId: ctx.companyId,
         truckId: body.truckId,
+        driverId: body.driverId || "",
+        gasStationId: body.gasStationId || "",
         litros: Number(body.litros),
         valor: Number(body.valor),
         km: Number(body.km),
-        data: body.data || new Date().toISOString().split("T")[0]
+        data: body.data || new Date().toISOString().split("T")[0],
+        comprovante: body.comprovante || ""
       };
 
       liveDb.fuel_logs.push(newLog);
@@ -1027,6 +1054,53 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
         activeComp.categories_saida = activeComp.categories_saida.filter((c: string) => c !== nome);
       }
 
+      await persistDB();
+      return jsonResponse({ success: true });
+    }
+
+    // 21) POST, PUT, DELETE /api/gas_stations
+    if (cleanPath === "/api/gas_stations" && method === "POST") {
+      const newStation = {
+        id: "gas_" + Math.random().toString(36).substr(2, 9),
+        companyId: ctx.companyId,
+        nome: body.nome || "",
+        cnpj: body.cnpj || "",
+        cidade: body.cidade || "",
+        uf: body.uf || "",
+        precoDiesel: body.precoDiesel ? Number(body.precoDiesel) : 0,
+        status: body.status || "Ativo"
+      };
+      if (!liveDb.gas_stations) liveDb.gas_stations = [];
+      liveDb.gas_stations.push(newStation);
+      await persistDB();
+      return jsonResponse({ success: true, gas_station: newStation });
+    }
+
+    if (cleanPath.startsWith("/api/gas_stations/") && method === "PUT") {
+      const parts = cleanPath.split("/");
+      const targetId = parts[parts.length - 1];
+
+      if (!liveDb.gas_stations) liveDb.gas_stations = [];
+      const matchGas = liveDb.gas_stations.find((g: any) => g.id === targetId);
+      if (!matchGas) return jsonResponse({ error: "Posto não encontrado." }, 404);
+
+      if (body.nome !== undefined) matchGas.nome = body.nome;
+      if (body.cnpj !== undefined) matchGas.cnpj = body.cnpj;
+      if (body.cidade !== undefined) matchGas.cidade = body.cidade;
+      if (body.uf !== undefined) matchGas.uf = body.uf;
+      if (body.precoDiesel !== undefined) matchGas.precoDiesel = Number(body.precoDiesel);
+      if (body.status !== undefined) matchGas.status = body.status;
+
+      await persistDB();
+      return jsonResponse({ success: true, gas_station: matchGas });
+    }
+
+    // Cascade delete or simple delete for gas station
+    if (cleanPath.startsWith("/api/gas_stations/") && method === "DELETE") {
+      const parts = cleanPath.split("/");
+      const targetId = parts[parts.length - 1];
+      if (!liveDb.gas_stations) liveDb.gas_stations = [];
+      liveDb.gas_stations = liveDb.gas_stations.filter((g: any) => g.id !== targetId);
       await persistDB();
       return jsonResponse({ success: true });
     }

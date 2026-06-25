@@ -1,4 +1,4 @@
-export const dbTemplate = {
+{
   "companies": [
     {
       "id": "comp_superadmin",
@@ -57,6 +57,5 @@ export const dbTemplate = {
   "freights": [],
   "maintenance_alerts": [],
   "routes": [],
-  "gas_stations": [],
   "chat_logs": []
-};
+}

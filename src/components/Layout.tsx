@@ -291,7 +291,7 @@ export default function Layout() {
     if (currentUser) {
       fetchData();
     }
-  }, [currentUser, impersonatedCompanyId]);
+  }, [currentUser?.id, impersonatedCompanyId]);
 
   useEffect(() => {
     return onDBSync(() => {
@@ -299,7 +299,7 @@ export default function Layout() {
         fetchData();
       }
     });
-  }, [currentUser]);
+  }, [currentUser?.id]);
 
   const handleLogout = () => {
     setCurrentUser(null);
