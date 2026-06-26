@@ -454,9 +454,9 @@ export default function Layout() {
     { id: 'fuel', label: 'Abastecimentos', icon: Fuel },
     { id: 'expenses', label: 'Despesas', icon: Receipt },
     { id: 'cash', label: 'Caixa', icon: Wallet },
-    { id: 'freights', label: 'Gastos com Fretes', icon: Route },
+    { id: 'freights', label: 'Gestão de Fretes', icon: Route },
     { id: 'simulator', label: 'Simulador de Frete', icon: Calculator },
-    { id: 'maintenance', label: 'Manutenção', icon: Wrench },
+    { id: 'maintenance', label: 'Alerta de Manutenção', icon: Wrench },
   ];
 
   return (

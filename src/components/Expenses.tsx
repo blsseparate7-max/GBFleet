@@ -27,7 +27,6 @@ import { compressAndSetFile, AttachmentPreview } from '../lib/fileCompressor';
 
 export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () => void }) {
   const categoriesSaida = data.categories_saida || [
-    "Diesel (Abastecimento)",
     "Pedágios",
     "Manutenção e Peças",
     "Motorista (Diária/Comissão)",
@@ -198,12 +197,8 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
     const receitaBrutaTotal = receitaFretes + receitaEstadiasEExtras;
 
     // 2. CUSTOS VARIÁVEIS DA OPERAÇÃO (Viagens)
-    // Fuel - if filtered plate, look at logs of plate. If not, look at all.
-    // Also cross match with freight fuel values. To be balanced, we group fuel logs and manual diesel expenses.
-    const despesasDieselManual = manualExpensesFiltered
-      .filter((e: any) => isCombustivelByTipo(e.tipo) && e.documento !== "Auto-Abastecimento")
-      .reduce((sum: number, e: any) => sum + (Number(e.valor) || 0), 0);
-    const custoDiesel = fuelLogsFiltered.reduce((sum: number, l: any) => sum + (Number(l.valor) || 0), 0) + despesasDieselManual;
+    // Fuel costs are managed under the dedicated Fuel and Freight Management tabs
+    const custoDiesel = 0;
     
     // Tolls (Pedágios)
     const custoPedagios = freightsFiltered.reduce((sum: number, f: any) => sum + (Number(f.pedagio) || 0), 0);
@@ -563,16 +558,6 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
               <div className="p-3.5 pl-8 flex justify-between items-center text-slate-600">
                 <span className="flex items-center gap-2">
                   <ChevronRight size={12} className="text-slate-400" />
-                  (-) Óleo Diesel e Abastecimentos de Frota
-                </span>
-                <span className="font-bold font-mono text-red-600">
-                  - R$ {currentDRE.custoDiesel.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                </span>
-              </div>
-
-              <div className="p-3.5 pl-8 flex justify-between items-center text-slate-600">
-                <span className="flex items-center gap-2">
-                  <ChevronRight size={12} className="text-slate-400" />
                   (-) Vales-Pedágio da Rota Operada
                 </span>
                 <span className="font-bold font-mono text-red-600">
@@ -820,7 +805,6 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
               }
 
               const categoryShares = [
-                { name: "Combustível (Diesel)", value: currentDRE.custoDiesel, color: "bg-amber-500", labelColor: "text-amber-800" },
                 { name: "Motoristas (Diárias/Comissões)", value: currentDRE.custoMotoristas, color: "bg-blue-600", labelColor: "text-blue-800" },
                 { name: "Manutenção & Consertos", value: currentDRE.custoManutencoes, color: "bg-indigo-600", labelColor: "text-indigo-800" },
                 { name: "Pedágios (Viagem e Avulsos)", value: currentDRE.custoPedagios + currentDRE.custoPedagiosFixos, color: "bg-slate-700", labelColor: "text-slate-800" },
@@ -868,29 +852,7 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
 
             <div className="space-y-4.5 text-xs">
               
-              {/* diesel analysis row */}
-              <div className="p-3 border border-slate-150 rounded-2xl space-y-2 bg-slate-50/50">
-                <div className="flex justify-between items-center font-bold">
-                  <span className="text-slate-700">Abatimento de Combustível</span>
-                  {currentDRE.receitaBrutaTotal > 0 ? (
-                    (() => {
-                      const fuelWeightStr = ((currentDRE.custoDiesel / currentDRE.receitaBrutaTotal) * 100);
-                      return fuelWeightStr > 35 ? (
-                        <span className="bg-rose-100 text-rose-800 p-0.5 px-2 rounded-full text-[10px]">Crítico</span>
-                      ) : (
-                        <span className="bg-emerald-100 text-emerald-800 p-0.5 px-2 rounded-full text-[10px]">Saudável</span>
-                      );
-                    })()
-                  ) : <span className="text-slate-400">Pendente</span>}
-                </div>
-                {currentDRE.receitaBrutaTotal > 0 ? (
-                  <p className="text-[11px] text-slate-500 font-medium leading-relaxed">
-                    O combustível representa <strong>{((currentDRE.custoDiesel / currentDRE.receitaBrutaTotal) * 100).toFixed(1)}%</strong> da sua receita de fretes. No mercado rodoviário, a meta para frotistas é manter este indicador abaixo de 35% para viabilizar o lucro da empresa.
-                  </p>
-                ) : (
-                  <p className="text-[11px] text-slate-400 italic">Insira novos fretes concluídos e abastecimentos para habilitar.</p>
-                )}
-              </div>
+              {/* Fuel analysis row removed as fuel is tracked in dedicated tabs */}
 
               {/* Maintenance weight */}
               <div className="p-3 border border-slate-150 rounded-2xl space-y-2 bg-slate-50/50">
@@ -946,7 +908,7 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 text-xs"
               >
                 <option value="">Selecione...</option>
-                {categoriesSaida.map((cat: string) => (
+                {categoriesSaida.filter((cat: string) => !isCombustivelByTipo(cat)).map((cat: string) => (
                   <option key={cat} value={cat}>{cat}</option>
                 ))}
               </select>

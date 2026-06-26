@@ -58,7 +58,7 @@ export default function Home({ data, onNavigate, currentUser }: HomeProps) {
       actions: [
         {
           id: 'freights',
-          title: "Gastos com Fretes",
+          title: "Gestão de Fretes",
           description: "Registrar fretes e rateamento de custos por rota",
           icon: Route,
           color: "indigo",

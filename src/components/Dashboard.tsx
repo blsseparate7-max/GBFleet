@@ -234,7 +234,7 @@ export default function Dashboard({ data, onNavigate }: { data: any, onNavigate?
     const fuelLogs = data.fuel_logs.filter((l: any) => l.truckId === t.placa);
     const truckExpenses = data.expenses.filter((e: any) => e.truckId === t.placa);
     const totalTruckSpent = fuelLogs.reduce((acc: number, curr: any) => acc + curr.valor, 0) + 
-                          truckExpenses.reduce((acc: number, curr: any) => acc + curr.valor, 0);
+                          truckExpenses.filter((e: any) => e.documento !== "Auto-Abastecimento").reduce((acc: number, curr: any) => acc + curr.valor, 0);
     
     // Calculate custom average for this truck
     const sortedLogs = [...fuelLogs].sort((a: any, b: any) => a.km - b.km);

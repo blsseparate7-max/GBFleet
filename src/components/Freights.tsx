@@ -18,7 +18,9 @@ import {
   ShieldAlert,
   Camera,
   FileText,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Edit,
+  Trash2
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import Modal from './ui/Modal';
@@ -27,6 +29,7 @@ import { compressAndSetFile, AttachmentPreview } from '../lib/fileCompressor';
 
 export default function Freights({ data, onUpdate }: { data: any, onUpdate: () => void }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedFreight, setSelectedFreight] = useState<any>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTruck, setSelectedTruck] = useState('');
   const [selectedStatus, setSelectedStatus] = useState('');
@@ -109,6 +112,46 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
     }
   };
 
+  const openEditModal = (freight: any) => {
+    setSelectedFreight(freight);
+    setTruckId(freight.truckId || '');
+    setDriverId(freight.driverId || '');
+    setOrigem(freight.origem || '');
+    setDestino(freight.destino || '');
+    setValorBruto(freight.valorBruto ? String(freight.valorBruto) : '');
+    setPedagio(freight.pedagio ? String(freight.pedagio) : '');
+    setCombustivel(freight.combustivel ? String(freight.combustivel) : '');
+    setMotorista(freight.motorista ? String(freight.motorista) : '');
+    setOutrasDespesas(freight.outrasDespesas ? String(freight.outrasDespesas) : '');
+    setLocalAbastecimento(freight.localAbastecimento || '');
+    setFotoAbastecimento(freight.fotoAbastecimento || '');
+    setLocalPedagio(freight.localPedagio || '');
+    setLocalMotorista(freight.localMotorista || '');
+    setOutrosDetalhes(freight.outrosDetalhes || '');
+    setFotoComprovanteGeral(freight.fotoComprovanteGeral || '');
+    setStatus(freight.status || 'Orçado');
+    setDataFrete(freight.data || new Date().toISOString().split('T')[0]);
+    setIsModalOpen(true);
+  };
+
+  const handleDeleteFreight = async (id: string) => {
+    if (!confirm("Deseja realmente excluir este frete? Isso também removerá todos os lançamentos financeiros vinculados (entrada de receita e saídas de custos).")) return;
+    try {
+      const response = await fetch(`/api/freights/${id}`, {
+        method: 'DELETE'
+      });
+      if (response.ok) {
+        onUpdate();
+        setExpandedFreightId(null);
+      } else {
+        alert("Erro ao remover o frete.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Erro de conexão ao remover o frete.");
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!truckId || !origem || !destino || !valorBruto) {
@@ -117,8 +160,10 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
     }
 
     try {
-      const response = await fetch('/api/freights', {
-        method: 'POST',
+      const url = selectedFreight ? `/api/freights/${selectedFreight.id}` : '/api/freights';
+      const method = selectedFreight ? 'PUT' : 'POST';
+      const response = await fetch(url, {
+        method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           companyId: 'comp_1',
@@ -144,6 +189,7 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
 
       if (response.ok) {
         setIsModalOpen(false);
+        setSelectedFreight(null);
         // Reset form
         setTruckId('');
         setDriverId('');
@@ -183,7 +229,27 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
           </p>
         </div>
         <button
-          onClick={() => setIsModalOpen(true)}
+          onClick={() => {
+            setSelectedFreight(null);
+            setTruckId('');
+            setDriverId('');
+            setOrigem('');
+            setDestino('');
+            setValorBruto('');
+            setPedagio('');
+            setCombustivel('');
+            setMotorista('');
+            setOutrasDespesas('');
+            setLocalAbastecimento('');
+            setFotoAbastecimento('');
+            setLocalPedagio('');
+            setLocalMotorista('');
+            setOutrosDetalhes('');
+            setFotoComprovanteGeral('');
+            setStatus('Orçado');
+            setDataFrete(new Date().toISOString().split('T')[0]);
+            setIsModalOpen(true);
+          }}
           className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-3 rounded-2xl text-sm font-bold flex items-center gap-2 shadow-lg shadow-blue-100 transition-all self-stretch sm:self-auto justify-center"
         >
           <Plus size={18} />
@@ -420,21 +486,39 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
                           <FileText size={16} />
                           Dossiê Detalhado de Custos e Viagem
                         </h4>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            try {
-                              generateFreightPDF(freight);
-                            } catch (error) {
-                              console.error("Erro ao gerar PDF:", error);
-                              alert("Não foi possível gerar o PDF. Verifique se as imagens anexas estão no formato correto.");
-                            }
-                          }}
-                          className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-[10px] sm:text-xs uppercase tracking-wider px-4 py-2.5 rounded-xl transition-all shadow-sm cursor-pointer shadow-blue-100 hover:scale-[1.02] active:scale-[0.98]"
-                        >
-                          <FileText size={14} />
-                          Baixar Recibo PDF
-                        </button>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => openEditModal(freight)}
+                            className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white font-extrabold text-[10px] sm:text-xs uppercase tracking-wider px-3.5 py-2.5 rounded-xl transition-all shadow-sm cursor-pointer hover:scale-[1.02] active:scale-[0.98]"
+                          >
+                            <Edit size={14} />
+                            Editar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteFreight(freight.id)}
+                            className="flex items-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-[10px] sm:text-xs uppercase tracking-wider px-3.5 py-2.5 rounded-xl transition-all shadow-sm cursor-pointer hover:scale-[1.02] active:scale-[0.98]"
+                          >
+                            <Trash2 size={14} />
+                            Excluir
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              try {
+                                generateFreightPDF(freight);
+                              } catch (error) {
+                                console.error("Erro ao gerar PDF:", error);
+                                alert("Não foi possível gerar o PDF. Verifique se as imagens anexas estão no formato correto.");
+                              }
+                            }}
+                            className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-[10px] sm:text-xs uppercase tracking-wider px-3.5 py-2.5 rounded-xl transition-all shadow-sm cursor-pointer shadow-blue-100 hover:scale-[1.02] active:scale-[0.98]"
+                          >
+                            <FileText size={14} />
+                            Baixar Recibo PDF
+                          </button>
+                        </div>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                         {/* Combustível */}
@@ -526,8 +610,8 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
         )}
       </div>
 
-      {/* Modal - Cadastrar Frete */}
-      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="Cadastrar Novo Frete Dedicado">
+      {/* Modal - Cadastrar/Editar Frete */}
+      <Modal isOpen={isModalOpen} onClose={() => { setIsModalOpen(false); setSelectedFreight(null); }} title={selectedFreight ? "Editar Lançamento de Frete" : "Cadastrar Novo Frete Dedicado"}>
         <form onSubmit={handleSubmit} className="space-y-6">
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-1">

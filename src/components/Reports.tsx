@@ -202,14 +202,20 @@ export default function Reports({ data }: ReportsProps) {
       const countTrips = truckFreights.length;
       const grossRev = truckFreights.reduce((sum, f) => sum + Number(f.valorBruto || 0), 0);
       const fuelCost = truckFuel.reduce((sum, f) => sum + Number(f.valor || 0), 0);
-      const adminCosts = truckExp.reduce((sum, f) => sum + Number(f.valor || 0), 0);
+      
+      // Filter out auto-abastecimento and auto-manutenção logs from adminCosts to avoid duplication with actual fuel and maintenance logs
+      const cleanAdminCosts = truckExp
+        .filter((e: any) => e.documento !== "Auto-Abastecimento" && !e.documento?.startsWith("Auto-Manutenção"))
+        .reduce((sum, f) => sum + Number(f.valor || 0), 0);
+        
       const maintCost = truckMaint.reduce((sum, f) => sum + Number(f.custo || 0), 0);
       
+      // Do not include fuel cost here as we are already summing the actual fuelCost (fuel logs)
       const directFreightsCost = truckFreights.reduce((sum, f) => {
-         return sum + Number(f.comissao || f.motorista || 0) + Number(f.pedagio || 0) + Number(f.combustivel || f.dieselPrevisto || 0) + Number(f.outrasDespesas || f.outrosCustos || 0);
+         return sum + Number(f.comissao || f.motorista || 0) + Number(f.pedagio || 0) + Number(f.outrasDespesas || f.outrosCustos || 0);
       }, 0);
 
-      const totalSpentTruck = fuelCost + adminCosts + maintCost + directFreightsCost;
+      const totalSpentTruck = fuelCost + cleanAdminCosts + maintCost + directFreightsCost;
       const netProfit = grossRev - totalSpentTruck;
       const margin = grossRev > 0 ? (netProfit / grossRev) * 100 : 0;
       const kmCovered = truckFreights.reduce((sum, f) => sum + Number(f.distanciaKm || 0), 0);
@@ -255,9 +261,9 @@ export default function Reports({ data }: ReportsProps) {
       
       const pedagogicalCosts = driverFreights.reduce((sum, f) => sum + Number(f.pedagio || 0), 0);
       const helperTravelExpenses = driverFreights.reduce((sum, f) => sum + Number(f.outrasDespesas || f.outrosCustos || 0), 0);
-      const indirectFuelCostOnTravel = driverFreights.reduce((sum, f) => sum + Number(f.combustivel || f.dieselPrevisto || 0), 0);
 
-      const totalIncuredCosts = totalComissao + fuelCost + pedagogicalCosts + helperTravelExpenses + indirectFuelCostOnTravel;
+      // Exclude indirectFuelCostOnTravel as we are already summing the actual fuelCost (fuel logs)
+      const totalIncuredCosts = totalComissao + fuelCost + pedagogicalCosts + helperTravelExpenses;
       const profitContribution = grossRev - totalIncuredCosts;
       const efficiency = grossRev > 0 ? (profitContribution / grossRev) * 100 : 0;
 

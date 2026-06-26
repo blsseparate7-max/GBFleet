@@ -815,7 +815,7 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       
       // Seed operational cash entries dynamically
       const entryCash = {
-        id: "cash_" + Math.random().toString(36).substr(2, 9),
+        id: "cash_freight_in_" + newFreight.id,
         companyId: ctx.companyId,
         tipo: "entrada",
         categoria: "Faturamento de Frete",
@@ -827,7 +827,7 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
 
       if (Number(newFreight.pedagio) > 0) {
         liveDb.cash_flow.push({
-          id: "cash_" + Math.random().toString(36).substr(2, 9),
+          id: "cash_freight_out_toll_" + newFreight.id,
           companyId: ctx.companyId,
           tipo: "saida",
           categoria: "Pedágios",
@@ -839,7 +839,7 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
 
       if (motoristaCost > 0) {
         liveDb.cash_flow.push({
-          id: "cash_" + Math.random().toString(36).substr(2, 9),
+          id: "cash_freight_out_driver_" + newFreight.id,
           companyId: ctx.companyId,
           tipo: "saida",
           categoria: "Motorista (Diária/Comissão)",
@@ -851,7 +851,7 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
 
       if (Number(newFreight.combustivel) > 0) {
         liveDb.cash_flow.push({
-          id: "cash_" + Math.random().toString(36).substr(2, 9),
+          id: "cash_freight_out_fuel_" + newFreight.id,
           companyId: ctx.companyId,
           tipo: "saida",
           categoria: "Diesel (Abastecimento)",
@@ -875,6 +875,122 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       matchFrt.status = body.status;
       await persistDB();
       return jsonResponse({ success: true, freight: matchFrt });
+    }
+
+    if (cleanPath.startsWith("/api/freights/") && !cleanPath.endsWith("/status") && method === "PUT") {
+      const parts = cleanPath.split("/");
+      const targetId = parts[parts.length - 1];
+
+      const matchFrt = liveDb.freights.find((f: any) => f.id === targetId);
+      if (!matchFrt) return jsonResponse({ error: "Frete não encontrado." }, 404);
+
+      const isNumericMotorista = typeof body.motorista === "number" || (!isNaN(Number(body.motorista)) && String(body.motorista).trim() !== "");
+      const motoristaCost = isNumericMotorista ? Number(body.motorista) : Number(body.comissao || 0);
+      const motoristaIdOrName = body.driverId || (!isNumericMotorista ? String(body.motorista || "") : "");
+
+      // Find driver name for logging/reference
+      let driverName = "Não especificado";
+      if (motoristaIdOrName) {
+        const foundDriver = (liveDb.drivers || []).find((d: any) => d.id === motoristaIdOrName || d.nome === motoristaIdOrName);
+        if (foundDriver) {
+          driverName = foundDriver.nome;
+        } else {
+          driverName = motoristaIdOrName;
+        }
+      }
+
+      const dateVal = body.data || body.dataSaida || new Date().toISOString().split("T")[0];
+
+      // Update freight properties
+      matchFrt.origem = body.origem;
+      matchFrt.destino = body.destino;
+      matchFrt.caminhao = body.caminhao || body.truckId || "Não especificado";
+      matchFrt.truckId = body.truckId || body.caminhao || "Não especificado";
+      matchFrt.driverId = body.driverId || (!isNumericMotorista ? body.motorista : "");
+      matchFrt.status = body.status || matchFrt.status || "Em Trânsito";
+      matchFrt.valorBruto = Number(body.valorBruto || 0);
+      matchFrt.pedagio = Number(body.pedagio || 0);
+      matchFrt.comissao = motoristaCost;
+      matchFrt.motorista = motoristaCost;
+      matchFrt.combustivel = Number(body.combustivel || body.dieselPrevisto || 0);
+      matchFrt.dieselPrevisto = Number(body.dieselPrevisto || body.combustivel || 0);
+      matchFrt.outrasDespesas = Number(body.outrasDespesas || body.outrosCustos || 0);
+      matchFrt.outrosCustos = Number(body.outrosCustos || body.outrasDespesas || 0);
+      matchFrt.resultadoLiquido = Number(body.resultadoLiquido || 0);
+      matchFrt.distanciaKm = Number(body.distanciaKm || 0);
+      matchFrt.data = dateVal;
+      matchFrt.dataSaida = dateVal;
+      matchFrt.localAbastecimento = body.localAbastecimento || "";
+      matchFrt.fotoAbastecimento = body.fotoAbastecimento || "";
+      matchFrt.localPedagio = body.localPedagio || "";
+      matchFrt.localMotorista = body.localMotorista || "";
+      matchFrt.outrosDetalhes = body.outrosDetalhes || "";
+      matchFrt.fotoComprovanteGeral = body.fotoComprovanteGeral || "";
+
+      // Remove existing related cash entries first to re-add/update cleanly
+      liveDb.cash_flow = liveDb.cash_flow.filter((c: any) => !c.id.includes(targetId));
+
+      // Re-seed updated cash entries
+      const entryCash = {
+        id: "cash_freight_in_" + targetId,
+        companyId: ctx.companyId,
+        tipo: "entrada",
+        categoria: "Faturamento de Frete",
+        valor: Number(matchFrt.valorBruto),
+        data: dateVal,
+        descricao: `Receita Frete ${matchFrt.numeroOrdem} (${body.origem} -> ${body.destino})`
+      };
+      liveDb.cash_flow.push(entryCash);
+
+      if (Number(matchFrt.pedagio) > 0) {
+        liveDb.cash_flow.push({
+          id: "cash_freight_out_toll_" + targetId,
+          companyId: ctx.companyId,
+          tipo: "saida",
+          categoria: "Pedágios",
+          valor: Number(matchFrt.pedagio),
+          data: dateVal,
+          descricao: `Custo Pedágio OS ${matchFrt.numeroOrdem}`
+        });
+      }
+
+      if (motoristaCost > 0) {
+        liveDb.cash_flow.push({
+          id: "cash_freight_out_driver_" + targetId,
+          companyId: ctx.companyId,
+          tipo: "saida",
+          categoria: "Motorista (Diária/Comissão)",
+          valor: motoristaCost,
+          data: dateVal,
+          descricao: `Diária/Comissão Motorista (${driverName}) - OS ${matchFrt.numeroOrdem}`
+        });
+      }
+
+      if (Number(matchFrt.combustivel) > 0) {
+        liveDb.cash_flow.push({
+          id: "cash_freight_out_fuel_" + targetId,
+          companyId: ctx.companyId,
+          tipo: "saida",
+          categoria: "Diesel (Abastecimento)",
+          valor: Number(matchFrt.combustivel),
+          data: dateVal,
+          descricao: `Combustível Previsto OS ${matchFrt.numeroOrdem}`
+        });
+      }
+
+      await persistDB();
+      return jsonResponse({ success: true, freight: matchFrt });
+    }
+
+    if (cleanPath.startsWith("/api/freights/") && method === "DELETE") {
+      const parts = cleanPath.split("/");
+      const targetId = parts[parts.length - 1];
+
+      liveDb.freights = liveDb.freights.filter((f: any) => f.id !== targetId);
+      liveDb.cash_flow = liveDb.cash_flow.filter((c: any) => !c.id.includes(targetId));
+
+      await persistDB();
+      return jsonResponse({ success: true });
     }
 
     // 18) POST, POST complete, DELETE /api/maintenance_alerts
