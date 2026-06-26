@@ -233,7 +233,20 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
           {activeTab === 'logs' ? (
             <button 
               id="btn-register-fuel-log"
-              onClick={() => setIsModalOpen(true)}
+              onClick={() => {
+                setSelectedLog(null);
+                setNewLog({
+                  truckId: '',
+                  driverId: '',
+                  gasStationId: '',
+                  data: new Date().toISOString().split('T')[0],
+                  km: '',
+                  litros: '',
+                  valor: '',
+                  comprovante: ''
+                });
+                setIsModalOpen(true);
+              }}
               className="bg-blue-600 text-white px-5 py-2.5 rounded-xl font-semibold flex items-center gap-2 hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200"
             >
               <Plus size={20} />
@@ -354,12 +367,13 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
                     <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Valor</th>
                     <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Consumo</th>
                     <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Comprovante</th>
+                    <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider text-right">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
                   {filteredFuelLogs.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="px-6 py-12 text-center text-slate-400 italic">
+                      <td colSpan={10} className="px-6 py-12 text-center text-slate-400 italic">
                         Nenhum abastecimento encontrado para os filtros selecionados.
                       </td>
                     </tr>
@@ -416,6 +430,24 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
                             ) : (
                               <span className="text-xs text-slate-400 italic">Nenhum</span>
                             )}
+                          </td>
+                          <td className="px-6 py-4 text-right">
+                            <div className="flex justify-end gap-1.5">
+                              <button
+                                onClick={() => openEditLog(log)}
+                                className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-slate-50 rounded-lg transition-colors"
+                                title="Editar Abastecimento"
+                              >
+                                <Edit size={14} />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteLog(log.id)}
+                                className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-slate-50 rounded-lg transition-colors"
+                                title="Excluir Abastecimento"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -503,7 +535,24 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
       )}
 
       {/* Fuel Log Modal */}
-      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="Novo Abastecimento">
+      <Modal 
+        isOpen={isModalOpen} 
+        onClose={() => {
+          setIsModalOpen(false);
+          setSelectedLog(null);
+          setNewLog({
+            truckId: '',
+            driverId: '',
+            gasStationId: '',
+            data: new Date().toISOString().split('T')[0],
+            km: '',
+            litros: '',
+            valor: '',
+            comprovante: ''
+          });
+        }} 
+        title={selectedLog ? "Editar Abastecimento" : "Novo Abastecimento"}
+      >
         <div className="space-y-5" id="form-fuel-log">
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -640,7 +689,20 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
           <div className="flex gap-3 pt-4">
             <button 
               id="btn-cancel-fuel-log"
-              onClick={() => setIsModalOpen(false)}
+              onClick={() => {
+                setIsModalOpen(false);
+                setSelectedLog(null);
+                setNewLog({
+                  truckId: '',
+                  driverId: '',
+                  gasStationId: '',
+                  data: new Date().toISOString().split('T')[0],
+                  km: '',
+                  litros: '',
+                  valor: '',
+                  comprovante: ''
+                });
+              }}
               className="flex-1 px-4 py-3 rounded-xl font-semibold text-slate-600 hover:bg-slate-100 transition-colors"
             >
               Cancelar
@@ -651,7 +713,7 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
               disabled={isSaving}
               className={`flex-1 px-4 py-3 rounded-xl font-semibold text-white transition-colors shadow-lg shadow-blue-200 ${isSaving ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
             >
-              {isSaving ? "Salvando..." : "Salvar Registro"}
+              {isSaving ? "Salvando..." : (selectedLog ? "Salvar Alterações" : "Salvar Registro")}
             </button>
           </div>
         </div>
