@@ -399,6 +399,7 @@ const getInitialData = () => ({
 
 // Middleware to ensure Database is Synced from Firebase before serving any requests
 let lastSyncTime = 0;
+let lastLocalWriteTime = 0;
 const SYNC_TTL_MS = 5000; // 5 segundos de cache local no servidor
 let activeSyncPromise: Promise<void> | null = null;
 
@@ -436,6 +437,7 @@ const ensureDBSynced = async (req: express.Request, res: express.Response, next:
     if (firestoreRestEnabled && (now - lastSyncTime > SYNC_TTL_MS)) {
       if (!activeSyncPromise) {
         activeSyncPromise = (async () => {
+          const syncStartTime = Date.now();
           try {
             console.log("[Firebase REST] Cache expirado ou primeira execução. Sincronizando com Firestore remoto...");
 
@@ -507,11 +509,19 @@ const ensureDBSynced = async (req: express.Request, res: express.Response, next:
                   ]);
                 }
 
+                if (lastLocalWriteTime > syncStartTime) {
+                  console.log("[Firebase REST] Sincronização cancelada/ignorada porque uma gravação local mais recente ocorreu durante a busca.");
+                  return;
+                }
                 fs.writeFileSync(DB_FILE, JSON.stringify(remoteData, null, 2));
                 console.log("[Firebase REST] Sincronização concluída. Cache local /tmp/db.json atualizado.");
                 lastSyncTime = Date.now();
               }
             } else {
+              if (lastLocalWriteTime > syncStartTime) {
+                console.log("[Firebase REST] Sincronização cancelada/ignorada (criação de doc) devido a gravação local recente.");
+                return;
+              }
               // Se o documento no Firestore não existir, criamos a partir do local
               const localData = JSON.parse(fs.readFileSync(DB_FILE, "utf-8"));
               await Promise.race([
@@ -715,6 +725,8 @@ app.use(ensureDBSynced);
 
   const writeDB = (data: any) => {
     fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+    lastLocalWriteTime = Date.now();
+    lastSyncTime = Date.now(); // Postpone next pull
     if (firestoreRestEnabled) {
       // Chain the promise sequentially to ensure that concurrent updates on the server do not collision
       lastWritePromise = lastWritePromise.then(() => {
@@ -1567,6 +1579,37 @@ app.use(ensureDBSynced);
 
     writeDB(db);
     res.json(newFreight);
+  });
+
+  app.put("/api/freights/:id", (req, res) => {
+    const db = readDB();
+    const { id } = req.params;
+    const companyId = (req as any).companyId;
+
+    const idx = db.freights.findIndex((f: any) => f.id === id);
+    if (idx === -1) {
+      return res.status(404).json({ error: "Frete não encontrado." });
+    }
+
+    if (db.freights[idx].companyId !== companyId) {
+      return res.status(403).json({ error: "Acesso não autorizado." });
+    }
+
+    db.freights[idx] = {
+      ...db.freights[idx],
+      ...req.body,
+      id,
+      companyId,
+      valorBruto: parseFloat(req.body.valorBruto || 0),
+      pedagio: parseFloat(req.body.pedagio || 0),
+      combustivel: parseFloat(req.body.combustivel || 0),
+      motorista: parseFloat(req.body.motorista || 0),
+      outrasDespesas: parseFloat(req.body.outrasDespesas || 0)
+    };
+
+    syncFreightData(db, db.freights[idx]);
+    writeDB(db);
+    res.json(db.freights[idx]);
   });
 
   app.put("/api/freights/:id/status", (req, res) => {

@@ -77,7 +77,8 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
     valor: '',
     km: '',
     obs: '',
-    comprovante: ''
+    comprovante: '',
+    empresaDespesa: ''
   });
 
   // Delete manual expense handler
@@ -122,7 +123,7 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
     });
 
     setIsModalOpen(false);
-    setNewExpense({ truckId: '', tipo: '', data: new Date().toISOString().split('T')[0], valor: '', km: '', obs: '', comprovante: '' });
+    setNewExpense({ truckId: '', tipo: '', data: new Date().toISOString().split('T')[0], valor: '', km: '', obs: '', comprovante: '', empresaDespesa: '' });
     onUpdate();
   };
 
@@ -761,8 +762,15 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
                         <td className="px-6 py-4 text-slate-500 font-mono">
                           {new Date(exp.data + "T00:00:00").toLocaleDateString('pt-BR')}
                         </td>
-                        <td className="px-6 py-4 text-slate-600 font-medium max-w-xs truncate">
-                          {exp.obs || <span className="text-slate-350 italic">Sem detalhamento</span>}
+                        <td className="px-6 py-4 text-slate-600 font-medium max-w-xs">
+                          {exp.empresaDespesa && (
+                            <div className="mb-1 text-[10px] font-black text-blue-600 bg-blue-50 border border-blue-150 inline-block px-1.5 py-0.5 rounded-lg uppercase tracking-wider">
+                              🏢 {exp.empresaDespesa}
+                            </div>
+                          )}
+                          <div className="truncate">
+                            {exp.obs || <span className="text-slate-350 italic">Sem detalhamento</span>}
+                          </div>
                         </td>
                         <td className="px-6 py-4">
                           {exp.comprovante ? (
@@ -945,6 +953,29 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
                 placeholder="0,00"
               />
             </div>
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-750 mb-1.5">Empresa / Destinatário da Despesa (Opcional)</label>
+            <input
+              type="text"
+              list="empresas-despesa"
+              value={newExpense.empresaDespesa}
+              onChange={e => setNewExpense({...newExpense, empresaDespesa: e.target.value})}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 font-bold focus:outline-none text-xs text-slate-700"
+              placeholder="Digite ou selecione (ex: Empresa do Grupo, Empresa Associada, etc.)"
+            />
+            <datalist id="empresas-despesa">
+              <option value="Empresa Principal" />
+              <option value="Empresa Associada" />
+              <option value="Empresa do Grupo" />
+              <option value="Empresa Destinatário" />
+              <option value="Matriz GBFleet" />
+              <option value="Filial 01" />
+              <option value="Parceiro Logístico" />
+              {Array.from(new Set((data?.expenses || []).map((exp: any) => exp.empresaDespesa).filter(Boolean))).map((emp: any) => (
+                <option key={emp} value={emp} />
+              ))}
+            </datalist>
           </div>
           <div>
             <label className="block text-xs font-bold text-slate-750 mb-1.5">Observação (Opcional)</label>

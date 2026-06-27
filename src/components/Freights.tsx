@@ -55,6 +55,42 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
   const [outrosDetalhes, setOutrosDetalhes] = useState('');
   const [fotoComprovanteGeral, setFotoComprovanteGeral] = useState('');
 
+  // Freight calculation base: 'fixo' | 'quilo' | 'cabeca'
+  const [tipoCalculo, setTipoCalculo] = useState('fixo');
+  const [pesoTotalKg, setPesoTotalKg] = useState('');
+  const [valorPorKg, setValorPorKg] = useState('');
+  const [quantidadeCabecas, setQuantidadeCabecas] = useState('');
+  const [valorPorCabeca, setValorPorCabeca] = useState('');
+
+  const handlePesoChange = (peso: string, valor: string) => {
+    setPesoTotalKg(peso);
+    setValorPorKg(valor);
+    if (peso && valor) {
+      const total = parseFloat(peso) * parseFloat(valor);
+      setValorBruto(total.toFixed(2));
+    }
+  };
+
+  const handleCabecasChange = (cabecas: string, valor: string) => {
+    setQuantidadeCabecas(cabecas);
+    setValorPorCabeca(valor);
+    if (cabecas && valor) {
+      const total = parseFloat(cabecas) * parseFloat(valor);
+      setValorBruto(total.toFixed(2));
+    }
+  };
+
+  const handleTipoCalculoChange = (tipo: string) => {
+    setTipoCalculo(tipo);
+    if (tipo === 'fixo') {
+      // keeps existing valorBruto
+    } else if (tipo === 'quilo') {
+      handlePesoChange(pesoTotalKg, valorPorKg);
+    } else if (tipo === 'cabeca') {
+      handleCabecasChange(quantidadeCabecas, valorPorCabeca);
+    }
+  };
+
   // Details expand overlay
   const [expandedFreightId, setExpandedFreightId] = useState<string | null>(null);
 
@@ -131,6 +167,11 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
     setFotoComprovanteGeral(freight.fotoComprovanteGeral || '');
     setStatus(freight.status || 'Orçado');
     setDataFrete(freight.data || new Date().toISOString().split('T')[0]);
+    setTipoCalculo(freight.tipoCalculo || 'fixo');
+    setPesoTotalKg(freight.pesoTotalKg ? String(freight.pesoTotalKg) : '');
+    setValorPorKg(freight.valorPorKg ? String(freight.valorPorKg) : '');
+    setQuantidadeCabecas(freight.quantidadeCabecas ? String(freight.quantidadeCabecas) : '');
+    setValorPorCabeca(freight.valorPorCabeca ? String(freight.valorPorCabeca) : '');
     setIsModalOpen(true);
   };
 
@@ -183,7 +224,12 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
           outrosDetalhes,
           fotoComprovanteGeral,
           status,
-          data: dataFrete
+          data: dataFrete,
+          tipoCalculo,
+          pesoTotalKg: pesoTotalKg ? parseFloat(pesoTotalKg) : 0,
+          valorPorKg: valorPorKg ? parseFloat(valorPorKg) : 0,
+          quantidadeCabecas: quantidadeCabecas ? parseInt(quantidadeCabecas, 10) : 0,
+          valorPorCabeca: valorPorCabeca ? parseFloat(valorPorCabeca) : 0
         })
       });
 
@@ -208,6 +254,11 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
         setFotoComprovanteGeral('');
         setStatus('Orçado');
         setDataFrete(new Date().toISOString().split('T')[0]);
+        setTipoCalculo('fixo');
+        setPesoTotalKg('');
+        setValorPorKg('');
+        setQuantidadeCabecas('');
+        setValorPorCabeca('');
         onUpdate();
       }
     } catch (err) {
@@ -248,6 +299,11 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
             setFotoComprovanteGeral('');
             setStatus('Orçado');
             setDataFrete(new Date().toISOString().split('T')[0]);
+            setTipoCalculo('fixo');
+            setPesoTotalKg('');
+            setValorPorKg('');
+            setQuantidadeCabecas('');
+            setValorPorCabeca('');
             setIsModalOpen(true);
           }}
           className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-3 rounded-2xl text-sm font-bold flex items-center gap-2 shadow-lg shadow-blue-100 transition-all self-stretch sm:self-auto justify-center"
@@ -437,6 +493,21 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
                           <span>{freight.destino}</span>
                         </div>
                       </div>
+
+                      {freight.tipoCalculo === 'quilo' && (
+                        <div className="mt-2.5 flex items-center gap-1.5">
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-100">
+                            ⚖️ Peso-Base: {freight.pesoTotalKg?.toLocaleString('pt-BR')} kg × R$ {parseFloat(freight.valorPorKg || '0').toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 })}/kg
+                          </span>
+                        </div>
+                      )}
+                      {freight.tipoCalculo === 'cabeca' && (
+                        <div className="mt-2.5 flex items-center gap-1.5">
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold bg-orange-50 text-orange-700 border border-orange-100">
+                            🐂 Carga: {freight.quantidadeCabecas} Cabeças de Gado × R$ {parseFloat(freight.valorPorCabeca || '0').toLocaleString('pt-BR', { minimumFractionDigits: 2 })}/cabeça
+                          </span>
+                        </div>
+                      )}
                     </div>
 
                     {/* Financial Values summary */}
@@ -694,7 +765,106 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
             </div>
 
             <div className="col-span-2">
-              <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Valor Bruto do Frete (Receita) *</label>
+              <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Tipo de Cálculo do Frete</label>
+              <div className="grid grid-cols-3 gap-3">
+                <button
+                  type="button"
+                  onClick={() => handleTipoCalculoChange('fixo')}
+                  className={`py-2 px-3 rounded-xl border text-xs font-semibold transition-all ${
+                    tipoCalculo === 'fixo'
+                      ? 'bg-blue-50 border-blue-200 text-blue-700 shadow-sm'
+                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  Valor Fixo (Viagem)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleTipoCalculoChange('quilo')}
+                  className={`py-2 px-3 rounded-xl border text-xs font-semibold transition-all ${
+                    tipoCalculo === 'quilo'
+                      ? 'bg-blue-50 border-blue-200 text-blue-700 shadow-sm'
+                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  Por Peso (Kilos)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleTipoCalculoChange('cabeca')}
+                  className={`py-2 px-3 rounded-xl border text-xs font-semibold transition-all ${
+                    tipoCalculo === 'cabeca'
+                      ? 'bg-blue-50 border-blue-200 text-blue-700 shadow-sm'
+                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  Por Cabeça (Gado)
+                </button>
+              </div>
+            </div>
+
+            {tipoCalculo === 'quilo' && (
+              <>
+                <div>
+                  <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Peso Total (Kg)</label>
+                  <input
+                    type="number"
+                    placeholder="Ex: 15000"
+                    value={pesoTotalKg}
+                    onChange={(e) => handlePesoChange(e.target.value, valorPorKg)}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:border-blue-500 transition-colors text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Valor por Kg (R$)</label>
+                  <div className="relative">
+                    <span className="absolute left-4 top-3 text-slate-400 font-bold text-sm">R$</span>
+                    <input
+                      type="number"
+                      step="0.001"
+                      placeholder="Ex: 0.35"
+                      value={valorPorKg}
+                      onChange={(e) => handlePesoChange(pesoTotalKg, e.target.value)}
+                      className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:border-blue-500 transition-colors text-sm"
+                    />
+                  </div>
+                </div>
+              </>
+            )}
+
+            {tipoCalculo === 'cabeca' && (
+              <>
+                <div>
+                  <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Qtd de Cabeças (Gado)</label>
+                  <input
+                    type="number"
+                    placeholder="Ex: 80"
+                    value={quantidadeCabecas}
+                    onChange={(e) => handleCabecasChange(e.target.value, valorPorCabeca)}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:border-blue-500 transition-colors text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Valor por Cabeça (R$)</label>
+                  <div className="relative">
+                    <span className="absolute left-4 top-3 text-slate-400 font-bold text-sm">R$</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      placeholder="Ex: 25.00"
+                      value={valorPorCabeca}
+                      onChange={(e) => handleCabecasChange(quantidadeCabecas, e.target.value)}
+                      className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:border-blue-500 transition-colors text-sm"
+                    />
+                  </div>
+                </div>
+              </>
+            )}
+
+            <div className="col-span-2">
+              <label className="block text-xs font-bold uppercase text-slate-500 mb-2">
+                Valor Bruto do Frete (Receita) * {tipoCalculo !== 'fixo' && <span className="text-emerald-600 font-black tracking-wide">(Autocalculado)</span>}
+              </label>
               <div className="relative">
                 <span className="absolute left-4 top-3 text-slate-400 font-bold text-sm">R$</span>
                 <input
@@ -702,9 +872,12 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
                   required
                   step="0.01"
                   placeholder="0,00"
+                  readOnly={tipoCalculo !== 'fixo'}
                   value={valorBruto}
                   onChange={(e) => setValorBruto(e.target.value)}
-                  className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:border-blue-500 transition-colors text-sm font-bold"
+                  className={`w-full pl-10 pr-4 py-3 border border-slate-200 rounded-2xl focus:outline-none focus:border-blue-500 transition-colors text-sm font-bold ${
+                    tipoCalculo !== 'fixo' ? 'bg-slate-100/80 text-emerald-700 cursor-not-allowed' : 'bg-slate-50'
+                  }`}
                 />
               </div>
             </div>
