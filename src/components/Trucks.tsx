@@ -25,7 +25,7 @@ import { cn } from '../lib/utils';
 
 export default function Trucks({ data, onUpdate }: { data: any, onUpdate: () => void }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [newTruck, setNewTruck] = useState({ placa: '', modelo: '' });
+  const [newTruck, setNewTruck] = useState({ placa: '', modelo: '', usaArla: false });
   const [searchTerm, setSearchTerm] = useState('');
 
   // Details Modal States
@@ -42,7 +42,7 @@ export default function Trucks({ data, onUpdate }: { data: any, onUpdate: () => 
       body: JSON.stringify({ ...newTruck, companyId: 'comp_1', ativo: true })
     });
     
-    setNewTruck({ placa: '', modelo: '' });
+    setNewTruck({ placa: '', modelo: '', usaArla: false });
     setIsModalOpen(false);
     onUpdate();
   };
@@ -81,6 +81,7 @@ export default function Trucks({ data, onUpdate }: { data: any, onUpdate: () => 
     const maintenance = (data.maintenance_alerts || []).filter((alert: any) => alert.truckId === truckPlaca);
 
     const totalSpentFuel = fuelLogs.reduce((acc: number, log: any) => acc + Number(log.valor || 0), 0);
+    const totalSpentArla = fuelLogs.reduce((acc: number, log: any) => acc + Number(log.valorArla || 0), 0);
     const totalSpentExpenses = expenses.reduce((acc: number, exp: any) => acc + Number(exp.valor || 0), 0);
     
     const totalFreightRevenue = freights.reduce((acc: number, f: any) => acc + Number(f.valorBruto || 0), 0);
@@ -93,7 +94,7 @@ export default function Trucks({ data, onUpdate }: { data: any, onUpdate: () => 
       .reduce((acc: number, m: any) => acc + Number(m.custo || 0), 0);
 
     // Consolidated metrics
-    const totalInvestedCosts = totalSpentFuel + totalSpentExpenses + totalFreightCosts + totalMaintenanceCosts;
+    const totalInvestedCosts = totalSpentFuel + totalSpentArla + totalSpentExpenses + totalFreightCosts + totalMaintenanceCosts;
     const estimatedProfit = totalFreightRevenue - totalInvestedCosts;
 
     return {
@@ -102,6 +103,7 @@ export default function Trucks({ data, onUpdate }: { data: any, onUpdate: () => 
       freights,
       maintenance,
       totalSpentFuel,
+      totalSpentArla,
       totalSpentExpenses,
       totalFreightRevenue,
       totalFreightCosts,
@@ -161,7 +163,14 @@ export default function Trucks({ data, onUpdate }: { data: any, onUpdate: () => 
                 </div>
                 
                 <div className="space-y-1 mb-6">
-                  <h4 className="text-lg font-black text-slate-900 tracking-tight">{truck.placa}</h4>
+                  <div className="flex items-center justify-between gap-2">
+                    <h4 className="text-lg font-black text-slate-900 tracking-tight">{truck.placa}</h4>
+                    {truck.usaArla && (
+                      <span className="bg-sky-50 text-sky-700 border border-sky-100 px-2 py-0.5 rounded-lg text-[10px] font-black flex items-center gap-1">
+                        💨 Arla 32
+                      </span>
+                    )}
+                  </div>
                   <p className="text-sm text-slate-500 font-bold">{truck.modelo}</p>
                 </div>
 
@@ -229,6 +238,18 @@ export default function Trucks({ data, onUpdate }: { data: any, onUpdate: () => 
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                   placeholder="Ex: Scania R450"
                 />
+              </div>
+              <div className="flex items-center gap-2.5 pt-2">
+                <input 
+                  type="checkbox" 
+                  id="input-usa-arla"
+                  checked={newTruck.usaArla}
+                  onChange={e => setNewTruck({...newTruck, usaArla: e.target.checked})}
+                  className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-blue-500 cursor-pointer"
+                />
+                <label htmlFor="input-usa-arla" className="text-sm font-semibold text-slate-700 cursor-pointer select-none">
+                  Este caminhão exige / utiliza Arla 32
+                </label>
               </div>
             </div>
             <div className="flex gap-3 mt-8">
@@ -362,6 +383,12 @@ export default function Trucks({ data, onUpdate }: { data: any, onUpdate: () => 
                         <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400">Diesel Gasto</span>
                       </div>
                       <p className="text-xl font-black text-slate-800">R$ {stats.totalSpentFuel.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                      {selectedTruck.usaArla && (
+                        <p className="text-[10px] text-sky-600 font-extrabold mt-1.5 pt-1.5 border-t border-slate-100 flex justify-between items-center">
+                          <span>💨 Arla 32 Gasto:</span>
+                          <span>R$ {stats.totalSpentArla.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                        </p>
+                      )}
                     </div>
 
                     <div className="bg-white p-5 rounded-3xl border border-slate-200">
@@ -466,7 +493,7 @@ export default function Trucks({ data, onUpdate }: { data: any, onUpdate: () => 
                                 <span className="font-extrabold text-[10px] uppercase tracking-wider bg-slate-100 text-slate-600 px-2 py-0.5 rounded">
                                   {f.status}
                                 </span>
-                                <span>{new Date(f.data).toLocaleDateString('pt-BR')}</span>
+                                <span>{new Date(f.data + "T00:00:00").toLocaleDateString('pt-BR')}</span>
                               </div>
                               <div className="flex items-center gap-1.5 font-bold text-slate-800 text-sm">
                                 <MapPin size={14} className="text-slate-400 animate-pulse" />
@@ -511,7 +538,7 @@ export default function Trucks({ data, onUpdate }: { data: any, onUpdate: () => 
                         <tbody className="divide-y divide-slate-150">
                           {stats.fuelLogs.map((log: any) => (
                             <tr key={log.id} className="hover:bg-slate-50/50">
-                              <td className="px-5 py-3 text-slate-600">{new Date(log.data).toLocaleDateString('pt-BR')}</td>
+                             <td className="px-5 py-3 text-slate-600">{new Date(log.data + "T00:00:00").toLocaleDateString('pt-BR')}</td>
                               <td className="px-5 py-3 font-medium text-slate-700">{log.km.toLocaleString()} km</td>
                               <td className="px-5 py-3 font-medium text-slate-700">{log.litros} L</td>
                               <td className="px-5 py-3 font-bold text-slate-950">R$ {log.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
@@ -538,7 +565,7 @@ export default function Trucks({ data, onUpdate }: { data: any, onUpdate: () => 
                         <div key={exp.id} className="p-3.5 flex items-center justify-between hover:bg-slate-50/50 text-xs">
                           <div>
                             <p className="font-bold text-slate-800">{exp.tipo}</p>
-                            <span className="text-slate-400 block text-[10px]">{new Date(exp.data).toLocaleDateString('pt-BR')} {exp.obs ? `• ${exp.obs}` : ''}</span>
+                            <span className="text-slate-400 block text-[10px]">{new Date(exp.data + "T00:00:00").toLocaleDateString('pt-BR')} {exp.obs ? `• ${exp.obs}` : ''}</span>
                           </div>
                           <span className="font-bold text-rose-500">- R$ {exp.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                         </div>

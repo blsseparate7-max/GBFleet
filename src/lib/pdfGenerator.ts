@@ -19,6 +19,8 @@ export interface FreightData {
   fotoComprovanteGeral?: string;
   status: string;
   data: string;
+  distanciaKm?: number;
+  kmAbastecimento?: number;
 }
 
 export function generateFreightPDF(freight: FreightData) {
@@ -86,9 +88,9 @@ export function generateFreightPDF(freight: FreightData) {
 
   // Draw details box
   doc.setFillColor(bgLight[0], bgLight[1], bgLight[2]);
-  doc.rect(15, currentY, pageWidth - 30, 28, 'F');
+  doc.rect(15, currentY, pageWidth - 30, 36, 'F');
   doc.setDrawColor(203, 213, 225);
-  doc.rect(15, currentY, pageWidth - 30, 28, 'D');
+  doc.rect(15, currentY, pageWidth - 30, 36, 'D');
 
   doc.setFontSize(9);
   doc.setFont('helvetica', 'bold');
@@ -97,10 +99,12 @@ export function generateFreightPDF(freight: FreightData) {
   doc.text('Veículo / Placa:', 20, currentY + 8);
   doc.text('Status:', 20, currentY + 16);
   doc.text('Data do Lançamento:', 20, currentY + 24);
+  doc.text('Distância da Viagem:', 20, currentY + 32);
 
   doc.text('Origem:', pageWidth / 2 + 5, currentY + 8);
   doc.text('Destino:', pageWidth / 2 + 5, currentY + 16);
   doc.text('Operação:', pageWidth / 2 + 5, currentY + 24);
+  doc.text('KM Combustível:', pageWidth / 2 + 5, currentY + 32);
 
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(textColorLight[0], textColorLight[1], textColorLight[2]);
@@ -120,6 +124,7 @@ export function generateFreightPDF(freight: FreightData) {
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(textColorLight[0], textColorLight[1], textColorLight[2]);
   doc.text(new Date(freight.data).toLocaleDateString('pt-BR'), 60, currentY + 24);
+  doc.text(freight.distanciaKm ? `${freight.distanciaKm} km` : 'Não informada', 60, currentY + 32);
 
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(textColorDark[0], textColorDark[1], textColorDark[2]);
@@ -129,9 +134,10 @@ export function generateFreightPDF(freight: FreightData) {
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(textColorLight[0], textColorLight[1], textColorLight[2]);
   doc.text('Transporte Rodoviário Dedicado', pageWidth / 2 + 28, currentY + 24);
+  doc.text(freight.kmAbastecimento ? `${freight.kmAbastecimento} km` : 'Não informado', pageWidth / 2 + 38, currentY + 32);
 
   // Section 2: Custos e Repartição Financeira
-  currentY += 38;
+  currentY += 46;
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(12);

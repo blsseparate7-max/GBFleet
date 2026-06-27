@@ -20,7 +20,10 @@ import {
   FileText,
   Image as ImageIcon,
   Edit,
-  Trash2
+  Trash2,
+  RefreshCw,
+  Navigation,
+  Map
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import Modal from './ui/Modal';
@@ -39,6 +42,8 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
   const [driverId, setDriverId] = useState('');
   const [origem, setOrigem] = useState('');
   const [destino, setDestino] = useState('');
+  const [distanciaKm, setDistanciaKm] = useState('');
+  const [kmAbastecimento, setKmAbastecimento] = useState('');
   const [valorBruto, setValorBruto] = useState('');
   const [pedagio, setPedagio] = useState('');
   const [combustivel, setCombustivel] = useState('');
@@ -46,6 +51,151 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
   const [outrasDespesas, setOutrasDespesas] = useState('');
   const [status, setStatus] = useState('Orçado');
   const [dataFrete, setDataFrete] = useState(new Date().toISOString().split('T')[0]);
+
+  // Autocomplete and routing states
+  const [origemSuggestions, setOrigemSuggestions] = useState<any[]>([]);
+  const [destinoSuggestions, setDestinoSuggestions] = useState<any[]>([]);
+  const [isLoadingOrigem, setIsLoadingOrigem] = useState(false);
+  const [isLoadingDestino, setIsLoadingDestino] = useState(false);
+  const [showOrigemSuggestions, setShowOrigemSuggestions] = useState(false);
+  const [showDestinoSuggestions, setShowDestinoSuggestions] = useState(false);
+  const [origemCoords, setOrigemCoords] = useState<{ lat: number, lon: number } | null>(null);
+  const [destinoCoords, setDestinoCoords] = useState<{ lat: number, lon: number } | null>(null);
+  const [isCalculatingDistance, setIsCalculatingDistance] = useState(false);
+
+  const querySuggestions = async (
+    query: string,
+    setSuggestions: React.Dispatch<React.SetStateAction<any[]>>,
+    setLoading: React.Dispatch<React.SetStateAction<boolean>>
+  ) => {
+    if (!query || query.trim().length < 3) {
+      setSuggestions([]);
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=6&addressdetails=1&countrycodes=br`, {
+        headers: {
+          'Accept': 'application/json'
+        }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSuggestions(data || []);
+      }
+    } catch (err) {
+      console.error("Error fetching suggestions:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Debounced lookup for Origem
+  React.useEffect(() => {
+    const delayDebounceFn = setTimeout(() => {
+      if (origem && origem.length >= 3 && !origemSuggestions.some(s => s.display_name === origem)) {
+        querySuggestions(origem, setOrigemSuggestions, setIsLoadingOrigem);
+      } else if (!origem) {
+        setOrigemSuggestions([]);
+      }
+    }, 450);
+
+    return () => clearTimeout(delayDebounceFn);
+  }, [origem]);
+
+  // Debounced lookup for Destino
+  React.useEffect(() => {
+    const delayDebounceFn = setTimeout(() => {
+      if (destino && destino.length >= 3 && !destinoSuggestions.some(s => s.display_name === destino)) {
+        querySuggestions(destino, setDestinoSuggestions, setIsLoadingDestino);
+      } else if (!destino) {
+        setDestinoSuggestions([]);
+      }
+    }, 450);
+
+    return () => clearTimeout(delayDebounceFn);
+  }, [destino]);
+
+  // OSRM routing distance autofill when start and end coords are available
+  React.useEffect(() => {
+    const calculateDistance = async () => {
+      if (!origemCoords || !destinoCoords) return;
+      setIsCalculatingDistance(true);
+      try {
+        const res = await fetch(`https://router.project-osrm.org/route/v1/driving/${origemCoords.lon},${origemCoords.lat};${destinoCoords.lon},${destinoCoords.lat}?overview=false`);
+        if (res.ok) {
+          const json = await res.json();
+          if (json.routes && json.routes.length > 0) {
+            const distKm = Math.round(json.routes[0].distance / 1000);
+            setDistanciaKm(String(distKm));
+          }
+        }
+      } catch (err) {
+        console.error("OSRM call error:", err);
+      } finally {
+        setIsCalculatingDistance(false);
+      }
+    };
+
+    calculateDistance();
+  }, [origemCoords, destinoCoords]);
+
+  // Fallback geocoder in case user typed but coordinates are not resolved
+  const triggerManualDistanceCalc = async () => {
+    if (!origem || !destino) {
+      alert("Por favor, preencha origem e destino primeiro!");
+      return;
+    }
+    setIsCalculatingDistance(true);
+    try {
+      let startC = origemCoords;
+      let endC = destinoCoords;
+
+      if (!startC) {
+        const resStart = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(origem)}&limit=1&countrycodes=br`, {
+          headers: { 'Accept': 'application/json' }
+        });
+        if (resStart.ok) {
+          const d = await resStart.json();
+          if (d && d.length > 0) {
+            startC = { lat: parseFloat(d[0].lat), lon: parseFloat(d[0].lon) };
+            setOrigemCoords(startC);
+          }
+        }
+      }
+
+      if (!endC) {
+        const resEnd = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(destino)}&limit=1&countrycodes=br`, {
+          headers: { 'Accept': 'application/json' }
+        });
+        if (resEnd.ok) {
+          const d = await resEnd.json();
+          if (d && d.length > 0) {
+            endC = { lat: parseFloat(d[0].lat), lon: parseFloat(d[0].lon) };
+            setDestinoCoords(endC);
+          }
+        }
+      }
+
+      if (startC && endC) {
+        const resRoute = await fetch(`https://router.project-osrm.org/route/v1/driving/${startC.lon},${startC.lat};${endC.lon},${endC.lat}?overview=false`);
+        if (resRoute.ok) {
+          const json = await resRoute.json();
+          if (json.routes && json.routes.length > 0) {
+            const distKm = Math.round(json.routes[0].distance / 1000);
+            setDistanciaKm(String(distKm));
+          }
+        }
+      } else {
+        alert("Não foi possível localizar os endereços de origem ou destino no mapa. Insira a distância manualmente.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Erro ao calcular a distância.");
+    } finally {
+      setIsCalculatingDistance(false);
+    }
+  };
 
   // Premium travel note fields & photo attachment simulation
   const [localAbastecimento, setLocalAbastecimento] = useState('');
@@ -154,6 +304,10 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
     setDriverId(freight.driverId || '');
     setOrigem(freight.origem || '');
     setDestino(freight.destino || '');
+    setDistanciaKm(freight.distanciaKm ? String(freight.distanciaKm) : '');
+    setKmAbastecimento(freight.kmAbastecimento ? String(freight.kmAbastecimento) : '');
+    setOrigemCoords(null);
+    setDestinoCoords(null);
     setValorBruto(freight.valorBruto ? String(freight.valorBruto) : '');
     setPedagio(freight.pedagio ? String(freight.pedagio) : '');
     setCombustivel(freight.combustivel ? String(freight.combustivel) : '');
@@ -212,6 +366,8 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
           driverId,
           origem,
           destino,
+          distanciaKm: parseFloat(distanciaKm || '0'),
+          kmAbastecimento: parseFloat(kmAbastecimento || '0'),
           valorBruto: parseFloat(valorBruto),
           pedagio: parseFloat(pedagio || '0'),
           combustivel: parseFloat(combustivel || '0'),
@@ -241,6 +397,10 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
         setDriverId('');
         setOrigem('');
         setDestino('');
+        setDistanciaKm('');
+        setKmAbastecimento('');
+        setOrigemCoords(null);
+        setDestinoCoords(null);
         setValorBruto('');
         setPedagio('');
         setCombustivel('');
@@ -469,7 +629,7 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
                           </select>
                         </div>
                         <span className="text-xs font-mono text-slate-400">
-                          {new Date(freight.data).toLocaleDateString('pt-BR')}
+                          {new Date(freight.data + "T00:00:00").toLocaleDateString('pt-BR')}
                         </span>
                         <span className="text-xs bg-blue-50 text-blue-700 px-2.5 py-1 rounded-full font-bold">
                           Veículo: {freight.truckId}
@@ -478,6 +638,11 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
                           <span className="text-xs bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-full font-bold inline-flex items-center gap-1">
                             <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
                             Motorista: {data.drivers?.find((d: any) => d.id === freight.driverId)?.nome || freight.driverId}
+                          </span>
+                        )}
+                        {freight.distanciaKm > 0 && (
+                          <span className="text-xs bg-slate-100 text-slate-700 px-2.5 py-1 rounded-full font-bold inline-flex items-center gap-1">
+                            🛣️ {freight.distanciaKm} km
                           </span>
                         )}
                       </div>
@@ -597,6 +762,9 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
                           <div>
                             <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">Combustível</p>
                             <p className="font-extrabold text-slate-800 text-base">R$ {freight.combustivel?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                            {freight.kmAbastecimento > 0 && (
+                              <p className="text-[11px] text-blue-600 font-bold mt-0.5">📟 Odr. KM: {freight.kmAbastecimento?.toLocaleString('pt-BR')} km</p>
+                            )}
                           </div>
                           {freight.localAbastecimento ? (
                             <div className="text-xs text-slate-600 bg-slate-50 p-2.5 rounded-xl border border-slate-150">
@@ -740,28 +908,133 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
               </select>
             </div>
 
-            <div>
+            <div className="relative">
               <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Cidade Origem *</label>
               <input
                 type="text"
                 required
                 placeholder="Ex: São Paulo, SP"
                 value={origem}
-                onChange={(e) => setOrigem(e.target.value)}
+                onChange={(e) => {
+                  setOrigem(e.target.value);
+                  setShowOrigemSuggestions(true);
+                }}
+                onFocus={() => setShowOrigemSuggestions(true)}
                 className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:border-blue-500 transition-colors text-sm"
               />
+              {showOrigemSuggestions && (origemSuggestions.length > 0 || isLoadingOrigem) && (
+                <div className="absolute z-30 w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden divide-y divide-slate-100 max-h-48 overflow-y-auto">
+                  {isLoadingOrigem && (
+                    <div className="p-3 text-xs text-slate-400 flex items-center gap-2">
+                      <RefreshCw className="animate-spin text-blue-500" size={12} />
+                      <span>Buscando...</span>
+                    </div>
+                  )}
+                  {origemSuggestions.map((item) => {
+                    const labelStr = item.address.city || item.address.town || item.address.village || item.address.municipality || "Localidade";
+                    const stateStr = item.address.state ? `, ${item.address.state}` : '';
+                    return (
+                      <button
+                        key={item.place_id}
+                        type="button"
+                        onClick={() => {
+                          setOrigem(item.display_name);
+                          setOrigemCoords({ lat: parseFloat(item.lat), lon: parseFloat(item.lon) });
+                          setOrigemSuggestions([]);
+                          setShowOrigemSuggestions(false);
+                        }}
+                        className="w-full text-left px-3 py-2 hover:bg-slate-50 text-[11px] text-slate-700 transition-colors block truncate"
+                      >
+                        <span className="font-extrabold">{labelStr}{stateStr}</span>
+                        <span className="text-[9px] text-slate-400 block truncate">{item.display_name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
-            <div>
+            <div className="relative">
               <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Cidade Destino *</label>
               <input
                 type="text"
                 required
                 placeholder="Ex: Curitiba, PR"
                 value={destino}
-                onChange={(e) => setDestino(e.target.value)}
+                onChange={(e) => {
+                  setDestino(e.target.value);
+                  setShowDestinoSuggestions(true);
+                }}
+                onFocus={() => setShowDestinoSuggestions(true)}
                 className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:border-blue-500 transition-colors text-sm"
               />
+              {showDestinoSuggestions && (destinoSuggestions.length > 0 || isLoadingDestino) && (
+                <div className="absolute z-30 w-full mt-1 bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden divide-y divide-slate-100 max-h-48 overflow-y-auto">
+                  {isLoadingDestino && (
+                    <div className="p-3 text-xs text-slate-400 flex items-center gap-2">
+                      <RefreshCw className="animate-spin text-blue-500" size={12} />
+                      <span>Buscando...</span>
+                    </div>
+                  )}
+                  {destinoSuggestions.map((item) => {
+                    const labelStr = item.address.city || item.address.town || item.address.village || item.address.municipality || "Localidade";
+                    const stateStr = item.address.state ? `, ${item.address.state}` : '';
+                    return (
+                      <button
+                        key={item.place_id}
+                        type="button"
+                        onClick={() => {
+                          setDestino(item.display_name);
+                          setDestinoCoords({ lat: parseFloat(item.lat), lon: parseFloat(item.lon) });
+                          setDestinoSuggestions([]);
+                          setShowDestinoSuggestions(false);
+                        }}
+                        className="w-full text-left px-3 py-2 hover:bg-slate-50 text-[11px] text-slate-700 transition-colors block truncate"
+                      >
+                        <span className="font-extrabold">{labelStr}{stateStr}</span>
+                        <span className="text-[9px] text-slate-400 block truncate">{item.display_name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="col-span-2 bg-blue-50/40 border border-blue-100 p-4 rounded-2xl">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                <div className="flex-1 w-full">
+                  <label className="block text-xs font-bold uppercase text-slate-500 mb-1.5 flex items-center gap-1">
+                    🛣️ Distância do Frete (KM)
+                  </label>
+                  <input
+                    type="number"
+                    placeholder="Distância estimada (km)..."
+                    value={distanciaKm}
+                    onChange={(e) => setDistanciaKm(e.target.value)}
+                    className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-blue-500 transition-colors text-sm font-bold font-mono text-blue-800"
+                  />
+                </div>
+                <div className="sm:mt-5 w-full sm:w-auto shrink-0">
+                  <button
+                    type="button"
+                    onClick={triggerManualDistanceCalc}
+                    disabled={isCalculatingDistance || !origem || !destino}
+                    className="w-full sm:w-auto px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50 cursor-pointer shadow-sm shadow-blue-100"
+                  >
+                    {isCalculatingDistance ? (
+                      <>
+                        <RefreshCw className="animate-spin" size={14} />
+                        <span>Calculando...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Navigation size={14} />
+                        <span>Calcular via GPS</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
             </div>
 
             <div className="col-span-2">
@@ -889,8 +1162,8 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
             <div className="grid grid-cols-1 gap-6 p-5 bg-slate-50 rounded-2xl border border-slate-200">
               {/* Combustível Section inside Modal */}
               <div className="space-y-4">
-                <div className="flex gap-4">
-                  <div className="flex-1">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
                     <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Combustível (R$)</label>
                     <div className="relative">
                       <span className="absolute left-4 top-3 text-slate-400 font-medium text-sm">R$</span>
@@ -900,12 +1173,22 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
                         placeholder="0,00"
                         value={combustivel}
                         onChange={(e) => setCombustivel(e.target.value)}
-                        className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-blue-500 transition-colors text-sm"
+                        className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-blue-500 transition-colors text-sm font-semibold text-slate-700"
                       />
                     </div>
                   </div>
-                  <div className="flex-2">
-                    <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Local / Posto de Abastecimento</label>
+                  <div>
+                    <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Odr. KM Abastecimento</label>
+                    <input
+                      type="number"
+                      placeholder="Ex: 124500"
+                      value={kmAbastecimento}
+                      onChange={(e) => setKmAbastecimento(e.target.value)}
+                      className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-blue-500 transition-colors text-sm font-mono font-semibold text-slate-700"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Local / Posto</label>
                     <input
                       type="text"
                       placeholder="Ex: Posto Ipiranga, Dutra KM 145"

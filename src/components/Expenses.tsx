@@ -19,7 +19,9 @@ import {
   Clock,
   AlertCircle,
   FileText,
-  CheckCircle
+  CheckCircle,
+  Building,
+  Edit
 } from 'lucide-react';
 import Modal from './ui/Modal';
 import { cn } from '../lib/utils';
@@ -53,8 +55,13 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
     const t = (tipo || "").toLowerCase();
     return t.includes("segur") || t.includes("rastre");
   };
+  const isArlaByTipo = (tipo: string) => {
+    const t = (tipo || "").toLowerCase();
+    return t.includes("arla");
+  };
   const isCombustivelByTipo = (tipo: string) => {
     const t = (tipo || "").toLowerCase();
+    if (t.includes("arla")) return false;
     return t.includes("diesel") || t.includes("combust") || t.includes("gasol") || t.includes("abastec");
   };
   const isMotoristaByTipo = (tipo: string) => {
@@ -62,7 +69,7 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
     return t.includes("motorista") || t.includes("diária") || t.includes("diaria") || t.includes("comissão") || t.includes("comissao");
   };
 
-  const [activeSubTab, setActiveSubTab] = useState<'dre' | 'manual' | 'charts'>('dre');
+  const [activeSubTab, setActiveSubTab] = useState<'dre' | 'manual' | 'charts' | 'empresas'>('dre');
   
   // Filtering DRE & Custos
   const [filterMonth, setFilterMonth] = useState<string>('all'); // format: 'YYYY-MM'
@@ -78,8 +85,70 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
     km: '',
     obs: '',
     comprovante: '',
-    empresaDespesa: ''
+    empresaDespesa: '',
+    expenseCompanyId: ''
   });
+
+  // Registered Companies states
+  const [isCompanyModalOpen, setIsCompanyModalOpen] = useState(false);
+  const [selectedCompany, setSelectedCompany] = useState<any | null>(null);
+  const [companyForm, setCompanyForm] = useState({
+    nome: '',
+    cnpj: '',
+    cidade: '',
+    uf: ''
+  });
+  const [isSavingCompany, setIsSavingCompany] = useState(false);
+
+  const openNewCompany = () => {
+    setSelectedCompany(null);
+    setCompanyForm({ nome: '', cnpj: '', cidade: '', uf: '' });
+    setIsCompanyModalOpen(true);
+  };
+
+  const openEditCompany = (comp: any) => {
+    setSelectedCompany(comp);
+    setCompanyForm({
+      nome: comp.nome || '',
+      cnpj: comp.cnpj || '',
+      cidade: comp.cidade || '',
+      uf: comp.uf || ''
+    });
+    setIsCompanyModalOpen(true);
+  };
+
+  const handleDeleteCompany = async (id: string) => {
+    if (!confirm("Tem certeza de que deseja remover esta empresa de despesa?")) return;
+    try {
+      await fetch(`/api/expense_companies/${id}`, { method: 'DELETE' });
+      onUpdate();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleSaveCompany = async () => {
+    if (!companyForm.nome) return;
+    setIsSavingCompany(true);
+    try {
+      const url = selectedCompany 
+        ? `/api/expense_companies/${selectedCompany.id}` 
+        : '/api/expense_companies';
+      const method = selectedCompany ? 'PUT' : 'POST';
+      
+      await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(companyForm)
+      });
+      setIsCompanyModalOpen(false);
+      onUpdate();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsSavingCompany(false);
+    }
+  };
 
   // Delete manual expense handler
   const handleDeleteExpense = async (id: string) => {
@@ -123,7 +192,7 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
     });
 
     setIsModalOpen(false);
-    setNewExpense({ truckId: '', tipo: '', data: new Date().toISOString().split('T')[0], valor: '', km: '', obs: '', comprovante: '', empresaDespesa: '' });
+    setNewExpense({ truckId: '', tipo: '', data: new Date().toISOString().split('T')[0], valor: '', km: '', obs: '', comprovante: '', empresaDespesa: '', expenseCompanyId: '' });
     onUpdate();
   };
 
@@ -201,6 +270,13 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
     // Fuel costs are managed under the dedicated Fuel and Freight Management tabs
     const custoDiesel = fuelLogsFiltered.reduce((sum: number, l: any) => sum + (Number(l.valor) || 0), 0);
     
+    // Arla 32 (Ar)
+    const custoArlaFromFuel = fuelLogsFiltered.reduce((sum: number, l: any) => sum + (Number(l.valorArla) || 0), 0);
+    const custoArlaManual = manualExpensesFiltered
+      .filter((e: any) => isArlaByTipo(e.tipo))
+      .reduce((sum: number, e: any) => sum + (Number(e.valor) || 0), 0);
+    const custoArla = custoArlaFromFuel + custoArlaManual;
+
     // Tolls (Pedágios)
     const custoPedagios = freightsFiltered.reduce((sum: number, f: any) => sum + (Number(f.pedagio) || 0), 0);
 
@@ -213,7 +289,7 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
     // Other trip variables (diaries, support)
     const custoOutrasDespesasViagem = freightsFiltered.reduce((sum: number, f: any) => sum + (Number(f.outrasDespesas) || 0), 0);
 
-    const custoVariavelTotal = custoDiesel + custoPedagios + custoMotoristas + custoOutrasDespesasViagem;
+    const custoVariavelTotal = custoDiesel + custoArla + custoPedagios + custoMotoristas + custoOutrasDespesasViagem;
 
     // Margin = Revenue - Variable Costs
     const margemContribuicao = receitaBrutaTotal - custoVariavelTotal;
@@ -257,6 +333,7 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
         !isMultaByTipo(e.tipo) && 
         !isSeguroByTipo(e.tipo) &&
         !isCombustivelByTipo(e.tipo) &&
+        !isArlaByTipo(e.tipo) &&
         !isMotoristaByTipo(e.tipo)
       )
       .reduce((sum: number, e: any) => sum + (Number(e.valor) || 0), 0);
@@ -267,7 +344,7 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
         // Exclude synced freights and synced expenses to avoid double count
         const isTripSync = c.id.includes('cash_freight_out') || c.id.includes('cash_freight_in');
         const isExpSync = c.descricao.startsWith('Despesa');
-        const isFuelSync = c.descricao.startsWith('Combustível') || c.categoria?.includes('Diesel');
+        const isFuelSync = c.descricao.startsWith('Combustível') || c.categoria?.includes('Diesel') || c.descricao.startsWith('Abastecimento') || c.descricao.includes('Arla');
         const isMaintSync = c.descricao.startsWith('Conclusão Manutenção') || c.descricao.startsWith('Despesa Manutenção') || c.categoria?.includes('Manutenção');
         return c.tipo === 'saida' && !isTripSync && !isExpSync && !isFuelSync && !isMaintSync;
       })
@@ -284,6 +361,7 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
       receitaEstadiasEExtras,
       receitaBrutaTotal,
       custoDiesel,
+      custoArla,
       custoPedagios,
       custoMotoristas,
       custoOutrasDespesasViagem,
@@ -310,6 +388,7 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
     receitaEstadiasEExtras: 0,
     receitaBrutaTotal: 0,
     custoDiesel: 0,
+    custoArla: 0,
     custoPedagios: 0,
     custoMotoristas: 0,
     custoOutrasDespesasViagem: 0,
@@ -370,6 +449,16 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
           >
             <PieChart size={14} />
             <span>Análise Ponderada</span>
+          </button>
+          <button 
+            onClick={() => setActiveSubTab('empresas')}
+            className={cn(
+              "px-3.5 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5",
+              activeSubTab === 'empresas' ? "bg-white text-slate-900 shadow-xs" : "text-slate-500 hover:text-slate-800"
+            )}
+          >
+            <Building size={14} />
+            <span>Empresas & Credores</span>
           </button>
         </div>
       </div>
@@ -563,6 +652,16 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
                 </span>
                 <span className="font-bold font-mono text-red-600">
                   - R$ {currentDRE.custoDiesel.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+
+              <div className="p-3.5 pl-8 flex justify-between items-center text-slate-600">
+                <span className="flex items-center gap-2">
+                  <ChevronRight size={12} className="text-slate-400" />
+                  (-) Despesa com Abastecimento de Arla 32
+                </span>
+                <span className="font-bold font-mono text-red-600">
+                  - R$ {currentDRE.custoArla.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                 </span>
               </div>
 
@@ -824,6 +923,7 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
 
               const categoryShares = [
                 { name: "Diesel / Combustível", value: currentDRE.custoDiesel, color: "bg-amber-500", labelColor: "text-amber-800" },
+                { name: "Arla 32 (Ar)", value: currentDRE.custoArla, color: "bg-sky-400", labelColor: "text-sky-800" },
                 { name: "Motoristas (Diárias/Comissões)", value: currentDRE.custoMotoristas, color: "bg-blue-600", labelColor: "text-blue-800" },
                 { name: "Manutenção & Consertos", value: currentDRE.custoManutencoes, color: "bg-indigo-600", labelColor: "text-indigo-800" },
                 { name: "Pedágios (Viagem e Avulsos)", value: currentDRE.custoPedagios + currentDRE.custoPedagiosFixos, color: "bg-slate-700", labelColor: "text-slate-800" },
@@ -902,6 +1002,86 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
         </div>
       )}
 
+      {/* Expense Companies Management tab */}
+      {activeSubTab === 'empresas' && (
+        <div className="space-y-6 font-sans">
+          <div className="flex justify-between items-center">
+            <div>
+              <h3 className="text-lg font-bold text-slate-800">Cadastro de Empresas e Fornecedores</h3>
+              <p className="text-xs text-slate-500">Cadastre e gerencie as empresas e credores para vincular aos lançamentos de despesas.</p>
+            </div>
+            <button 
+              onClick={openNewCompany}
+              className="bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200 cursor-pointer"
+            >
+              <Plus size={16} />
+              Cadastrar Empresa
+            </button>
+          </div>
+
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden" id="panel-expense-companies">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse" id="table-expense-companies">
+                <thead>
+                  <tr className="bg-slate-50/50 border-b border-slate-100 uppercase font-black text-slate-400">
+                    <th className="px-6 py-4 text-[10px] tracking-wider">Nome da Empresa</th>
+                    <th className="px-6 py-4 text-[10px] tracking-wider">CNPJ</th>
+                    <th className="px-6 py-4 text-[10px] tracking-wider">Localidade</th>
+                    <th className="px-6 py-4 text-[10px] tracking-wider text-right">Ações</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {(!data?.expense_companies || data.expense_companies.length === 0) ? (
+                    <tr>
+                      <td colSpan={4} className="px-6 py-12 text-center text-slate-400 italic">
+                        Nenhuma empresa cadastrada. Clique em "Cadastrar Empresa" para começar!
+                      </td>
+                    </tr>
+                  ) : (
+                    data.expense_companies.map((comp: any) => (
+                      <tr key={comp.id} className="hover:bg-slate-50/50 transition-colors">
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center">
+                              <Building size={16} className="text-blue-600" />
+                            </div>
+                            <span className="font-bold text-slate-900">{comp.nome}</span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-sm text-slate-650 font-mono">
+                          {comp.cnpj || '---'}
+                        </td>
+                        <td className="px-6 py-4 text-sm text-slate-650">
+                          {comp.cidade ? `${comp.cidade} / ${comp.uf || '---'}` : '---'}
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <div className="flex justify-end gap-2">
+                            <button
+                              onClick={() => openEditCompany(comp)}
+                              className="p-2 text-slate-400 hover:text-blue-600 hover:bg-slate-50 rounded-lg transition-colors cursor-pointer"
+                              title="Editar Empresa"
+                            >
+                              <Edit size={16} />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteCompany(comp.id)}
+                              className="p-2 text-slate-400 hover:text-red-600 hover:bg-slate-50 rounded-lg transition-colors cursor-pointer"
+                              title="Excluir Empresa"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Manual Expense create Modal (traditional) */}
       <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="Nova Despesa Administrativa">
         <div className="space-y-5 text-slate-700 font-sans text-xs">
@@ -955,27 +1135,48 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
             </div>
           </div>
           <div>
-            <label className="block text-xs font-bold text-slate-750 mb-1.5">Empresa / Destinatário da Despesa (Opcional)</label>
-            <input
-              type="text"
-              list="empresas-despesa"
-              value={newExpense.empresaDespesa}
-              onChange={e => setNewExpense({...newExpense, empresaDespesa: e.target.value})}
+            <label className="block text-xs font-bold text-slate-750 mb-1.5">Empresa / Destinatário da Despesa</label>
+            <select
+              value={newExpense.expenseCompanyId}
+              onChange={e => {
+                const id = e.target.value;
+                if (id === "manual") {
+                  setNewExpense({
+                    ...newExpense,
+                    expenseCompanyId: "manual",
+                    empresaDespesa: ""
+                  });
+                } else {
+                  const matched = (data?.expense_companies || []).find((ec: any) => ec.id === id);
+                  setNewExpense({
+                    ...newExpense,
+                    expenseCompanyId: id,
+                    empresaDespesa: matched ? matched.nome : ""
+                  });
+                }
+              }}
               className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 font-bold focus:outline-none text-xs text-slate-700"
-              placeholder="Digite ou selecione (ex: Empresa do Grupo, Empresa Associada, etc.)"
-            />
-            <datalist id="empresas-despesa">
-              <option value="Empresa Principal" />
-              <option value="Empresa Associada" />
-              <option value="Empresa do Grupo" />
-              <option value="Empresa Destinatário" />
-              <option value="Matriz GBFleet" />
-              <option value="Filial 01" />
-              <option value="Parceiro Logístico" />
-              {Array.from(new Set((data?.expenses || []).map((exp: any) => exp.empresaDespesa).filter(Boolean))).map((emp: any) => (
-                <option key={emp} value={emp} />
+            >
+              <option value="">Nenhuma / Não especificada</option>
+              <option value="manual">✍️ Digitar manualmente...</option>
+              {(data?.expense_companies || []).map((ec: any) => (
+                <option key={ec.id} value={ec.id}>
+                  🏢 {ec.nome} {ec.cnpj ? `(CNPJ: ${ec.cnpj})` : ''} {ec.cidade ? `- ${ec.cidade}/${ec.uf}` : ''}
+                </option>
               ))}
-            </datalist>
+            </select>
+
+            {newExpense.expenseCompanyId === "manual" && (
+              <div className="mt-2.5">
+                <input
+                  type="text"
+                  value={newExpense.empresaDespesa}
+                  onChange={e => setNewExpense({...newExpense, empresaDespesa: e.target.value})}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 font-bold focus:outline-none text-xs text-slate-700 focus:ring-2 focus:ring-blue-500/10"
+                  placeholder="Digite o nome do credor / empresa destinatária"
+                />
+              </div>
+            )}
           </div>
           <div>
             <label className="block text-xs font-bold text-slate-750 mb-1.5">Observação (Opcional)</label>
@@ -1035,6 +1236,77 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
               className="flex-1 px-4 py-2.5 rounded-xl bg-blue-600 text-white hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200"
             >
               Lançar Despesa
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Modal to Add/Edit Expense Company */}
+      <Modal 
+        isOpen={isCompanyModalOpen} 
+        onClose={() => setIsCompanyModalOpen(false)} 
+        title={selectedCompany ? "Editar Empresa / Credor" : "Cadastrar Nova Empresa / Credor"}
+      >
+        <div className="space-y-4 font-sans text-xs">
+          <div>
+            <label className="block text-[11px] font-bold text-slate-700 mb-1.5">Razão Social / Nome Fantasia *</label>
+            <input 
+              type="text"
+              value={companyForm.nome}
+              onChange={e => setCompanyForm({...companyForm, nome: e.target.value})}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500/20 text-slate-800"
+              placeholder="Ex: Auto Posto Shell, Mecânica Silva, etc."
+            />
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-bold text-slate-700 mb-1.5">CNPJ (Opcional)</label>
+            <input 
+              type="text"
+              value={companyForm.cnpj}
+              onChange={e => setCompanyForm({...companyForm, cnpj: e.target.value})}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500/20 text-slate-800 font-mono"
+              placeholder="Ex: 00.000.000/0001-00"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-[11px] font-bold text-slate-700 mb-1.5">Cidade (Opcional)</label>
+              <input 
+                type="text"
+                value={companyForm.cidade}
+                onChange={e => setCompanyForm({...companyForm, cidade: e.target.value})}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500/20 text-slate-800"
+                placeholder="Ex: São Paulo"
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold text-slate-700 mb-1.5">UF (Opcional)</label>
+              <input 
+                type="text"
+                value={companyForm.uf}
+                maxLength={2}
+                onChange={e => setCompanyForm({...companyForm, uf: e.target.value.toUpperCase()})}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500/20 text-slate-800"
+                placeholder="Ex: SP"
+              />
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
+            <button 
+              onClick={() => setIsCompanyModalOpen(false)}
+              className="px-4 py-2.5 bg-slate-100 text-slate-600 rounded-xl hover:bg-slate-250 font-bold transition-all cursor-pointer"
+            >
+              Cancelar
+            </button>
+            <button 
+              onClick={handleSaveCompany}
+              disabled={!companyForm.nome || isSavingCompany}
+              className="px-4 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-bold disabled:opacity-50 transition-all cursor-pointer shadow-lg shadow-blue-100"
+            >
+              {isSavingCompany ? "Salvando..." : "Salvar Empresa"}
             </button>
           </div>
         </div>

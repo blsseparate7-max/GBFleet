@@ -58,5 +58,6 @@ export const dbTemplate = {
   "maintenance_alerts": [],
   "routes": [],
   "gas_stations": [],
+  "expense_companies": [],
   "chat_logs": []
 };

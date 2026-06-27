@@ -394,6 +394,8 @@ const getInitialData = () => ({
   freights: [],
   maintenance_alerts: [],
   routes: [],
+  gas_stations: [],
+  expense_companies: [],
   chat_logs: []
 });
 
@@ -468,7 +470,7 @@ const ensureDBSynced = async (req: express.Request, res: express.Response, next:
                  try {
                    if (fs.existsSync(DB_FILE)) {
                      const localData = JSON.parse(fs.readFileSync(DB_FILE, "utf-8"));
-                     const allKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "gas_stations", "chat_logs"];
+                     const allKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "gas_stations", "expense_companies", "chat_logs"];
                      allKeys.forEach(key => {
                        if (!remoteData[key]) {
                          remoteData[key] = [];
@@ -491,7 +493,7 @@ const ensureDBSynced = async (req: express.Request, res: express.Response, next:
                    console.error("[Firebase REST Server Sync] Error merging local data:", mergeErr.message);
                  }
 
-                 const arrayKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "gas_stations"];
+                 const arrayKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "gas_stations", "expense_companies"];
                 arrayKeys.forEach(key => {
                   if (remoteData[key] && remoteData[key].some((item: any) => item.companyId === "comp_1" || item.id?.includes("init"))) {
                     remoteData[key] = remoteData[key].filter((item: any) => item.companyId !== "comp_1" && !item.id?.includes("init"));
@@ -609,7 +611,7 @@ app.use(ensureDBSynced);
 
     let updated = false;
 
-    const keys = ["companies", "users", "trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "gas_stations", "chat_logs"];
+    const keys = ["companies", "users", "trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "gas_stations", "expense_companies", "chat_logs"];
     keys.forEach((key: string) => {
       if (!db[key]) {
         db[key] = [];
@@ -1017,6 +1019,7 @@ app.use(ensureDBSynced);
     const filteredFreights = db.freights.filter((f: any) => f.companyId === targetCompanyId);
     const filteredMaintenanceAlerts = db.maintenance_alerts.filter((m: any) => m.companyId === targetCompanyId);
     const filteredRoutes = db.routes.filter((r: any) => r.companyId === targetCompanyId);
+    const filteredExpenseCompanies = (db.expense_companies || []).filter((ec: any) => ec.companyId === targetCompanyId);
 
     // Resolve custom tenant isolated categories or fallback to general default
     const categoriesEntrada = currentCompany?.categories_entrada || db.categories_entrada || [
@@ -1051,6 +1054,8 @@ app.use(ensureDBSynced);
       freights: filteredFreights,
       maintenance_alerts: filteredMaintenanceAlerts,
       routes: filteredRoutes,
+      gas_stations: (db.gas_stations || []).filter((g: any) => g.companyId === targetCompanyId),
+      expense_companies: filteredExpenseCompanies,
       categories_entrada: categoriesEntrada,
       categories_saida: categoriesSaida,
       chat_logs: (db.chat_logs || []).filter((cl: any) => cl.companyId === targetCompanyId)
@@ -1311,18 +1316,104 @@ app.use(ensureDBSynced);
     };
     db.fuel_logs.push(newLog);
     
-    // Also add to cash flow as 'saida'
+    // Also add to cash flow as 'saida' with deterministic ID
     db.cash_flow.push({
-      id: `cash_${Date.now()}`,
+      id: `cash_fuel_${newLog.id}`,
       companyId: companyId,
       tipo: 'saida',
       valor: parseFloat(newLog.valor || 0),
       data: newLog.data,
-      descricao: `Abastecimento: ${newLog.truckId} (${newLog.litros}L)`
+      descricao: `Abastecimento Diesel: ${newLog.truckId} (${newLog.litros}L)`
     });
+
+    if (parseFloat(newLog.valorArla) > 0) {
+      db.cash_flow.push({
+        id: `cash_arla_${newLog.id}`,
+        companyId: companyId,
+        tipo: 'saida',
+        valor: parseFloat(newLog.valorArla || 0),
+        data: newLog.data,
+        descricao: `Abastecimento Arla: ${newLog.truckId} (${newLog.litrosArla || 0}L)`
+      });
+    }
 
     writeDB(db);
     res.json(newLog);
+  });
+
+  app.put("/api/fuel_logs/:id", (req, res) => {
+    const db = readDB();
+    const { id } = req.params;
+    const companyId = (req as any).companyId;
+    const idx = db.fuel_logs.findIndex((f: any) => f.id === id);
+    if (idx === -1) {
+      return res.status(404).json({ error: "Abastecimento não encontrado." });
+    }
+    const oldLog = db.fuel_logs[idx];
+    if (oldLog.companyId !== companyId) {
+      return res.status(403).json({ error: "Não autorizado." });
+    }
+
+    const updatedLog = {
+      ...oldLog,
+      ...req.body,
+      id,
+      companyId
+    };
+    db.fuel_logs[idx] = updatedLog;
+
+    // Filter out old cash flow entries (both deterministic and old-style matching)
+    db.cash_flow = db.cash_flow.filter((c: any) => {
+      const isFuelSync = c.id === `cash_fuel_${id}` || (c.descricao === `Abastecimento: ${oldLog.truckId} (${oldLog.litros}L)` && c.valor === parseFloat(oldLog.valor || 0) && c.data === oldLog.data);
+      const isArlaSync = c.id === `cash_arla_${id}` || (c.descricao === `Abastecimento Arla: ${oldLog.truckId} (${oldLog.litrosArla || 0}L)` && c.valor === parseFloat(oldLog.valorArla || 0) && c.data === oldLog.data);
+      return !isFuelSync && !isArlaSync;
+    });
+
+    // Push new cash flow entries
+    db.cash_flow.push({
+      id: `cash_fuel_${id}`,
+      companyId: companyId,
+      tipo: 'saida',
+      valor: parseFloat(updatedLog.valor || 0),
+      data: updatedLog.data,
+      descricao: `Abastecimento Diesel: ${updatedLog.truckId} (${updatedLog.litros}L)`
+    });
+
+    if (parseFloat(updatedLog.valorArla) > 0) {
+      db.cash_flow.push({
+        id: `cash_arla_${id}`,
+        companyId: companyId,
+        tipo: 'saida',
+        valor: parseFloat(updatedLog.valorArla || 0),
+        data: updatedLog.data,
+        descricao: `Abastecimento Arla: ${updatedLog.truckId} (${updatedLog.litrosArla || 0}L)`
+      });
+    }
+
+    writeDB(db);
+    res.json(updatedLog);
+  });
+
+  app.delete("/api/fuel_logs/:id", (req, res) => {
+    const db = readDB();
+    const { id } = req.params;
+    const companyId = (req as any).companyId;
+    const log = db.fuel_logs.find((f: any) => f.id === id);
+    if (log) {
+      if (log.companyId !== companyId) {
+        return res.status(403).json({ error: "Não autorizado." });
+      }
+      db.fuel_logs = db.fuel_logs.filter((f: any) => f.id !== id);
+      
+      // Remove corresponding cash flow entries
+      db.cash_flow = db.cash_flow.filter((c: any) => {
+        const isFuelSync = c.id === `cash_fuel_${id}` || (c.descricao === `Abastecimento: ${log.truckId} (${log.litros}L)` && c.valor === parseFloat(log.valor || 0) && c.data === log.data);
+        const isArlaSync = c.id === `cash_arla_${id}` || (c.descricao === `Abastecimento Arla: ${log.truckId} (${log.litrosArla || 0}L)` && c.valor === parseFloat(log.valorArla || 0) && c.data === log.data);
+        return !isFuelSync && !isArlaSync;
+      });
+      writeDB(db);
+    }
+    res.json({ success: true });
   });
 
   app.post("/api/expenses", (req, res) => {
@@ -1478,7 +1569,9 @@ app.use(ensureDBSynced);
     if (freight.combustivel > 0) {
       const fuelLogsForTruck = db.fuel_logs.filter((log: any) => log.truckId === freight.truckId);
       let latestKm = 120000;
-      if (fuelLogsForTruck.length > 0) {
+      if (freight.kmAbastecimento && Number(freight.kmAbastecimento) > 0) {
+        latestKm = Number(freight.kmAbastecimento);
+      } else if (fuelLogsForTruck.length > 0) {
         const sortedLogs = [...fuelLogsForTruck].sort((a: any, b: any) => b.km - a.km);
         latestKm = sortedLogs[0].km + Math.floor(Math.random() * 350) + 150;
       }
@@ -1571,7 +1664,9 @@ app.use(ensureDBSynced);
       pedagio: parseFloat(req.body.pedagio || 0),
       combustivel: parseFloat(req.body.combustivel || 0),
       motorista: parseFloat(req.body.motorista || 0),
-      outrasDespesas: parseFloat(req.body.outrasDespesas || 0)
+      outrasDespesas: parseFloat(req.body.outrasDespesas || 0),
+      distanciaKm: parseFloat(req.body.distanciaKm || 0),
+      kmAbastecimento: parseFloat(req.body.kmAbastecimento || 0)
     };
     db.freights.push(newFreight);
 
@@ -1604,7 +1699,9 @@ app.use(ensureDBSynced);
       pedagio: parseFloat(req.body.pedagio || 0),
       combustivel: parseFloat(req.body.combustivel || 0),
       motorista: parseFloat(req.body.motorista || 0),
-      outrasDespesas: parseFloat(req.body.outrasDespesas || 0)
+      outrasDespesas: parseFloat(req.body.outrasDespesas || 0),
+      distanciaKm: parseFloat(req.body.distanciaKm || 0),
+      kmAbastecimento: parseFloat(req.body.kmAbastecimento || 0)
     };
 
     syncFreightData(db, db.freights[idx]);
@@ -1812,6 +1909,57 @@ app.use(ensureDBSynced);
       return res.status(403).json({ error: "Não autorizado." });
     }
     db.gas_stations = db.gas_stations.filter((g: any) => g.id !== id);
+    writeDB(db);
+    res.json({ success: true });
+  });
+
+  // Expense Companies Endpoints
+  app.post("/api/expense_companies", (req, res) => {
+    const db = readDB();
+    const companyId = (req as any).companyId;
+    const newExpCompany = {
+      ...req.body,
+      id: `exp_comp_${Date.now()}`,
+      companyId
+    };
+    if (!db.expense_companies) db.expense_companies = [];
+    db.expense_companies.push(newExpCompany);
+    writeDB(db);
+    res.json(newExpCompany);
+  });
+
+  app.put("/api/expense_companies/:id", (req, res) => {
+    const db = readDB();
+    const { id } = req.params;
+    const companyId = (req as any).companyId;
+    if (!db.expense_companies) db.expense_companies = [];
+    const idx = db.expense_companies.findIndex((ec: any) => ec.id === id);
+    if (idx === -1) {
+      return res.status(404).json({ error: "Empresa de despesa não encontrada" });
+    }
+    if (db.expense_companies[idx].companyId !== companyId) {
+      return res.status(403).json({ error: "Não autorizado." });
+    }
+    db.expense_companies[idx] = {
+      ...db.expense_companies[idx],
+      ...req.body,
+      id,
+      companyId
+    };
+    writeDB(db);
+    res.json(db.expense_companies[idx]);
+  });
+
+  app.delete("/api/expense_companies/:id", (req, res) => {
+    const db = readDB();
+    const { id } = req.params;
+    const companyId = (req as any).companyId;
+    if (!db.expense_companies) db.expense_companies = [];
+    const prevMatched = db.expense_companies.find((ec: any) => ec.id === id);
+    if (prevMatched && prevMatched.companyId !== companyId) {
+      return res.status(403).json({ error: "Não autorizado." });
+    }
+    db.expense_companies = db.expense_companies.filter((ec: any) => ec.id !== id);
     writeDB(db);
     res.json({ success: true });
   });

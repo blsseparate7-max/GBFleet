@@ -101,7 +101,7 @@ export async function pullDB() {
           remoteData.users = remoteData.users.filter((u: any) => u.id !== "user_1" && u.companyId !== "comp_1");
           scrubbed = true;
         }
-        const arrayKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "gas_stations"];
+        const arrayKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "gas_stations", "expense_companies"];
         arrayKeys.forEach(key => {
           if (remoteData[key] && remoteData[key].some((item: any) => item.companyId === "comp_1" || item.id?.includes("init"))) {
             remoteData[key] = remoteData[key].filter((item: any) => item.companyId !== "comp_1" && !item.id?.includes("init"));
@@ -111,7 +111,7 @@ export async function pullDB() {
 
         // No merging of old local storage items is performed to prevent resurrection of deleted/modified records.
         // Firestore is the absolute source of truth. We only ensure that required array fields exist on the pulled data.
-        const allKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "gas_stations", "chat_logs"];
+        const allKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "gas_stations", "expense_companies", "chat_logs"];
         allKeys.forEach(key => {
           if (!remoteData[key]) {
             remoteData[key] = [];
@@ -308,6 +308,7 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       const filteredMaintenanceAlerts = (liveDb.maintenance_alerts || []).filter((m: any) => m.companyId === targetCompId);
       const filteredRoutes = (liveDb.routes || []).filter((r: any) => r.companyId === targetCompId);
       const filteredGasStations = (liveDb.gas_stations || []).filter((g: any) => g.companyId === targetCompId);
+      const filteredExpenseCompanies = (liveDb.expense_companies || []).filter((ec: any) => ec.companyId === targetCompId);
 
       const categoriesEntrada = currentCompany?.categories_entrada || liveDb.categories_entrada || [];
       const categoriesSaida = currentCompany?.categories_saida || liveDb.categories_saida || [];
@@ -325,6 +326,7 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
         maintenance_alerts: filteredMaintenanceAlerts,
         routes: filteredRoutes,
         gas_stations: filteredGasStations,
+        expense_companies: filteredExpenseCompanies,
         categories_entrada: categoriesEntrada,
         categories_saida: categoriesSaida,
         chat_logs: (liveDb.chat_logs || []).filter((cl: any) => cl.companyId === targetCompId)
@@ -444,7 +446,7 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       liveDb.users = liveDb.users.filter((u: any) => u.companyId !== targetId);
       
       // Cascade delete rest data
-      const subKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "gas_stations", "chat_logs"];
+      const subKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "gas_stations", "expense_companies", "chat_logs"];
       subKeys.forEach(k => {
         if (liveDb[k]) {
           liveDb[k] = liveDb[k].filter((item: any) => item.companyId !== targetId);
@@ -1290,6 +1292,49 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       const targetId = parts[parts.length - 1];
       if (!liveDb.gas_stations) liveDb.gas_stations = [];
       liveDb.gas_stations = liveDb.gas_stations.filter((g: any) => g.id !== targetId);
+      await persistDB();
+      return jsonResponse({ success: true });
+    }
+
+    // 22) POST, PUT, DELETE /api/expense_companies
+    if (cleanPath === "/api/expense_companies" && method === "POST") {
+      const newExpCompany = {
+        ...body,
+        id: `exp_comp_${Date.now()}`,
+        companyId: ctx.companyId
+      };
+      if (!liveDb.expense_companies) liveDb.expense_companies = [];
+      liveDb.expense_companies.push(newExpCompany);
+      await persistDB();
+      return jsonResponse(newExpCompany);
+    }
+
+    if (cleanPath.startsWith("/api/expense_companies/") && method === "PUT") {
+      const parts = cleanPath.split("/");
+      const targetId = parts[parts.length - 1];
+      if (!liveDb.expense_companies) liveDb.expense_companies = [];
+      const matchEC = liveDb.expense_companies.find((ec: any) => ec.id === targetId);
+      if (!matchEC) {
+        return jsonResponse({ error: "Empresa de despesa não encontrada" }, 404);
+      }
+      if (matchEC.companyId !== ctx.companyId) {
+        return jsonResponse({ error: "Não autorizado." }, 403);
+      }
+
+      if (body.nome !== undefined) matchEC.nome = body.nome;
+      if (body.cnpj !== undefined) matchEC.cnpj = body.cnpj;
+      if (body.cidade !== undefined) matchEC.cidade = body.cidade;
+      if (body.uf !== undefined) matchEC.uf = body.uf;
+
+      await persistDB();
+      return jsonResponse(matchEC);
+    }
+
+    if (cleanPath.startsWith("/api/expense_companies/") && method === "DELETE") {
+      const parts = cleanPath.split("/");
+      const targetId = parts[parts.length - 1];
+      if (!liveDb.expense_companies) liveDb.expense_companies = [];
+      liveDb.expense_companies = liveDb.expense_companies.filter((ec: any) => ec.id !== targetId);
       await persistDB();
       return jsonResponse({ success: true });
     }

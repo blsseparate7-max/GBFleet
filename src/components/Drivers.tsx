@@ -851,7 +851,7 @@ export default function Drivers({ data, onUpdate }: DriversProps) {
                               <span className="font-extrabold text-[9px] uppercase tracking-wider bg-slate-100 text-slate-600 px-2 py-0.5 rounded">
                                 {f.status}
                               </span>
-                              <span className="text-slate-400 font-medium">{new Date(f.data).toLocaleDateString('pt-BR')}</span>
+                              <span className="text-slate-400 font-medium">{new Date(f.data + "T00:00:00").toLocaleDateString('pt-BR')}</span>
                               <span className="text-slate-300">•</span>
                               <span className="text-slate-500 font-bold flex items-center gap-1">
                                 <TruckIcon size={12} /> Placa: {f.truckId}

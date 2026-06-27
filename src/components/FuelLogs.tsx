@@ -17,6 +17,8 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
     km: '',
     litros: '',
     valor: '',
+    litrosArla: '',
+    valorArla: '',
     comprovante: ''
   });
 
@@ -24,6 +26,7 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
   const [filterTruck, setFilterTruck] = useState('');
   const [filterDriver, setFilterDriver] = useState('');
   const [filterStation, setFilterStation] = useState('');
+  const [showArlaManual, setShowArlaManual] = useState(false);
 
   // Gas Stations states
   const [isStationModalOpen, setIsStationModalOpen] = useState(false);
@@ -57,6 +60,8 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
             km: Number(newLog.km),
             litros: Number(newLog.litros),
             valor: Number(newLog.valor),
+            litrosArla: newLog.litrosArla ? Number(newLog.litrosArla) : undefined,
+            valorArla: newLog.valorArla ? Number(newLog.valorArla) : undefined,
             comprovante: newLog.comprovante
           })
         });
@@ -71,6 +76,8 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
             km: Number(newLog.km),
             litros: Number(newLog.litros),
             valor: Number(newLog.valor),
+            litrosArla: newLog.litrosArla ? Number(newLog.litrosArla) : undefined,
+            valorArla: newLog.valorArla ? Number(newLog.valorArla) : undefined,
             comprovante: newLog.comprovante
           })
         });
@@ -91,7 +98,7 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
 
       setIsModalOpen(false);
       setSelectedLog(null);
-      setNewLog({ truckId: '', driverId: '', gasStationId: '', data: new Date().toISOString().split('T')[0], km: '', litros: '', valor: '', comprovante: '' });
+      setNewLog({ truckId: '', driverId: '', gasStationId: '', data: new Date().toISOString().split('T')[0], km: '', litros: '', valor: '', litrosArla: '', valorArla: '', comprovante: '' });
       onUpdate();
     } catch (err) {
       console.error(err);
@@ -123,8 +130,11 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
       km: log.km ? String(log.km) : '',
       litros: log.litros ? String(log.litros) : '',
       valor: log.valor ? String(log.valor) : '',
+      litrosArla: log.litrosArla ? String(log.litrosArla) : '',
+      valorArla: log.valorArla ? String(log.valorArla) : '',
       comprovante: log.comprovante || ''
     });
+    setShowArlaManual(log.valorArla ? true : false);
     setIsModalOpen(true);
   };
 
@@ -402,16 +412,26 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
                             )}
                           </td>
                           <td className="px-6 py-4 text-sm text-slate-600">
-                            {new Date(log.data).toLocaleDateString('pt-BR')}
+                            {new Date(log.data + "T00:00:00").toLocaleDateString('pt-BR')}
                           </td>
                           <td className="px-6 py-4 text-sm font-medium text-slate-700">
                             {log.km?.toLocaleString()} km
                           </td>
                           <td className="px-6 py-4 text-sm font-medium text-slate-700">
-                            {log.litros} L
+                            <div>{log.litros} L</div>
+                            {Number(log.litrosArla) > 0 && (
+                              <span className="text-[10px] text-sky-600 font-extrabold block mt-0.5">
+                                💨 {log.litrosArla} L Arla
+                              </span>
+                            )}
                           </td>
                           <td className="px-6 py-4 text-sm font-bold text-slate-900">
-                            R$ {log.valor?.toLocaleString()}
+                            <div>R$ {log.valor?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
+                            {Number(log.valorArla) > 0 && (
+                              <span className="text-[10px] text-sky-600 font-extrabold block mt-0.5">
+                                💨 R$ {log.valorArla?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                              </span>
+                            )}
                           </td>
                           <td className="px-6 py-4">
                             <span className={`px-2.5 py-1 text-xs font-bold rounded-full ${
@@ -540,6 +560,7 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
         onClose={() => {
           setIsModalOpen(false);
           setSelectedLog(null);
+          setShowArlaManual(false);
           setNewLog({
             truckId: '',
             driverId: '',
@@ -548,6 +569,8 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
             km: '',
             litros: '',
             valor: '',
+            litrosArla: '',
+            valorArla: '',
             comprovante: ''
           });
         }} 
@@ -649,6 +672,73 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
               />
             </div>
           </div>
+
+          {/* Arla 32 conditional fields */}
+          {(() => {
+            const selectedTruckObj = (data.trucks || []).find((t: any) => t.placa === newLog.truckId);
+            const usesArla = selectedTruckObj?.usaArla;
+            const isVisible = usesArla || showArlaManual;
+
+            if (isVisible) {
+              return (
+                <div className="bg-sky-50/50 p-4 rounded-2xl border border-sky-100 space-y-3">
+                  <div className="flex justify-between items-center border-b border-sky-100/50 pb-2">
+                    <span className="text-xs font-black text-sky-800 uppercase tracking-wider flex items-center gap-1.5">
+                      💨 Abastecimento de Arla 32 (Adicional)
+                    </span>
+                    {!usesArla && (
+                      <button 
+                        type="button"
+                        onClick={() => {
+                          setShowArlaManual(false);
+                          setNewLog({ ...newLog, litrosArla: '', valorArla: '' });
+                        }}
+                        className="text-[10px] font-bold text-sky-600 hover:underline"
+                      >
+                        Ocultar
+                      </button>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-sky-800 mb-1">Litros Arla</label>
+                      <input 
+                        id="input-fuel-litros-arla"
+                        type="number" 
+                        value={newLog.litrosArla}
+                        onChange={e => setNewLog({...newLog, litrosArla: e.target.value})}
+                        className="w-full bg-white border border-sky-200/80 rounded-xl px-4 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-sky-500/20"
+                        placeholder="0"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-sky-800 mb-1">Valor Arla (R$)</label>
+                      <input 
+                        id="input-fuel-valor-arla"
+                        type="number" 
+                        value={newLog.valorArla}
+                        onChange={e => setNewLog({...newLog, valorArla: e.target.value})}
+                        className="w-full bg-white border border-sky-200/80 rounded-xl px-4 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-sky-500/20"
+                        placeholder="0,00"
+                      />
+                    </div>
+                  </div>
+                </div>
+              );
+            } else {
+              return (
+                <div className="flex justify-start">
+                  <button
+                    type="button"
+                    onClick={() => setShowArlaManual(true)}
+                    className="text-xs font-bold text-sky-600 hover:text-sky-750 bg-sky-50 border border-sky-100 hover:bg-sky-100/50 px-3.5 py-1.5 rounded-xl transition cursor-pointer flex items-center gap-1.5"
+                  >
+                    <span>💨 Registrar também Arla 32 para este abastecimento</span>
+                  </button>
+                </div>
+              );
+            }
+          })()}
           <div className="relative border-2 border-dashed border-slate-200 rounded-2xl flex flex-col items-center justify-center p-4 text-center hover:border-blue-500 hover:bg-blue-50/10 transition-all cursor-pointer">
             <input 
               type="file"
