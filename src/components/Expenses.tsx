@@ -198,7 +198,7 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
 
     // 2. CUSTOS VARIÁVEIS DA OPERAÇÃO (Viagens)
     // Fuel costs are managed under the dedicated Fuel and Freight Management tabs
-    const custoDiesel = 0;
+    const custoDiesel = fuelLogsFiltered.reduce((sum: number, l: any) => sum + (Number(l.valor) || 0), 0);
     
     // Tolls (Pedágios)
     const custoPedagios = freightsFiltered.reduce((sum: number, f: any) => sum + (Number(f.pedagio) || 0), 0);
@@ -558,6 +558,16 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
               <div className="p-3.5 pl-8 flex justify-between items-center text-slate-600">
                 <span className="flex items-center gap-2">
                   <ChevronRight size={12} className="text-slate-400" />
+                  (-) Abastecimento de Diesel / Combustível
+                </span>
+                <span className="font-bold font-mono text-red-600">
+                  - R$ {currentDRE.custoDiesel.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+
+              <div className="p-3.5 pl-8 flex justify-between items-center text-slate-600">
+                <span className="flex items-center gap-2">
+                  <ChevronRight size={12} className="text-slate-400" />
                   (-) Vales-Pedágio da Rota Operada
                 </span>
                 <span className="font-bold font-mono text-red-600">
@@ -805,6 +815,7 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
               }
 
               const categoryShares = [
+                { name: "Diesel / Combustível", value: currentDRE.custoDiesel, color: "bg-amber-500", labelColor: "text-amber-800" },
                 { name: "Motoristas (Diárias/Comissões)", value: currentDRE.custoMotoristas, color: "bg-blue-600", labelColor: "text-blue-800" },
                 { name: "Manutenção & Consertos", value: currentDRE.custoManutencoes, color: "bg-indigo-600", labelColor: "text-indigo-800" },
                 { name: "Pedágios (Viagem e Avulsos)", value: currentDRE.custoPedagios + currentDRE.custoPedagiosFixos, color: "bg-slate-700", labelColor: "text-slate-800" },

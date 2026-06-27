@@ -995,13 +995,27 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
 
     // 18) POST, POST complete, DELETE /api/maintenance_alerts
     if (cleanPath === "/api/maintenance_alerts" && method === "POST") {
+      const tipo = body.tipo || body.item || "Inspeção Geral";
+      const prioridade = body.prioridade || body.urgencia || "media";
+      const tipoLimite = body.tipoLimite || (body.dataLimite ? "data" : "km");
+      const limiteKm = body.limiteKm !== undefined ? Number(body.limiteKm) : 0;
+      const limiteData = body.limiteData || body.dataLimite || "";
+      const dataLimite = body.dataLimite || body.limiteData || new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+      const descricao = body.descricao || `Revisão periódica de ${tipo}`;
+
       const newMaint = {
         id: "maint_" + Math.random().toString(36).substr(2, 9),
         companyId: ctx.companyId,
         truckId: body.truckId,
-        item: body.item,
-        urgencia: body.urgencia,
-        dataLimite: body.dataLimite,
+        tipo,
+        item: tipo,
+        prioridade,
+        urgencia: prioridade,
+        tipoLimite,
+        limiteKm,
+        limiteData,
+        dataLimite,
+        descricao,
         status: "Pendente",
         dataIdentificada: new Date().toISOString().split("T")[0]
       };
