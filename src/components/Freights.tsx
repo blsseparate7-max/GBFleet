@@ -51,6 +51,22 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
   const [outrasDespesas, setOutrasDespesas] = useState('');
   const [status, setStatus] = useState('Orçado');
   const [dataFrete, setDataFrete] = useState(new Date().toISOString().split('T')[0]);
+  const [tipoViagem, setTipoViagem] = useState<'ida' | 'ida_volta'>('ida');
+
+  const handleTipoViagemChange = (type: 'ida' | 'ida_volta') => {
+    if (type === tipoViagem) return;
+    setTipoViagem(type);
+    if (distanciaKm) {
+      const d = parseFloat(distanciaKm);
+      if (!isNaN(d) && d > 0) {
+        if (type === 'ida_volta') {
+          setDistanciaKm(String(Math.round(d * 2)));
+        } else {
+          setDistanciaKm(String(Math.round(d / 2)));
+        }
+      }
+    }
+  };
 
   // Autocomplete and routing states
   const [origemSuggestions, setOrigemSuggestions] = useState<any[]>([]);
@@ -126,7 +142,8 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
         if (res.ok) {
           const json = await res.json();
           if (json.routes && json.routes.length > 0) {
-            const distKm = Math.round(json.routes[0].distance / 1000);
+            const rawDist = Math.round(json.routes[0].distance / 1000);
+            const distKm = tipoViagem === 'ida_volta' ? rawDist * 2 : rawDist;
             setDistanciaKm(String(distKm));
           }
         }
@@ -138,7 +155,7 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
     };
 
     calculateDistance();
-  }, [origemCoords, destinoCoords]);
+  }, [origemCoords, destinoCoords, tipoViagem]);
 
   // Fallback geocoder in case user typed but coordinates are not resolved
   const triggerManualDistanceCalc = async () => {
@@ -182,7 +199,8 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
         if (resRoute.ok) {
           const json = await resRoute.json();
           if (json.routes && json.routes.length > 0) {
-            const distKm = Math.round(json.routes[0].distance / 1000);
+            const rawDist = Math.round(json.routes[0].distance / 1000);
+            const distKm = tipoViagem === 'ida_volta' ? rawDist * 2 : rawDist;
             setDistanciaKm(String(distKm));
           }
         }
@@ -321,6 +339,7 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
     setFotoComprovanteGeral(freight.fotoComprovanteGeral || '');
     setStatus(freight.status || 'Orçado');
     setDataFrete(freight.data || new Date().toISOString().split('T')[0]);
+    setTipoViagem(freight.tipoViagem || 'ida');
     setTipoCalculo(freight.tipoCalculo || 'fixo');
     setPesoTotalKg(freight.pesoTotalKg ? String(freight.pesoTotalKg) : '');
     setValorPorKg(freight.valorPorKg ? String(freight.valorPorKg) : '');

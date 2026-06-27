@@ -92,6 +92,28 @@ export default function Simulator({ data, onUpdate }: SimulatorProps) {
   const [freightValue, setFreightValue] = useState(4500);
   const [selectedTruckPlaca, setSelectedTruckPlaca] = useState('');
 
+  // Dynamic calculation states for proposed freight
+  const [tipoCalculo, setTipoCalculo] = useState('fixo');
+  const [pesoTotalKg, setPesoTotalKg] = useState('15000');
+  const [valorPorKg, setValorPorKg] = useState('0.30');
+  const [quantidadeCabecas, setQuantidadeCabecas] = useState('80');
+  const [valorPorCabeca, setValorPorCabeca] = useState('50.00');
+  const [valorPorKm, setValorPorKm] = useState('10.00');
+
+  // Dynamic recalculation of freightValue based on calculation type
+  useEffect(() => {
+    if (tipoCalculo === 'km') {
+      const val = distance * parseFloat(valorPorKm || '0');
+      setFreightValue(Number(val.toFixed(2)));
+    } else if (tipoCalculo === 'quilo') {
+      const val = parseFloat(pesoTotalKg || '0') * parseFloat(valorPorKg || '0');
+      setFreightValue(Number(val.toFixed(2)));
+    } else if (tipoCalculo === 'cabeca') {
+      const val = parseFloat(quantidadeCabecas || '0') * parseFloat(valorPorCabeca || '0');
+      setFreightValue(Number(val.toFixed(2)));
+    }
+  }, [tipoCalculo, distance, valorPorKm, pesoTotalKg, valorPorKg, quantidadeCabecas, valorPorCabeca]);
+
   // Address Autocomplete UI & Coordinates States (Main panel)
   const [startCoords, setStartCoords] = useState<{ lat: number, lon: number } | null>(null);
   const [endCoords, setEndCoords] = useState<{ lat: number, lon: number } | null>(null);
@@ -157,7 +179,12 @@ export default function Simulator({ data, onUpdate }: SimulatorProps) {
           status: 'Confirmado',
           data: launchDate,
           distanciaKm: Number(distance),
-          resultadoLiquido: Number(netEarnings)
+          resultadoLiquido: Number(netEarnings),
+          tipoCalculo: tipoCalculo,
+          pesoTotalKg: tipoCalculo === 'quilo' ? Number(pesoTotalKg) : undefined,
+          valorPorKg: tipoCalculo === 'quilo' ? Number(valorPorKg) : undefined,
+          quantidadeCabecas: tipoCalculo === 'cabeca' ? Number(quantidadeCabecas) : undefined,
+          valorPorCabeca: tipoCalculo === 'cabeca' ? Number(valorPorCabeca) : undefined
         })
       });
 
@@ -499,6 +526,7 @@ export default function Simulator({ data, onUpdate }: SimulatorProps) {
     setFreightValue(preset.valorFrete || preset.freightValue || 0);
     setOtherCosts(preset.outrosCustos || preset.otherCosts || 0);
     setSelectedTruckPlaca('');
+    setTipoCalculo('fixo');
   };
 
   // Save current dynamic simulation parameters as a persistent routing preset in DB
@@ -987,6 +1015,143 @@ Consumido Estimado: ${consumption} km/l | Óleo Diesel: R$ ${dieselPrice.toFixed
               </div>
             </div>
 
+            {/* Forma de Faturamento do Frete (Similar à Gestão de Fretes) */}
+            <div className="border-t border-slate-100 pt-4">
+              <label className="block text-[10px] font-black uppercase text-slate-500 mb-2">Forma de Faturamento do Frete</label>
+              <div className="grid grid-cols-2 gap-2 mb-3">
+                <button
+                  type="button"
+                  onClick={() => setTipoCalculo('fixo')}
+                  className={cn(
+                    "py-2 px-2.5 rounded-xl border text-[10px] font-bold text-center transition-all cursor-pointer flex items-center justify-center gap-1.5",
+                    tipoCalculo === 'fixo'
+                      ? 'bg-blue-50 border-blue-200 text-blue-700 shadow-sm'
+                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                  )}
+                >
+                  💼 Fixo
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTipoCalculo('km')}
+                  className={cn(
+                    "py-2 px-2.5 rounded-xl border text-[10px] font-bold text-center transition-all cursor-pointer flex items-center justify-center gap-1.5",
+                    tipoCalculo === 'km'
+                      ? 'bg-blue-50 border-blue-200 text-blue-700 shadow-sm'
+                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                  )}
+                >
+                  🛣️ Por KM
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTipoCalculo('quilo')}
+                  className={cn(
+                    "py-2 px-2.5 rounded-xl border text-[10px] font-bold text-center transition-all cursor-pointer flex items-center justify-center gap-1.5",
+                    tipoCalculo === 'quilo'
+                      ? 'bg-blue-50 border-blue-200 text-blue-700 shadow-sm'
+                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                  )}
+                >
+                  ⚖️ Peso (Kg)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTipoCalculo('cabeca')}
+                  className={cn(
+                    "py-2 px-2.5 rounded-xl border text-[10px] font-bold text-center transition-all cursor-pointer flex items-center justify-center gap-1.5",
+                    tipoCalculo === 'cabeca'
+                      ? 'bg-blue-50 border-blue-200 text-blue-700 shadow-sm'
+                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                  )}
+                >
+                  🐂 Cabeça
+                </button>
+              </div>
+
+              {/* Dynamic Inputs depending on selected calculation type */}
+              {tipoCalculo === 'km' && (
+                <div className="bg-slate-50/60 p-3.5 rounded-2xl border border-slate-150 space-y-2.5 animate-fade-in">
+                  <div className="flex justify-between items-center text-[11px] text-slate-500 font-bold border-b border-slate-100 pb-1.5">
+                    <span>Distância Estimada:</span>
+                    <span className="text-xs font-black text-slate-800 font-mono">{distance} KM</span>
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-extrabold uppercase text-slate-500 mb-1 flex items-center gap-1">🛣️ Valor por Quilômetro</label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-2 text-slate-400 font-bold text-xs">R$</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={valorPorKm}
+                        onChange={e => setValorPorKm(e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-xl pl-8 pr-3 py-1.5 font-mono text-xs font-bold text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        placeholder="Ex: 10.00"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {tipoCalculo === 'quilo' && (
+                <div className="bg-slate-50/60 p-3.5 rounded-2xl border border-slate-150 grid grid-cols-2 gap-3 animate-fade-in">
+                  <div className="col-span-1">
+                    <label className="block text-[9px] font-extrabold uppercase text-slate-500 mb-1 flex items-center gap-1">⚖️ Peso (Kg)</label>
+                    <input
+                      type="number"
+                      value={pesoTotalKg}
+                      onChange={e => setPesoTotalKg(e.target.value)}
+                      className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 font-mono text-xs font-bold text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      placeholder="Ex: 15000"
+                    />
+                  </div>
+                  <div className="col-span-1">
+                    <label className="block text-[9px] font-extrabold uppercase text-slate-500 mb-1 flex items-center gap-1">Preço / Kg</label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-2 text-slate-400 font-bold text-xs">R$</span>
+                      <input
+                        type="number"
+                        step="0.001"
+                        value={valorPorKg}
+                        onChange={e => setValorPorKg(e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-xl pl-8 pr-2 py-1.5 font-mono text-xs font-bold text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        placeholder="Ex: 0.30"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {tipoCalculo === 'cabeca' && (
+                <div className="bg-slate-50/60 p-3.5 rounded-2xl border border-slate-150 grid grid-cols-2 gap-3 animate-fade-in">
+                  <div className="col-span-1">
+                    <label className="block text-[9px] font-extrabold uppercase text-slate-500 mb-1 flex items-center gap-1">🐂 Cabeças</label>
+                    <input
+                      type="number"
+                      value={quantidadeCabecas}
+                      onChange={e => setQuantidadeCabecas(e.target.value)}
+                      className="w-full bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 font-mono text-xs font-bold text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      placeholder="Ex: 80"
+                    />
+                  </div>
+                  <div className="col-span-1">
+                    <label className="block text-[9px] font-extrabold uppercase text-slate-500 mb-1 flex items-center gap-1">Preço / Cabeça</label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-2 text-slate-400 font-bold text-xs">R$</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={valorPorCabeca}
+                        onChange={e => setValorPorCabeca(e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-xl pl-8 pr-2 py-1.5 font-mono text-xs font-bold text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        placeholder="Ex: 50.00"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* Miscellaneous Toll & Driver rates */}
             <div className="border-t border-slate-100 pt-4 grid grid-cols-2 gap-4">
               <div>
@@ -995,7 +1160,7 @@ Consumido Estimado: ${consumption} km/l | Óleo Diesel: R$ ${dieselPrice.toFixed
                   type="number" 
                   value={tolls || ''}
                   onChange={e => setTolls(Math.max(0, Number(e.target.value)))}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono font-bold"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono font-bold focus:outline-none"
                   placeholder="R$ 0,00"
                 />
               </div>
@@ -1005,7 +1170,7 @@ Consumido Estimado: ${consumption} km/l | Óleo Diesel: R$ ${dieselPrice.toFixed
                   type="number" 
                   value={driverRate || ''}
                   onChange={e => setDriverRate(Math.max(0, Number(e.target.value)))}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono font-bold"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono font-bold focus:outline-none"
                   placeholder="R$ 0,00"
                 />
               </div>
@@ -1015,17 +1180,25 @@ Consumido Estimado: ${consumption} km/l | Óleo Diesel: R$ ${dieselPrice.toFixed
                   type="number" 
                   value={otherCosts || ''}
                   onChange={e => setOtherCosts(Math.max(0, Number(e.target.value)))}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono font-bold"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono font-bold focus:outline-none"
                   placeholder="R$ 0,00"
                 />
               </div>
               <div>
-                <label className="block text-[10px] font-black uppercase text-slate-700 font-bold mb-1.5 text-blue-600">Frete Proposto R$</label>
+                <label className="block text-[10px] font-black uppercase text-slate-700 font-bold mb-1.5 text-blue-600">
+                  Frete Proposto R$ {tipoCalculo !== 'fixo' && <span className="text-[9px] text-emerald-650 font-black animate-pulse">(Calculado)</span>}
+                </label>
                 <input 
                   type="number" 
+                  readOnly={tipoCalculo !== 'fixo'}
                   value={freightValue || ''}
                   onChange={e => setFreightValue(Math.max(0, Number(e.target.value)))}
-                  className="w-full bg-blue-50 border border-blue-200 rounded-xl px-3 py-2 text-xs font-mono font-black text-blue-700 focus:outline-none"
+                  className={cn(
+                    "w-full rounded-xl px-3 py-2 text-xs font-mono font-black border focus:outline-none transition-all",
+                    tipoCalculo !== 'fixo'
+                      ? "bg-slate-100/90 text-emerald-700 border-slate-250 cursor-not-allowed"
+                      : "bg-blue-50 text-blue-700 border-blue-200"
+                  )}
                   placeholder="R$ 0,00"
                 />
               </div>
