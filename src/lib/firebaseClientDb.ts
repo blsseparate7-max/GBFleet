@@ -623,7 +623,7 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       return jsonResponse({ success: true });
     }
 
-    // 13) POST & DELETE /api/expenses
+    // 13) POST, PUT & DELETE /api/expenses
     if (cleanPath === "/api/expenses" && method === "POST") {
       const newExp = {
         id: "exp_" + Math.random().toString(36).substr(2, 9),
@@ -632,6 +632,11 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
         tipo: body.tipo,
         valor: Number(body.valor),
         data: body.data || new Date().toISOString().split("T")[0],
+        km: body.km ? Number(body.km) : undefined,
+        obs: body.obs || "",
+        comprovante: body.comprovante || "",
+        empresaDespesa: body.empresaDespesa || "",
+        expenseCompanyId: body.expenseCompanyId || "",
         documento: body.documento || "",
         descritivo: body.descritivo || ""
       };
@@ -650,6 +655,27 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
 
       await persistDB();
       return jsonResponse({ success: true, expense: newExp });
+    }
+
+    if (cleanPath.startsWith("/api/expenses/") && method === "PUT") {
+      const parts = cleanPath.split("/");
+      const targetId = parts[parts.length - 1];
+      const idx = liveDb.expenses.findIndex((e: any) => e.id === targetId);
+      if (idx === -1) {
+        return jsonResponse({ error: "Despesa não encontrada." }, 404);
+      }
+
+      liveDb.expenses[idx] = {
+        ...liveDb.expenses[idx],
+        ...body,
+        id: targetId,
+        companyId: ctx.companyId,
+        valor: body.valor !== undefined ? Number(body.valor) : liveDb.expenses[idx].valor,
+        km: body.km !== undefined ? (body.km ? Number(body.km) : undefined) : liveDb.expenses[idx].km
+      };
+
+      await persistDB();
+      return jsonResponse({ success: true, expense: liveDb.expenses[idx] });
     }
 
     if (cleanPath.startsWith("/api/expenses/") && method === "DELETE") {

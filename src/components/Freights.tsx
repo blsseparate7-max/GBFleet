@@ -400,6 +400,7 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
           fotoComprovanteGeral,
           status,
           data: dataFrete,
+          tipoViagem,
           tipoCalculo,
           pesoTotalKg: pesoTotalKg ? parseFloat(pesoTotalKg) : 0,
           valorPorKg: valorPorKg ? parseFloat(valorPorKg) : 0,
@@ -417,6 +418,7 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
         setOrigem('');
         setDestino('');
         setDistanciaKm('');
+        setTipoViagem('ida');
         setKmAbastecimento('');
         setOrigemCoords(null);
         setDestinoCoords(null);
@@ -661,7 +663,7 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
                         )}
                         {freight.distanciaKm > 0 && (
                           <span className="text-xs bg-slate-100 text-slate-700 px-2.5 py-1 rounded-full font-bold inline-flex items-center gap-1">
-                            🛣️ {freight.distanciaKm} km
+                            🛣️ {freight.distanciaKm} km ({freight.tipoViagem === 'ida_volta' ? 'Ida e Volta 🔄' : 'Somente Ida ➡️'})
                           </span>
                         )}
                       </div>
@@ -1020,38 +1022,65 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
             </div>
 
             <div className="col-span-2 bg-blue-50/40 border border-blue-100 p-4 rounded-2xl">
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                <div className="flex-1 w-full">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold uppercase text-slate-500 mb-1.5 flex items-center gap-1">
+                    🔄 Tipo de Viagem
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleTipoViagemChange('ida')}
+                      className={cn(
+                        "py-2.5 px-3 rounded-xl border text-xs font-bold text-center transition-all cursor-pointer flex items-center justify-center gap-1.5",
+                        tipoViagem === 'ida'
+                          ? 'bg-blue-600 border-blue-650 text-white shadow-sm'
+                          : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                      )}
+                    >
+                      ➡️ Somente Ida
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleTipoViagemChange('ida_volta')}
+                      className={cn(
+                        "py-2.5 px-3 rounded-xl border text-xs font-bold text-center transition-all cursor-pointer flex items-center justify-center gap-1.5",
+                        tipoViagem === 'ida_volta'
+                          ? 'bg-blue-600 border-blue-650 text-white shadow-sm'
+                          : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                      )}
+                    >
+                      🔄 Ida e Volta
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex flex-col">
                   <label className="block text-xs font-bold uppercase text-slate-500 mb-1.5 flex items-center gap-1">
                     🛣️ Distância do Frete (KM)
                   </label>
-                  <input
-                    type="number"
-                    placeholder="Distância estimada (km)..."
-                    value={distanciaKm}
-                    onChange={(e) => setDistanciaKm(e.target.value)}
-                    className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-blue-500 transition-colors text-sm font-bold font-mono text-blue-800"
-                  />
-                </div>
-                <div className="sm:mt-5 w-full sm:w-auto shrink-0">
-                  <button
-                    type="button"
-                    onClick={triggerManualDistanceCalc}
-                    disabled={isCalculatingDistance || !origem || !destino}
-                    className="w-full sm:w-auto px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50 cursor-pointer shadow-sm shadow-blue-100"
-                  >
-                    {isCalculatingDistance ? (
-                      <>
-                        <RefreshCw className="animate-spin" size={14} />
-                        <span>Calculando...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Navigation size={14} />
-                        <span>Calcular via GPS</span>
-                      </>
-                    )}
-                  </button>
+                  <div className="flex gap-2">
+                    <input
+                      type="number"
+                      placeholder="Distância (km)..."
+                      value={distanciaKm}
+                      onChange={(e) => setDistanciaKm(e.target.value)}
+                      className="flex-1 px-3 py-2.5 bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-blue-500 transition-colors text-xs font-bold font-mono text-blue-800"
+                    />
+                    <button
+                      type="button"
+                      onClick={triggerManualDistanceCalc}
+                      disabled={isCalculatingDistance || !origem || !destino}
+                      className="px-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-[11px] flex items-center justify-center gap-1 transition-colors disabled:opacity-50 cursor-pointer shadow-sm shadow-blue-100 whitespace-nowrap"
+                    >
+                      {isCalculatingDistance ? (
+                        <RefreshCw className="animate-spin" size={13} />
+                      ) : (
+                        <Navigation size={13} />
+                      )}
+                      <span>GPS</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>

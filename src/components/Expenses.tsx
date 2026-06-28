@@ -21,7 +21,8 @@ import {
   FileText,
   CheckCircle,
   Building,
-  Edit
+  Edit,
+  Eye
 } from 'lucide-react';
 import Modal from './ui/Modal';
 import { cn } from '../lib/utils';
@@ -77,10 +78,28 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
 
   // Manual expense form modal state
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [newExpense, setNewExpense] = useState({
     truckId: '',
     tipo: '',
     data: new Date().toISOString().split('T')[0],
+    valor: '',
+    km: '',
+    obs: '',
+    comprovante: '',
+    empresaDespesa: '',
+    expenseCompanyId: ''
+  });
+
+  // Selected expense for detailing and edit modal
+  const [selectedExpenseDetail, setSelectedExpenseDetail] = useState<any | null>(null);
+  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+  const [isEditingExpense, setIsEditingExpense] = useState(false);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [editExpenseForm, setEditExpenseForm] = useState({
+    truckId: '',
+    tipo: '',
+    data: '',
     valor: '',
     km: '',
     obs: '',
@@ -152,9 +171,9 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
 
   // Delete manual expense handler
   const handleDeleteExpense = async (id: string) => {
-    if (!confirm("Tem certeza que deseja remover esta despesa? Isso também a excluirá do fluxo de caixa.")) return;
     try {
       await fetch(`/api/expenses/${id}`, { method: 'DELETE' });
+      setDeleteConfirmId(null);
       onUpdate();
     } catch (err) {
       console.error(err);
@@ -163,37 +182,89 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
 
   const handleSave = async () => {
     if (!newExpense.truckId || !newExpense.tipo || !newExpense.valor) return;
+    if (isSaving) return;
 
-    const companyId = data?.company?.id || 'comp_1';
+    try {
+      setIsSaving(true);
+      const companyId = data?.company?.id || 'comp_1';
 
-    await fetch('/api/expenses', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ...newExpense,
-        companyId,
-        valor: Number(newExpense.valor),
-        km: newExpense.km ? Number(newExpense.km) : undefined,
-        comprovante: newExpense.comprovante
-      })
+      await fetch('/api/expenses', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...newExpense,
+          companyId,
+          valor: Number(newExpense.valor),
+          km: newExpense.km ? Number(newExpense.km) : undefined,
+          comprovante: newExpense.comprovante
+        })
+      });
+
+      // Notify chat
+      await fetch('/api/chat_logs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          companyId,
+          userId: 'user_1',
+          mensagem: `Registro manual de despesa: ${newExpense.tipo} no ${newExpense.truckId}`,
+          resposta: `Despesa de ${newExpense.tipo} (R$ ${Number(newExpense.valor).toLocaleString('pt-BR')}) lançada com sucesso para o veículo ${newExpense.truckId}.`,
+          acaoGerada: 'REGISTER_EXPENSE'
+        })
+      });
+
+      setIsModalOpen(false);
+      setNewExpense({ truckId: '', tipo: '', data: new Date().toISOString().split('T')[0], valor: '', km: '', obs: '', comprovante: '', empresaDespesa: '', expenseCompanyId: '' });
+      onUpdate();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const openExpenseDetail = (exp: any) => {
+    setSelectedExpenseDetail(exp);
+    setIsDetailModalOpen(true);
+    setIsEditingExpense(false);
+    setEditExpenseForm({
+      truckId: exp.truckId || '',
+      tipo: exp.tipo || '',
+      data: exp.data || '',
+      valor: String(exp.valor || ''),
+      km: exp.km ? String(exp.km) : '',
+      obs: exp.obs || '',
+      comprovante: exp.comprovante || '',
+      empresaDespesa: exp.empresaDespesa || '',
+      expenseCompanyId: exp.expenseCompanyId || ''
     });
+  };
 
-    // Notify chat
-    await fetch('/api/chat_logs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        companyId,
-        userId: 'user_1',
-        mensagem: `Registro manual de despesa: ${newExpense.tipo} no ${newExpense.truckId}`,
-        resposta: `Despesa de ${newExpense.tipo} (R$ ${Number(newExpense.valor).toLocaleString('pt-BR')}) lançada com sucesso para o veículo ${newExpense.truckId}.`,
-        acaoGerada: 'REGISTER_EXPENSE'
-      })
-    });
+  const handleUpdateExpense = async () => {
+    if (!editExpenseForm.truckId || !editExpenseForm.tipo || !editExpenseForm.valor || !selectedExpenseDetail) return;
 
-    setIsModalOpen(false);
-    setNewExpense({ truckId: '', tipo: '', data: new Date().toISOString().split('T')[0], valor: '', km: '', obs: '', comprovante: '', empresaDespesa: '', expenseCompanyId: '' });
-    onUpdate();
+    try {
+      const response = await fetch(`/api/expenses/${selectedExpenseDetail.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...editExpenseForm,
+          valor: Number(editExpenseForm.valor),
+          km: editExpenseForm.km ? Number(editExpenseForm.km) : undefined,
+        })
+      });
+
+      if (response.ok) {
+        setIsDetailModalOpen(false);
+        setSelectedExpenseDetail(null);
+        onUpdate();
+      } else {
+        alert("Erro ao atualizar despesa.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Erro de conexão ao atualizar despesa.");
+    }
   };
 
   // Extract unique months from all available financial actions
@@ -823,7 +894,8 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
             </button>
           </div>
 
-          <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden">
+          {/* Tabela de Lançamentos - Modo Desktop */}
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden hidden md:block">
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse font-sans text-xs">
                 <thead>
@@ -884,13 +956,22 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
                           - R$ {exp.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                         </td>
                         <td className="px-6 py-4 text-center">
-                          <button
-                            onClick={() => handleDeleteExpense(exp.id)}
-                            className="p-1 px-1.5 bg-rose-50 text-rose-600 hover:bg-rose-100 rounded-lg transition-colors border border-rose-100 cursor-pointer"
-                            title="Remover lançamento"
-                          >
-                            <Trash2 size={13} />
-                          </button>
+                          <div className="flex items-center justify-center gap-1.5">
+                            <button
+                              onClick={() => openExpenseDetail(exp)}
+                              className="p-1 px-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors border border-blue-100 cursor-pointer"
+                              title="Visualizar e Editar Detalhes"
+                            >
+                              <Eye size={13} />
+                            </button>
+                            <button
+                              onClick={() => setDeleteConfirmId(exp.id)}
+                              className="p-1 px-1.5 bg-rose-50 text-rose-600 hover:bg-rose-100 rounded-lg transition-colors border border-rose-100 cursor-pointer"
+                              title="Remover lançamento"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))
@@ -898,6 +979,73 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
                 </tbody>
               </table>
             </div>
+          </div>
+
+          {/* Cards de Lançamentos - Modo Responsivo Mobile */}
+          <div className="grid grid-cols-1 gap-4 md:hidden">
+            {currentDRE.manualExpensesFiltered.length === 0 ? (
+              <div className="bg-white rounded-3xl border border-slate-200 p-8 text-center text-slate-400 italic text-xs">
+                Nenhuma despesa administrativa manual registrada para os filtros selecionados.
+              </div>
+            ) : (
+              [...currentDRE.manualExpensesFiltered].reverse().map((exp: any) => (
+                <div key={exp.id} className="bg-white p-4.5 rounded-2xl border border-slate-200 shadow-2xs space-y-3.5">
+                  <div className="flex justify-between items-start gap-2">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-bold text-slate-900 bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded text-[10px] font-mono">
+                          {exp.truckId}
+                        </span>
+                        <span className="font-bold text-slate-800 text-xs">{exp.tipo}</span>
+                      </div>
+                      <div className="text-slate-400 font-mono text-[10px]">
+                        📅 {new Date(exp.data + "T00:00:00").toLocaleDateString('pt-BR')}
+                        {exp.km ? ` • 🛣️ ${Number(exp.km).toLocaleString('pt-BR')} km` : ''}
+                      </div>
+                    </div>
+                    <span className="text-red-650 font-mono font-bold text-xs shrink-0 whitespace-nowrap">
+                      - R$ {exp.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+
+                  {(exp.empresaDespesa || exp.obs) && (
+                    <div className="bg-slate-50 p-2.5 rounded-xl space-y-1 text-slate-650 text-[11px] border border-slate-100">
+                      {exp.empresaDespesa && (
+                        <div className="font-black text-blue-600 uppercase tracking-wider text-[9px] flex items-center gap-1">
+                          🏢 {exp.empresaDespesa}
+                        </div>
+                      )}
+                      {exp.obs && (
+                        <p className="font-medium line-clamp-3 text-slate-600 leading-normal">{exp.obs}</p>
+                      )}
+                    </div>
+                  )}
+
+                  {exp.comprovante && (
+                    <div className="w-full">
+                      <AttachmentPreview src={exp.comprovante} label={`Recibo - ${exp.tipo}`} className="!h-16 border border-slate-250 bg-slate-50" />
+                    </div>
+                  )}
+
+                  <div className="flex gap-2 pt-1 font-bold">
+                    <button
+                      onClick={() => openExpenseDetail(exp)}
+                      className="flex-1 py-2 px-3 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-xl transition-all border border-blue-150 text-center text-[11px] flex items-center justify-center gap-1 cursor-pointer shadow-2xs"
+                    >
+                      <Eye size={13} />
+                      <span>Ver e Editar</span>
+                    </button>
+                    <button
+                      onClick={() => setDeleteConfirmId(exp.id)}
+                      className="py-2 px-3.5 bg-rose-50 text-rose-600 hover:bg-rose-100 rounded-xl transition-all border border-rose-150 text-center text-[11px] flex items-center justify-center gap-1 cursor-pointer shadow-2xs"
+                    >
+                      <Trash2 size={13} />
+                      <span>Excluir</span>
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
       )}
@@ -1113,7 +1261,7 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
               </select>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-3 gap-4">
             <div>
               <label className="block text-xs font-bold text-slate-750 mb-1.5">Data</label>
               <input 
@@ -1131,6 +1279,16 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
                 onChange={e => setNewExpense({...newExpense, valor: e.target.value})}
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 font-bold font-mono focus:outline-none text-xs"
                 placeholder="0,00"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-750 mb-1.5">KM (Odômetro)</label>
+              <input 
+                type="number" 
+                value={newExpense.km}
+                onChange={e => setNewExpense({...newExpense, km: e.target.value})}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 font-bold font-mono focus:outline-none text-xs"
+                placeholder="Ex: 125400"
               />
             </div>
           </div>
@@ -1227,18 +1385,291 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
           <div className="flex gap-3 pt-4 font-bold">
             <button 
               onClick={() => setIsModalOpen(false)}
-              className="flex-1 px-4 py-2.5 rounded-xl text-slate-600 hover:bg-slate-100 border border-slate-200 transition-colors"
+              disabled={isSaving}
+              className="flex-1 px-4 py-2.5 rounded-xl text-slate-600 hover:bg-slate-100 border border-slate-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Cancelar
             </button>
             <button 
               onClick={handleSave}
-              className="flex-1 px-4 py-2.5 rounded-xl bg-blue-600 text-white hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200"
+              disabled={isSaving}
+              className="flex-1 px-4 py-2.5 rounded-xl bg-blue-600 text-white hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200 disabled:opacity-75 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
             >
-              Lançar Despesa
+              {isSaving ? 'Lançando...' : 'Lançar Despesa'}
             </button>
           </div>
         </div>
+      </Modal>
+
+      {/* Detail and Edit Expense Modal */}
+      <Modal isOpen={isDetailModalOpen} onClose={() => { setIsDetailModalOpen(false); setSelectedExpenseDetail(null); }} title={isEditingExpense ? "Editar Despesa Administrativa" : "Detalhamento de Despesa Administrativa"}>
+        {selectedExpenseDetail && (
+          <div className="space-y-5 text-slate-750 font-sans text-xs">
+            {!isEditingExpense ? (
+              // View Mode
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                  <div>
+                    <span className="block text-[10px] font-black uppercase text-slate-400 mb-0.5">Veículo / Caminhão</span>
+                    <span className="font-bold text-slate-800 text-sm">{selectedExpenseDetail.truckId}</span>
+                  </div>
+                  <div>
+                    <span className="block text-[10px] font-black uppercase text-slate-400 mb-0.5">Tipo de Despesa</span>
+                    <span className="font-bold text-slate-800 text-sm">{selectedExpenseDetail.tipo}</span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-4">
+                  <div>
+                    <span className="block text-[10px] font-black uppercase text-slate-400 mb-0.5">Data de Emissão</span>
+                    <span className="font-bold text-slate-800 text-sm font-mono">
+                      {new Date(selectedExpenseDetail.data + "T00:00:00").toLocaleDateString('pt-BR')}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="block text-[10px] font-black uppercase text-slate-400 mb-0.5">Valor da Despesa</span>
+                    <span className="font-bold text-red-650 text-sm font-mono">
+                      R$ {selectedExpenseDetail.valor?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="block text-[10px] font-black uppercase text-slate-400 mb-0.5">Odômetro (KM)</span>
+                    <span className="font-bold text-slate-850 text-sm font-mono">
+                      {selectedExpenseDetail.km ? `${Number(selectedExpenseDetail.km).toLocaleString('pt-BR')} km` : <span className="text-slate-400 italic">Não informado</span>}
+                    </span>
+                  </div>
+                </div>
+
+                <div>
+                  <span className="block text-[10px] font-black uppercase text-slate-400 mb-1">Empresa Credora / Destinatário</span>
+                  <div className="bg-slate-50 border border-slate-100 p-3 rounded-xl flex items-center gap-2">
+                    <Building className="text-slate-400" size={16} />
+                    <div>
+                      <span className="font-bold text-slate-800 block text-xs">
+                        {selectedExpenseDetail.empresaDespesa || "Não identificada / Não especificada"}
+                      </span>
+                      {selectedExpenseDetail.expenseCompanyId && selectedExpenseDetail.expenseCompanyId !== "manual" && (
+                        (() => {
+                          const comp = (data?.expense_companies || []).find((ec: any) => ec.id === selectedExpenseDetail.expenseCompanyId);
+                          if (comp) {
+                            return (
+                              <span className="text-[10px] text-slate-400 block mt-0.5">
+                                {comp.cnpj ? `CNPJ: ${comp.cnpj}` : ''} {comp.cidade ? ` • ${comp.cidade}/${comp.uf}` : ''}
+                              </span>
+                            );
+                          }
+                          return null;
+                        })()
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <span className="block text-[10px] font-black uppercase text-slate-400 mb-1">Observação / Descrição Detalhada</span>
+                  <div className="bg-slate-50 border border-slate-100 p-3.5 rounded-xl text-slate-650 font-medium whitespace-pre-wrap leading-relaxed">
+                    {selectedExpenseDetail.obs || <span className="text-slate-350 italic">Nenhum detalhamento registrado para este lançamento.</span>}
+                  </div>
+                </div>
+
+                {selectedExpenseDetail.comprovante && (
+                  <div>
+                    <span className="block text-[10px] font-black uppercase text-slate-400 mb-1.5">Comprovante Oficial / Recibo</span>
+                    <div className="border border-slate-150 rounded-2xl overflow-hidden p-2 bg-slate-50">
+                      <AttachmentPreview src={selectedExpenseDetail.comprovante} label={`Recibo - ${selectedExpenseDetail.tipo}`} className="!h-48 border border-slate-200 bg-white" />
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex gap-3 pt-4 font-bold">
+                  <button 
+                    onClick={() => { setIsDetailModalOpen(false); setSelectedExpenseDetail(null); }}
+                    className="flex-1 px-4 py-2.5 rounded-xl text-slate-600 hover:bg-slate-100 border border-slate-200 transition-colors"
+                  >
+                    Fechar Detalhes
+                  </button>
+                  <button 
+                    onClick={() => setIsEditingExpense(true)}
+                    className="flex-1 px-4 py-2.5 rounded-xl bg-blue-600 text-white hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200 flex items-center justify-center gap-1.5"
+                  >
+                    <Edit size={14} />
+                    Editar Lançamento
+                  </button>
+                </div>
+              </div>
+            ) : (
+              // Edit Mode
+              <div className="space-y-5">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-750 mb-1.5">Caminhão</label>
+                    <select 
+                      value={editExpenseForm.truckId}
+                      onChange={e => setEditExpenseForm({...editExpenseForm, truckId: e.target.value})}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 text-xs text-slate-700"
+                    >
+                      <option value="">Selecione...</option>
+                      {data.trucks.map((t: any) => (
+                        <option key={t.id} value={t.placa}>{t.placa} - {t.modelo}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-750 mb-1.5">Tipo de Despesa</label>
+                    <select 
+                      value={editExpenseForm.tipo}
+                      onChange={e => setEditExpenseForm({...editExpenseForm, tipo: e.target.value})}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 text-xs text-slate-700"
+                    >
+                      <option value="">Selecione...</option>
+                      {categoriesSaida.filter((cat: string) => !isCombustivelByTipo(cat)).map((cat: string) => (
+                        <option key={cat} value={cat}>{cat}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-750 mb-1.5">Data</label>
+                    <input 
+                      type="date" 
+                      value={editExpenseForm.data}
+                      onChange={e => setEditExpenseForm({...editExpenseForm, data: e.target.value})}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 font-bold focus:outline-none text-xs text-slate-700"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-750 mb-1.5">Valor (R$)</label>
+                    <input 
+                      type="number" 
+                      value={editExpenseForm.valor}
+                      onChange={e => setEditExpenseForm({...editExpenseForm, valor: e.target.value})}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 font-bold font-mono focus:outline-none text-xs text-slate-700"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-750 mb-1.5">KM (Odômetro)</label>
+                    <input 
+                      type="number" 
+                      value={editExpenseForm.km}
+                      onChange={e => setEditExpenseForm({...editExpenseForm, km: e.target.value})}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 font-bold font-mono focus:outline-none text-xs text-slate-700"
+                      placeholder="Ex: 125400"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-750 mb-1.5">Empresa / Destinatário da Despesa</label>
+                  <select
+                    value={editExpenseForm.expenseCompanyId}
+                    onChange={e => {
+                      const id = e.target.value;
+                      if (id === "manual") {
+                        setEditExpenseForm({
+                          ...editExpenseForm,
+                          expenseCompanyId: "manual",
+                          empresaDespesa: ""
+                        });
+                      } else {
+                        const matched = (data?.expense_companies || []).find((ec: any) => ec.id === id);
+                        setEditExpenseForm({
+                          ...editExpenseForm,
+                          expenseCompanyId: id,
+                          empresaDespesa: matched ? matched.nome : ""
+                        });
+                      }
+                    }}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 font-bold focus:outline-none text-xs text-slate-700"
+                  >
+                    <option value="">Nenhuma / Não especificada</option>
+                    <option value="manual">✍️ Digitar manualmente...</option>
+                    {(data?.expense_companies || []).map((ec: any) => (
+                      <option key={ec.id} value={ec.id}>
+                        🏢 {ec.nome} {ec.cnpj ? `(CNPJ: ${ec.cnpj})` : ''} {ec.cidade ? `- ${ec.cidade}/${ec.uf}` : ''}
+                      </option>
+                    ))}
+                  </select>
+
+                  {editExpenseForm.expenseCompanyId === "manual" && (
+                    <div className="mt-2.5">
+                      <input
+                        type="text"
+                        value={editExpenseForm.empresaDespesa}
+                        onChange={e => setEditExpenseForm({...editExpenseForm, empresaDespesa: e.target.value})}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 font-bold focus:outline-none text-xs text-slate-700 focus:ring-2 focus:ring-blue-500/10"
+                        placeholder="Digite o nome do credor / empresa destinatária"
+                      />
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-750 mb-1.5">Observação (Opcional)</label>
+                  <textarea 
+                    value={editExpenseForm.obs}
+                    onChange={e => setEditExpenseForm({...editExpenseForm, obs: e.target.value})}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 font-semibold text-slate-600 focus:outline-none h-20 resize-none text-xs text-slate-700"
+                  />
+                </div>
+
+                <div className="relative border-2 border-dashed border-slate-200 rounded-2xl flex flex-col items-center justify-center p-4 text-center hover:border-blue-500 hover:bg-blue-50/10 transition-all cursor-pointer">
+                  <input 
+                    type="file"
+                    accept="image/*,application/pdf"
+                    className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        compressAndSetFile(file, (base64) => {
+                          setEditExpenseForm({ ...editExpenseForm, comprovante: base64 });
+                        });
+                      }
+                    }}
+                  />
+                  {editExpenseForm.comprovante ? (
+                    <div className="flex items-center gap-2">
+                      {editExpenseForm.comprovante.startsWith('data:application/pdf') ? (
+                        <FileText className="text-red-500 w-8 h-8 shrink-0" />
+                      ) : (
+                        <div className="w-10 h-10 rounded overflow-hidden border bg-slate-150 shrink-0">
+                          <img src={editExpenseForm.comprovante} alt="Preview" className="w-full h-full object-cover" />
+                        </div>
+                      )}
+                      <div className="text-left animate-fade-in">
+                        <span className="text-xs font-bold text-emerald-650 flex items-center gap-1">
+                          <CheckCircle size={14} /> Documento anexado!
+                        </span>
+                        <p className="text-[10px] text-slate-400">Clique ou arraste outro para substituir</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <Camera size={20} />
+                      <span className="text-[10px] font-black uppercase tracking-wider">Substituir Comprovante Oficial (Foto ou PDF)</span>
+                    </>
+                  )}
+                </div>
+
+                <div className="flex gap-3 pt-4 font-bold">
+                  <button 
+                    onClick={() => setIsEditingExpense(false)}
+                    className="flex-1 px-4 py-2.5 rounded-xl text-slate-600 hover:bg-slate-100 border border-slate-200 transition-colors"
+                  >
+                    Voltar
+                  </button>
+                  <button 
+                    onClick={handleUpdateExpense}
+                    className="flex-1 px-4 py-2.5 rounded-xl bg-blue-600 text-white hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200"
+                  >
+                    Salvar Alterações
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </Modal>
 
       {/* Modal to Add/Edit Expense Company */}
@@ -1307,6 +1738,36 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
               className="px-4 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-bold disabled:opacity-50 transition-all cursor-pointer shadow-lg shadow-blue-100"
             >
               {isSavingCompany ? "Salvando..." : "Salvar Empresa"}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Modal de Confirmação de Exclusão */}
+      <Modal
+        isOpen={deleteConfirmId !== null}
+        onClose={() => setDeleteConfirmId(null)}
+        title="Confirmar Exclusão"
+      >
+        <div className="space-y-4 font-sans text-xs text-slate-700">
+          <p className="text-sm font-medium leading-relaxed">
+            Tem certeza que deseja remover esta despesa administrativa?
+          </p>
+          <p className="text-slate-400 bg-slate-50 border border-slate-100 p-3 rounded-xl leading-relaxed">
+            ⚠️ <strong>Aviso importante:</strong> Esta ação é definitiva e também excluirá o lançamento correspondente do fluxo de caixa e relatórios financeiros associados.
+          </p>
+          <div className="flex gap-3 pt-4 border-t border-slate-100 font-bold">
+            <button
+              onClick={() => setDeleteConfirmId(null)}
+              className="flex-1 px-4 py-2.5 rounded-xl text-slate-600 hover:bg-slate-100 border border-slate-200 transition-colors"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={() => deleteConfirmId && handleDeleteExpense(deleteConfirmId)}
+              className="flex-1 px-4 py-2.5 rounded-xl bg-red-600 text-white hover:bg-red-700 transition-colors shadow-lg shadow-red-200"
+            >
+              Excluir Definitivamente
             </button>
           </div>
         </div>

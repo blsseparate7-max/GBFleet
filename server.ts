@@ -1439,6 +1439,52 @@ app.use(ensureDBSynced);
     res.json(newExpense);
   });
 
+  app.put("/api/expenses/:id", (req, res) => {
+    const db = readDB();
+    const { id } = req.params;
+    const companyId = (req as any).companyId;
+
+    const idx = db.expenses.findIndex((e: any) => e.id === id);
+    if (idx === -1) {
+      return res.status(404).json({ error: "Despesa não encontrada." });
+    }
+
+    if (db.expenses[idx].companyId !== companyId) {
+      return res.status(403).json({ error: "Não autorizado." });
+    }
+
+    const oldExpense = db.expenses[idx];
+
+    // Remove old expense from cash_flow
+    db.cash_flow = db.cash_flow.filter((c: any) => {
+      const isMatch = c.companyId === companyId && c.descricao === `Despesa: ${oldExpense.tipo} - ${oldExpense.truckId}` && c.valor === oldExpense.valor && c.data === oldExpense.data;
+      return !isMatch;
+    });
+
+    // Update expense
+    const updatedExpense = {
+      ...oldExpense,
+      ...req.body,
+      valor: parseFloat(req.body.valor || 0),
+      km: req.body.km ? parseFloat(req.body.km) : undefined,
+    };
+
+    db.expenses[idx] = updatedExpense;
+
+    // Add updated to cash_flow
+    db.cash_flow.push({
+      id: `cash_${Date.now()}`,
+      companyId: companyId,
+      tipo: 'saida',
+      valor: updatedExpense.valor,
+      data: updatedExpense.data,
+      descricao: `Despesa: ${updatedExpense.tipo} - ${updatedExpense.truckId}`
+    });
+
+    writeDB(db);
+    res.json(updatedExpense);
+  });
+
   app.delete("/api/expenses/:id", (req, res) => {
     const db = readDB();
     const { id } = req.params;
