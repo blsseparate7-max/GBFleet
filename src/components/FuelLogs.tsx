@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Fuel, Plus, Calendar, MapPin, DollarSign, Camera, FileText, CheckCircle, Edit, Trash2, Filter, AlertCircle, Building } from 'lucide-react';
 import Modal from './ui/Modal';
 import { compressAndSetFile, AttachmentPreview } from '../lib/fileCompressor';
+import { maskBRL, unmaskBRL } from '../lib/utils';
 
 export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () => void }) {
   const [activeTab, setActiveTab] = useState<'logs' | 'stations'>('logs');
@@ -19,7 +20,8 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
     valor: '',
     litrosArla: '',
     valorArla: '',
-    comprovante: ''
+    comprovante: '',
+    tipoDiesel: 'S10'
   });
 
   // Filters
@@ -43,7 +45,27 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
   const [isSaving, setIsSaving] = useState(false);
 
   const handleSave = async () => {
-    if (!newLog.truckId || !newLog.driverId || !newLog.km || !newLog.litros || !newLog.valor || isSaving) return;
+    if (!newLog.truckId) {
+      alert("Por favor, selecione um veículo (Caminhão).");
+      return;
+    }
+    if (!newLog.driverId) {
+      alert("Por favor, selecione um motorista.");
+      return;
+    }
+    if (!newLog.km || isNaN(Number(newLog.km)) || Number(newLog.km) <= 0) {
+      alert("Por favor, insira uma quilometragem (KM) válida.");
+      return;
+    }
+    if (!newLog.litros || isNaN(Number(newLog.litros)) || Number(newLog.litros) <= 0) {
+      alert("Por favor, insira uma quantidade de litros válida.");
+      return;
+    }
+    if (!newLog.valor || isNaN(Number(newLog.valor)) || Number(newLog.valor) <= 0) {
+      alert("Por favor, insira um valor numérico válido maior que zero.");
+      return;
+    }
+    if (isSaving) return;
 
     setIsSaving(true);
     try {
@@ -62,7 +84,8 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
             valor: Number(newLog.valor),
             litrosArla: newLog.litrosArla ? Number(newLog.litrosArla) : undefined,
             valorArla: newLog.valorArla ? Number(newLog.valorArla) : undefined,
-            comprovante: newLog.comprovante
+            comprovante: newLog.comprovante,
+            tipoDiesel: newLog.tipoDiesel || 'S10'
           })
         });
       } else {
@@ -78,7 +101,8 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
             valor: Number(newLog.valor),
             litrosArla: newLog.litrosArla ? Number(newLog.litrosArla) : undefined,
             valorArla: newLog.valorArla ? Number(newLog.valorArla) : undefined,
-            comprovante: newLog.comprovante
+            comprovante: newLog.comprovante,
+            tipoDiesel: newLog.tipoDiesel || 'S10'
           })
         });
 
@@ -98,7 +122,7 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
 
       setIsModalOpen(false);
       setSelectedLog(null);
-      setNewLog({ truckId: '', driverId: '', gasStationId: '', data: new Date().toISOString().split('T')[0], km: '', litros: '', valor: '', litrosArla: '', valorArla: '', comprovante: '' });
+      setNewLog({ truckId: '', driverId: '', gasStationId: '', data: new Date().toISOString().split('T')[0], km: '', litros: '', valor: '', litrosArla: '', valorArla: '', comprovante: '', tipoDiesel: 'S10' });
       onUpdate();
     } catch (err) {
       console.error(err);
@@ -132,7 +156,8 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
       valor: log.valor ? String(log.valor) : '',
       litrosArla: log.litrosArla ? String(log.litrosArla) : '',
       valorArla: log.valorArla ? String(log.valorArla) : '',
-      comprovante: log.comprovante || ''
+      comprovante: log.comprovante || '',
+      tipoDiesel: log.tipoDiesel || 'S10'
     });
     setShowArlaManual(log.valorArla ? true : false);
     setIsModalOpen(true);
@@ -418,7 +443,16 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
                             {log.km?.toLocaleString()} km
                           </td>
                           <td className="px-6 py-4 text-sm font-medium text-slate-700">
-                            <div>{log.litros} L</div>
+                            <div className="flex items-center gap-1.5">
+                              <span>{log.litros} L</span>
+                              <span className={`px-1.5 py-0.5 text-[9px] font-black rounded uppercase tracking-wider ${
+                                (log.tipoDiesel || 'S10') === 'S10'
+                                  ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                                  : 'bg-blue-100 text-blue-800 border border-blue-200'
+                              }`}>
+                                {log.tipoDiesel || 'S10'}
+                              </span>
+                            </div>
                             {Number(log.litrosArla) > 0 && (
                               <span className="text-[10px] text-sky-600 font-extrabold block mt-0.5">
                                 💨 {log.litrosArla} L Arla
@@ -571,7 +605,8 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
             valor: '',
             litrosArla: '',
             valorArla: '',
-            comprovante: ''
+            comprovante: '',
+            tipoDiesel: 'S10'
           });
         }} 
         title={selectedLog ? "Editar Abastecimento" : "Novo Abastecimento"}
@@ -625,6 +660,38 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
             </div>
           </div>
 
+          <div className="grid grid-cols-1 gap-4">
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1.5">Tipo de Diesel</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setNewLog({...newLog, tipoDiesel: 'S10'})}
+                  className={`py-2.5 px-4 rounded-xl font-bold border text-sm transition-all flex items-center justify-center gap-2 ${
+                    (newLog.tipoDiesel || 'S10') === 'S10'
+                      ? 'bg-amber-500/10 border-amber-500 text-amber-700 shadow-sm shadow-amber-500/5'
+                      : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                  Diesel S10
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setNewLog({...newLog, tipoDiesel: 'S500'})}
+                  className={`py-2.5 px-4 rounded-xl font-bold border text-sm transition-all flex items-center justify-center gap-2 ${
+                    newLog.tipoDiesel === 'S500'
+                      ? 'bg-blue-600/10 border-blue-600 text-blue-700 shadow-sm shadow-blue-600/5'
+                      : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  <span className="w-2.5 h-2.5 rounded-full bg-blue-600" />
+                  Diesel S500
+                </button>
+              </div>
+            </div>
+          </div>
+
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-semibold text-slate-700 mb-1.5">Data</label>
@@ -664,11 +731,14 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
               <label className="block text-sm font-semibold text-slate-700 mb-1.5">Valor (R$)</label>
               <input 
                 id="input-fuel-valor"
-                type="number" 
-                value={newLog.valor}
-                onChange={e => setNewLog({...newLog, valor: e.target.value})}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                placeholder="0,00"
+                type="text" 
+                value={newLog.valor ? maskBRL(newLog.valor) : ""}
+                onChange={e => {
+                  const masked = maskBRL(e.target.value);
+                  setNewLog({...newLog, valor: masked ? String(unmaskBRL(masked)) : ""});
+                }}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-bold font-mono text-slate-700"
+                placeholder="R$ 0,00"
               />
             </div>
           </div>
@@ -715,11 +785,14 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
                       <label className="block text-xs font-bold text-sky-800 mb-1">Valor Arla (R$)</label>
                       <input 
                         id="input-fuel-valor-arla"
-                        type="number" 
-                        value={newLog.valorArla}
-                        onChange={e => setNewLog({...newLog, valorArla: e.target.value})}
-                        className="w-full bg-white border border-sky-200/80 rounded-xl px-4 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-sky-500/20"
-                        placeholder="0,00"
+                        type="text" 
+                        value={newLog.valorArla ? maskBRL(newLog.valorArla) : ""}
+                        onChange={e => {
+                          const masked = maskBRL(e.target.value);
+                          setNewLog({...newLog, valorArla: masked ? String(unmaskBRL(masked)) : ""});
+                        }}
+                        className="w-full bg-white border border-sky-200/80 rounded-xl px-4 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-sky-500/20 font-bold font-mono text-slate-700"
+                        placeholder="R$ 0,00"
                       />
                     </div>
                   </div>

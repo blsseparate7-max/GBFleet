@@ -27,7 +27,7 @@ import {
   Check,
   Percent
 } from 'lucide-react';
-import { cn } from '../lib/utils';
+import { cn, maskBRL, unmaskBRL } from '../lib/utils';
 import Modal from './ui/Modal';
 
 // Category options for Trucking industry
@@ -130,8 +130,10 @@ export default function CashFlow({ data, onUpdate }: { data: any, onUpdate: () =
       return;
     }
 
+    const companyId = data?.company?.id || 'comp_1';
+
     const payload = {
-      companyId: 'comp_1',
+      companyId,
       tipo: formTipo,
       valor: parseFloat(formValor),
       data: formData,
@@ -1006,13 +1008,14 @@ export default function CashFlow({ data, onUpdate }: { data: any, onUpdate: () =
               <div className="relative">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-xs">R$</span>
                 <input 
-                  type="number" 
-                  step="0.01"
-                  min="0.01"
+                  type="text" 
                   required
-                  value={formValor}
-                  onChange={e => setFormValor(e.target.value)}
-                  placeholder="0,00"
+                  value={formValor ? maskBRL(formValor) : ""}
+                  onChange={e => {
+                    const masked = maskBRL(e.target.value);
+                    setFormValor(masked ? String(unmaskBRL(masked)) : "");
+                  }}
+                  placeholder="R$ 0,00"
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-2.5 text-sm font-mono font-bold focus:outline-none focus:ring-2 focus:ring-blue-500/15"
                 />
               </div>

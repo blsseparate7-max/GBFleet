@@ -114,12 +114,13 @@ export default function Drivers({ data, onUpdate }: DriversProps) {
     }
 
     try {
+      const companyId = data?.company?.id || 'comp_1';
       const response = await fetch('/api/drivers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...driverForm,
-          companyId: 'comp_1'
+          companyId
         })
       });
 

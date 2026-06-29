@@ -524,7 +524,8 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
         valor: Number(body.valor),
         km: Number(body.km),
         data: body.data || new Date().toISOString().split("T")[0],
-        comprovante: body.comprovante || ""
+        comprovante: body.comprovante || "",
+        tipoDiesel: body.tipoDiesel || "S10"
       };
 
       liveDb.fuel_logs.push(newLog);
@@ -535,11 +536,11 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
         fuelLogId: logId,
         companyId: ctx.companyId,
         truckId: body.truckId,
-        tipo: "Diesel (Abastecimento)",
+        tipo: `Diesel ${body.tipoDiesel || "S10"} (Abastecimento)`,
         valor: Number(body.valor),
         data: body.data || new Date().toISOString().split("T")[0],
         documento: "Auto-Abastecimento",
-        descritivo: `Abastecimento automático via painel / chat (${body.litros} Litros)`
+        descritivo: `Abastecimento automático via painel / chat (${body.litros} Litros de Diesel ${body.tipoDiesel || "S10"})`
       };
       liveDb.expenses.push(rawExpense);
 
@@ -549,10 +550,10 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
         fuelLogId: logId,
         companyId: ctx.companyId,
         tipo: "saida",
-        categoria: "Diesel (Abastecimento)",
+        categoria: `Diesel ${body.tipoDiesel || "S10"} (Abastecimento)`,
         valor: Number(body.valor),
         data: body.data || new Date().toISOString().split("T")[0],
-        descricao: `Combustível Placa ${body.truckId}`
+        descricao: `Combustível Placa ${body.truckId} (${body.tipoDiesel || "S10"})`
       };
       liveDb.cash_flow.push(rawCash);
 
@@ -577,23 +578,26 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       matchLog.km = Number(body.km);
       matchLog.data = body.data || new Date().toISOString().split("T")[0];
       matchLog.comprovante = body.comprovante || "";
+      matchLog.tipoDiesel = body.tipoDiesel || "S10";
 
       // Sync corresponding expense
       const matchedExp = liveDb.expenses.find((e: any) => e.fuelLogId === targetId || (e.documento === "Auto-Abastecimento" && e.truckId === oldLog.truckId && Number(e.valor) === Number(oldLog.valor) && e.data === oldLog.data));
       if (matchedExp) {
         matchedExp.truckId = body.truckId;
+        matchedExp.tipo = `Diesel ${body.tipoDiesel || "S10"} (Abastecimento)`;
         matchedExp.valor = Number(body.valor);
         matchedExp.data = body.data || new Date().toISOString().split("T")[0];
-        matchedExp.descritivo = `Abastecimento automático via painel / chat (${body.litros} Litros)`;
+        matchedExp.descritivo = `Abastecimento automático via painel / chat (${body.litros} Litros de Diesel ${body.tipoDiesel || "S10"})`;
         matchedExp.fuelLogId = targetId;
       }
 
       // Sync corresponding cash flow
-      const matchedCash = liveDb.cash_flow.find((c: any) => c.fuelLogId === targetId || (c.tipo === "saida" && c.categoria === "Diesel (Abastecimento)" && Number(c.valor) === Number(oldLog.valor) && c.data === oldLog.data && c.descricao?.includes(oldLog.truckId)));
+      const matchedCash = liveDb.cash_flow.find((c: any) => c.fuelLogId === targetId || (c.tipo === "saida" && c.categoria?.includes("Diesel") && Number(c.valor) === Number(oldLog.valor) && c.data === oldLog.data && c.descricao?.includes(oldLog.truckId)));
       if (matchedCash) {
+        matchedCash.categoria = `Diesel ${body.tipoDiesel || "S10"} (Abastecimento)`;
         matchedCash.valor = Number(body.valor);
         matchedCash.data = body.data || new Date().toISOString().split("T")[0];
-        matchedCash.descricao = `Combustível Placa ${body.truckId}`;
+        matchedCash.descricao = `Combustível Placa ${body.truckId} (${body.tipoDiesel || "S10"})`;
         matchedCash.fuelLogId = targetId;
       }
 
@@ -617,7 +621,7 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       liveDb.expenses = liveDb.expenses.filter((e: any) => !(e.fuelLogId === targetId || (e.documento === "Auto-Abastecimento" && e.truckId === oldLog.truckId && Number(e.valor) === Number(oldLog.valor) && e.data === oldLog.data)));
 
       // Remove associated cash flow
-      liveDb.cash_flow = liveDb.cash_flow.filter((c: any) => !(c.fuelLogId === targetId || (c.tipo === "saida" && c.categoria === "Diesel (Abastecimento)" && Number(c.valor) === Number(oldLog.valor) && c.data === oldLog.data && c.descricao?.includes(oldLog.truckId))));
+      liveDb.cash_flow = liveDb.cash_flow.filter((c: any) => !(c.fuelLogId === targetId || (c.tipo === "saida" && c.categoria?.includes("Diesel") && Number(c.valor) === Number(oldLog.valor) && c.data === oldLog.data && c.descricao?.includes(oldLog.truckId))));
 
       await persistDB();
       return jsonResponse({ success: true });
@@ -1061,11 +1065,17 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
 
       const finalCost = Number(body.custo || body.custoFinal || 0);
       const completionDate = body.dataRealizada || new Date().toISOString().split("T")[0];
+      const meioPagamento = body.meioPagamento || "Pix";
+      const oficina = body.oficina || body.local || "";
+      const observacao = body.observacao || "";
 
       matchMaint.status = "Realizado";
       matchMaint.custo = finalCost;
       matchMaint.dataRealizada = completionDate;
       matchMaint.resolvedAt = completionDate;
+      matchMaint.meioPagamento = meioPagamento;
+      matchMaint.oficina = oficina;
+      matchMaint.observacao = observacao;
 
       // Automatically register real-world cost
       if (finalCost > 0) {
@@ -1077,7 +1087,7 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
           valor: finalCost,
           data: completionDate,
           documento: "Auto-Manutenção " + matchMaint.id.toUpperCase(),
-          descritivo: `Peça/Revisão concluída de: ${matchMaint.item}`
+          descritivo: `Peça/Revisão concluída de: ${matchMaint.item}${oficina ? ` na oficina ${oficina}` : ''}.${observacao ? ` Obs: ${observacao}` : ''}`
         });
 
         liveDb.cash_flow.push({
@@ -1087,7 +1097,8 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
           categoria: "Manutenção e Peças",
           valor: finalCost,
           data: completionDate,
-          descricao: `Despesa Manutenção - Placa ${matchMaint.truckId}`
+          meioPagamento: meioPagamento,
+          descricao: `Despesa Manutenção - Placa ${matchMaint.truckId} (${matchMaint.item}${oficina ? ` @ ${oficina}` : ''})`
         });
       }
 

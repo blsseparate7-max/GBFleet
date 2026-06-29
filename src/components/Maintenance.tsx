@@ -15,7 +15,7 @@ import {
   Activity
 } from 'lucide-react';
 import Modal from './ui/Modal';
-import { cn } from '../lib/utils';
+import { cn, maskBRL, unmaskBRL } from '../lib/utils';
 
 interface MaintenanceProps {
   data: any;
@@ -44,7 +44,10 @@ export default function Maintenance({ data, onUpdate }: MaintenanceProps) {
   // Complete alert form state
   const [completeForm, setCompleteForm] = useState({
     custo: '',
-    dataRealizada: new Date().toISOString().split('T')[0]
+    dataRealizada: new Date().toISOString().split('T')[0],
+    meioPagamento: 'Pix',
+    oficina: '',
+    observacao: ''
   });
 
   if (!data) return null;
@@ -152,11 +155,12 @@ export default function Maintenance({ data, onUpdate }: MaintenanceProps) {
     }
 
     try {
+      const companyId = data?.company?.id || 'comp_1';
       const response = await fetch('/api/maintenance_alerts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          companyId: 'comp_1',
+          companyId,
           truckId: newAlert.truckId,
           tipo: newAlert.tipo,
           prioridade: newAlert.prioridade,
@@ -199,7 +203,10 @@ export default function Maintenance({ data, onUpdate }: MaintenanceProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           custo: Number(completeForm.custo || 0),
-          dataRealizada: completeForm.dataRealizada
+          dataRealizada: completeForm.dataRealizada,
+          meioPagamento: completeForm.meioPagamento,
+          oficina: completeForm.oficina,
+          observacao: completeForm.observacao
         })
       });
 
@@ -208,7 +215,10 @@ export default function Maintenance({ data, onUpdate }: MaintenanceProps) {
         setSelectedAlert(null);
         setCompleteForm({
           custo: '',
-          dataRealizada: new Date().toISOString().split('T')[0]
+          dataRealizada: new Date().toISOString().split('T')[0],
+          meioPagamento: 'Pix',
+          oficina: '',
+          observacao: ''
         });
         onUpdate();
       } else {
@@ -641,12 +651,14 @@ export default function Maintenance({ data, onUpdate }: MaintenanceProps) {
               <div className="relative">
                 <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">R$</span>
                 <input 
-                  type="number" 
-                  step="0.01" 
-                  placeholder="0.00"
-                  value={completeForm.custo}
-                  onChange={e => setCompleteForm({...completeForm, custo: e.target.value})}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500/20 text-sm font-bold"
+                  type="text" 
+                  placeholder="R$ 0,00"
+                  value={completeForm.custo ? maskBRL(completeForm.custo) : ""}
+                  onChange={e => {
+                    const masked = maskBRL(e.target.value);
+                    setCompleteForm({...completeForm, custo: masked ? String(unmaskBRL(masked)) : ""});
+                  }}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500/20 text-sm font-bold font-mono"
                   required
                 />
               </div>
@@ -661,6 +673,47 @@ export default function Maintenance({ data, onUpdate }: MaintenanceProps) {
                 onChange={e => setCompleteForm({...completeForm, dataRealizada: e.target.value})}
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500/20 text-sm"
                 required
+              />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Meio de Pagamento</label>
+                <select 
+                  value={completeForm.meioPagamento}
+                  onChange={e => setCompleteForm({...completeForm, meioPagamento: e.target.value})}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500/20 text-sm"
+                  required
+                >
+                  <option value="Pix">Pix</option>
+                  <option value="Dinheiro">Dinheiro</option>
+                  <option value="Cartão de Crédito">Cartão de Crédito</option>
+                  <option value="Boleto">Boleto</option>
+                  <option value="Transferência/TED">Transferência/TED</option>
+                  <option value="Cartão Combustível">Cartão Combustível</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Oficina / Fornecedor</label>
+                <input 
+                  type="text" 
+                  placeholder="Ex: Oficina Mecânica Silva"
+                  value={completeForm.oficina}
+                  onChange={e => setCompleteForm({...completeForm, oficina: e.target.value})}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500/20 text-sm"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-semibold text-slate-700 mb-1.5">Observações da Execução</label>
+              <textarea 
+                placeholder="Ex: Substituído o filtro primário de combustível e óleo de motor."
+                rows={2}
+                value={completeForm.observacao}
+                onChange={e => setCompleteForm({...completeForm, observacao: e.target.value})}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500/20 text-sm"
               />
             </div>
 

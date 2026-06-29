@@ -25,7 +25,7 @@ import {
   Navigation,
   Map
 } from 'lucide-react';
-import { cn } from '../lib/utils';
+import { cn, maskBRL, unmaskBRL } from '../lib/utils';
 import Modal from './ui/Modal';
 import { generateFreightPDF } from '../lib/pdfGenerator';
 import { compressAndSetFile, AttachmentPreview } from '../lib/fileCompressor';
@@ -374,13 +374,14 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
     }
 
     try {
+      const companyId = data?.company?.id || 'comp_1';
       const url = selectedFreight ? `/api/freights/${selectedFreight.id}` : '/api/freights';
       const method = selectedFreight ? 'PUT' : 'POST';
       const response = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          companyId: 'comp_1',
+          companyId,
           truckId,
           driverId,
           origem,
@@ -1141,12 +1142,14 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
                   <div className="relative">
                     <span className="absolute left-4 top-3 text-slate-400 font-bold text-sm">R$</span>
                     <input
-                      type="number"
-                      step="0.001"
-                      placeholder="Ex: 0.35"
-                      value={valorPorKg}
-                      onChange={(e) => handlePesoChange(pesoTotalKg, e.target.value)}
-                      className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:border-blue-500 transition-colors text-sm"
+                      type="text"
+                      placeholder="R$ 0,00"
+                      value={valorPorKg ? maskBRL(valorPorKg) : ""}
+                      onChange={(e) => {
+                        const masked = maskBRL(e.target.value);
+                        handlePesoChange(pesoTotalKg, masked ? String(unmaskBRL(masked)) : "");
+                      }}
+                      className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:border-blue-500 transition-colors text-sm font-bold font-mono"
                     />
                   </div>
                 </div>
@@ -1170,12 +1173,14 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
                   <div className="relative">
                     <span className="absolute left-4 top-3 text-slate-400 font-bold text-sm">R$</span>
                     <input
-                      type="number"
-                      step="0.01"
-                      placeholder="Ex: 25.00"
-                      value={valorPorCabeca}
-                      onChange={(e) => handleCabecasChange(quantidadeCabecas, e.target.value)}
-                      className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:border-blue-500 transition-colors text-sm"
+                      type="text"
+                      placeholder="R$ 0,00"
+                      value={valorPorCabeca ? maskBRL(valorPorCabeca) : ""}
+                      onChange={(e) => {
+                        const masked = maskBRL(e.target.value);
+                        handleCabecasChange(quantidadeCabecas, masked ? String(unmaskBRL(masked)) : "");
+                      }}
+                      className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:border-blue-500 transition-colors text-sm font-bold font-mono"
                     />
                   </div>
                 </div>
@@ -1189,14 +1194,16 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
               <div className="relative">
                 <span className="absolute left-4 top-3 text-slate-400 font-bold text-sm">R$</span>
                 <input
-                  type="number"
+                  type="text"
                   required
-                  step="0.01"
-                  placeholder="0,00"
+                  placeholder="R$ 0,00"
                   readOnly={tipoCalculo !== 'fixo'}
-                  value={valorBruto}
-                  onChange={(e) => setValorBruto(e.target.value)}
-                  className={`w-full pl-10 pr-4 py-3 border border-slate-200 rounded-2xl focus:outline-none focus:border-blue-500 transition-colors text-sm font-bold ${
+                  value={valorBruto ? maskBRL(valorBruto) : ""}
+                  onChange={(e) => {
+                    const masked = maskBRL(e.target.value);
+                    setValorBruto(masked ? String(unmaskBRL(masked)) : "");
+                  }}
+                  className={`w-full pl-10 pr-4 py-3 border border-slate-200 rounded-2xl focus:outline-none focus:border-blue-500 transition-colors text-sm font-bold font-mono ${
                     tipoCalculo !== 'fixo' ? 'bg-slate-100/80 text-emerald-700 cursor-not-allowed' : 'bg-slate-50'
                   }`}
                 />
@@ -1216,12 +1223,14 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
                     <div className="relative">
                       <span className="absolute left-4 top-3 text-slate-400 font-medium text-sm">R$</span>
                       <input
-                        type="number"
-                        step="0.01"
-                        placeholder="0,00"
-                        value={combustivel}
-                        onChange={(e) => setCombustivel(e.target.value)}
-                        className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-blue-500 transition-colors text-sm font-semibold text-slate-700"
+                        type="text"
+                        placeholder="R$ 0,00"
+                        value={combustivel ? maskBRL(combustivel) : ""}
+                        onChange={(e) => {
+                          const masked = maskBRL(e.target.value);
+                          setCombustivel(masked ? String(unmaskBRL(masked)) : "");
+                        }}
+                        className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-blue-500 transition-colors text-sm font-bold font-mono text-slate-700"
                       />
                     </div>
                   </div>
@@ -1287,12 +1296,14 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
                   <div className="relative">
                     <span className="absolute left-4 top-3 text-slate-400 font-medium text-sm">R$</span>
                     <input
-                      type="number"
-                      step="0.01"
-                      placeholder="0,00"
-                      value={pedagio}
-                      onChange={(e) => setPedagio(e.target.value)}
-                      className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-blue-500 transition-colors text-sm"
+                      type="text"
+                      placeholder="R$ 0,00"
+                      value={pedagio ? maskBRL(pedagio) : ""}
+                      onChange={(e) => {
+                        const masked = maskBRL(e.target.value);
+                        setPedagio(masked ? String(unmaskBRL(masked)) : "");
+                      }}
+                      className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-blue-500 transition-colors text-sm font-bold font-mono text-slate-700"
                     />
                   </div>
                 </div>
@@ -1315,12 +1326,14 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
                   <div className="relative">
                     <span className="absolute left-4 top-3 text-slate-400 font-medium text-sm">R$</span>
                     <input
-                      type="number"
-                      step="0.01"
-                      placeholder="0,00"
-                      value={motorista}
-                      onChange={(e) => setMotorista(e.target.value)}
-                      className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-blue-500 transition-colors text-sm"
+                      type="text"
+                      placeholder="R$ 0,00"
+                      value={motorista ? maskBRL(motorista) : ""}
+                      onChange={(e) => {
+                        const masked = maskBRL(e.target.value);
+                        setMotorista(masked ? String(unmaskBRL(masked)) : "");
+                      }}
+                      className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-blue-500 transition-colors text-sm font-bold font-mono text-slate-700"
                     />
                   </div>
                 </div>
@@ -1344,12 +1357,14 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
                     <div className="relative">
                       <span className="absolute left-4 top-3 text-slate-400 font-medium text-sm">R$</span>
                       <input
-                        type="number"
-                        step="0.01"
-                        placeholder="0,00"
-                        value={outrasDespesas}
-                        onChange={(e) => setOutrasDespesas(e.target.value)}
-                        className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-blue-500 transition-colors text-sm"
+                        type="text"
+                        placeholder="R$ 0,00"
+                        value={outrasDespesas ? maskBRL(outrasDespesas) : ""}
+                        onChange={(e) => {
+                          const masked = maskBRL(e.target.value);
+                          setOutrasDespesas(masked ? String(unmaskBRL(masked)) : "");
+                        }}
+                        className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-blue-500 transition-colors text-sm font-bold font-mono text-slate-700"
                       />
                     </div>
                   </div>

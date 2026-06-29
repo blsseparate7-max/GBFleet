@@ -34,12 +34,21 @@ export default function Trucks({ data, onUpdate }: { data: any, onUpdate: () => 
   const [activeTab, setActiveTab] = useState<'summary' | 'freights' | 'fuel' | 'expenses' | 'maintenance'>('summary');
 
   const handleAdd = async () => {
-    if (!newTruck.placa || !newTruck.modelo) return;
+    if (!newTruck.placa) {
+      alert("Por favor, preencha a placa do caminhão.");
+      return;
+    }
+    if (!newTruck.modelo) {
+      alert("Por favor, preencha o modelo do caminhão.");
+      return;
+    }
+    
+    const companyId = data?.company?.id || 'comp_1';
     
     await fetch('/api/trucks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...newTruck, companyId: 'comp_1', ativo: true })
+      body: JSON.stringify({ ...newTruck, companyId, ativo: true })
     });
     
     setNewTruck({ placa: '', modelo: '', usaArla: false });

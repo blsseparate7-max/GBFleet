@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { 
   BarChart, 
   Bar, 
@@ -29,13 +29,19 @@ import {
   Clock,
   ArrowRight,
   Route,
-  Calculator
+  Calculator,
+  MapPin,
+  Eye,
+  Calendar,
+  Building,
+  ArrowUpRight
 } from 'lucide-react';
 import { cn } from '../lib/utils';
+import Modal from './ui/Modal';
 
 const isMaintenanceByTipo = (tipo: string) => {
   const t = (tipo || "").toLowerCase();
-  return t.includes("manut") || t.includes("peça") || t.includes("oficina") || t.includes("mecan");
+  return t.includes("manut") || t.includes("peça") || t.includes("oficina") || t.includes("mecan") || t.includes("pneu") || t.includes("óleo") || t.includes("oleo") || t.includes("filtro");
 };
 
 const isPedagioByTipo = (tipo: string) => {
@@ -50,6 +56,18 @@ const isCombustivelByTipo = (tipo: string) => {
 
 export default function Dashboard({ data, onNavigate }: { data: any, onNavigate?: (tab: string) => void }) {
   if (!data) return <div className="flex items-center justify-center h-full text-slate-500 font-medium font-sans">Carregando dados da frota...</div>;
+
+  // States for interactive supplier detail modal
+  const [selectedDetail, setSelectedDetail] = useState<{
+    type: 'station' | 'company';
+    name: string;
+    city: string;
+    uf: string;
+    total: number;
+    count: number;
+    liters?: number;
+    logs: any[];
+  } | null>(null);
 
   // 1. Basic Stats Calculation
   const totalFuel = data.fuel_logs.reduce((acc: number, curr: any) => acc + curr.valor, 0);
@@ -77,20 +95,31 @@ export default function Dashboard({ data, onNavigate }: { data: any, onNavigate?
   const travelingDriversCount = data.drivers.filter((d: any) => d.status === 'Em Viagem').length;
 
   // 2. Cost Category Breakdown for Pie Chart
-  const manualDiesel = data.expenses.filter((e: any) => isCombustivelByTipo(e.tipo) && e.documento !== "Auto-Abastecimento").reduce((acc: number, curr: any) => acc + curr.valor, 0);
+  const realFuelS10 = data.fuel_logs.filter((l: any) => !l.tipoDiesel || l.tipoDiesel === 'S10').reduce((acc: number, curr: any) => acc + curr.valor, 0);
+  const manualDieselS10 = data.expenses.filter((e: any) => isCombustivelByTipo(e.tipo) && e.documento !== "Auto-Abastecimento" && !e.tipo?.toLowerCase().includes("s500")).reduce((acc: number, curr: any) => acc + curr.valor, 0);
+  const totalDieselS10 = realFuelS10 + manualDieselS10;
+
+  const realFuelS500 = data.fuel_logs.filter((l: any) => l.tipoDiesel === 'S500').reduce((acc: number, curr: any) => acc + curr.valor, 0);
+  const manualDieselS500 = data.expenses.filter((e: any) => isCombustivelByTipo(e.tipo) && e.documento !== "Auto-Abastecimento" && e.tipo?.toLowerCase().includes("s500")).reduce((acc: number, curr: any) => acc + curr.valor, 0);
+  const totalDieselS500 = realFuelS500 + manualDieselS500;
+
   const pedagiosValue = data.expenses.filter((e: any) => isPedagioByTipo(e.tipo)).reduce((acc: number, curr: any) => acc + curr.valor, 0);
-  const manutencoesValue = data.expenses.filter((e: any) => isMaintenanceByTipo(e.tipo)).reduce((acc: number, curr: any) => acc + curr.valor, 0);
+  const realMaint = (data.maintenance_alerts || []).filter((m: any) => m.status === 'Realizado' || m.status === 'Realizada').reduce((acc: number, m: any) => acc + Number(m.custo || 0), 0);
+  const manualMaint = data.expenses.filter((e: any) => isMaintenanceByTipo(e.tipo) && !e.documento?.startsWith("Auto-Manutenção")).reduce((acc: number, curr: any) => acc + curr.valor, 0);
+  const manutencoesValue = realMaint + manualMaint;
   const outrosValue = data.expenses.filter((e: any) => 
     !isPedagioByTipo(e.tipo) && 
     !isMaintenanceByTipo(e.tipo) && 
-    !isCombustivelByTipo(e.tipo)
+    !isCombustivelByTipo(e.tipo) &&
+    e.documento !== "Auto-Abastecimento"
   ).reduce((acc: number, curr: any) => acc + curr.valor, 0);
 
   const costBreakdownData = [
-    { name: 'Diesel', value: totalFuel + manualDiesel, color: '#3b82f6' },
-    { name: 'Pedágios', value: pedagiosValue, color: '#f59e0b' },
+    { name: 'Diesel S10', value: totalDieselS10, color: '#f59e0b' },
+    { name: 'Diesel S500', value: totalDieselS500, color: '#3b82f6' },
+    { name: 'Pedágios', value: pedagiosValue, color: '#10b981' },
     { name: 'Manutenção', value: manutencoesValue, color: '#ef4444' },
-    { name: 'Outras Custas', value: outrosValue, color: '#10b981' },
+    { name: 'Outras Custas', value: outrosValue, color: '#6366f1' },
   ].filter(c => c.value > 0);
 
   // 3. Overall Fleet FUEL Consumption average
@@ -254,6 +283,73 @@ export default function Dashboard({ data, onNavigate }: { data: any, onNavigate?
     return { name: t.placa, model: t.modelo, value: totalTruckSpent, avg: truckAvg };
   }).sort((a: any, b: any) => b.value - a.value);
 
+  // 7. Fuel Stations Ranking calculation
+  const stationRankingMap: { [key: string]: { id: string, name: string, city: string, uf: string, total: number, count: number, liters: number, logs: any[] } } = {};
+  
+  (data.fuel_logs || []).forEach((log: any) => {
+    const stationId = log.gasStationId;
+    const matchedStation = (data.gas_stations || []).find((g: any) => g.id === stationId);
+    const stationName = matchedStation ? matchedStation.nome : "Posto não identificado";
+    const city = matchedStation ? matchedStation.cidade : "Não informada";
+    const uf = matchedStation ? matchedStation.uf : "UF";
+    const key = stationId || `manual_${stationName}`;
+
+    if (!stationRankingMap[key]) {
+      stationRankingMap[key] = {
+        id: key,
+        name: stationName,
+        city,
+        uf,
+        total: 0,
+        count: 0,
+        liters: 0,
+        logs: []
+      };
+    }
+
+    stationRankingMap[key].total += Number(log.valor) || 0;
+    stationRankingMap[key].count += 1;
+    stationRankingMap[key].liters += Number(log.litros) || 0;
+    stationRankingMap[key].logs.push(log);
+  });
+
+  const sortedStations = Object.values(stationRankingMap)
+    .sort((a, b) => b.total - a.total);
+
+  // 8. Expense Companies Ranking calculation
+  const companyRankingMap: { [key: string]: { id: string, name: string, city: string, uf: string, total: number, count: number, logs: any[] } } = {};
+
+  (data.expenses || []).forEach((exp: any) => {
+    // Skip fuel logs auto-abastecimento to avoid duplication
+    if (exp.documento === "Auto-Abastecimento") return;
+
+    const companyId = exp.expenseCompanyId;
+    const matchedCompany = (data.expense_companies || []).find((ec: any) => ec.id === companyId);
+    const companyName = matchedCompany ? matchedCompany.nome : (exp.empresaDespesa || exp.tipo || "Outros Fornecedores");
+    const city = matchedCompany ? matchedCompany.cidade : "Não informada";
+    const uf = matchedCompany ? matchedCompany.uf : "UF";
+    const key = companyId && companyId !== "manual" ? companyId : `manual_${companyName}`;
+
+    if (!companyRankingMap[key]) {
+      companyRankingMap[key] = {
+        id: key,
+        name: companyName,
+        city,
+        uf,
+        total: 0,
+        count: 0,
+        logs: []
+      };
+    }
+
+    companyRankingMap[key].total += Number(exp.valor) || 0;
+    companyRankingMap[key].count += 1;
+    companyRankingMap[key].logs.push(exp);
+  });
+
+  const sortedCompanies = Object.values(companyRankingMap)
+    .sort((a, b) => b.total - a.total);
+
   return (
     <div className="space-y-8 animate-fade-in">
       {/* Dynamic Header State */}
@@ -287,13 +383,13 @@ export default function Dashboard({ data, onNavigate }: { data: any, onNavigate?
           subtitle="Entradas acumuladas"
         />
         <StatCard 
-          title="Combustível (Diesel)" 
-          value={`R$ ${totalFuel.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} 
+          title="Despesas Operacionais" 
+          value={`R$ ${totalSpent.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} 
           trend={`${avgConsumption} km/L Médio`} 
-          trendUp={parseFloat(avgConsumption) >= 3.0}
+          trendUp={totalSpent < totalIncome * 0.7}
           icon={Fuel}
-          color="blue"
-          subtitle="Gasto ponderado em viagens"
+          color="rose"
+          subtitle={`Diesel: R$ ${(totalDieselS10 + totalDieselS500).toLocaleString('pt-BR', { maximumFractionDigits: 0 })} | Pedágios: R$ ${pedagiosValue.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} | Outros: R$ ${(manutencoesValue + outrosValue).toLocaleString('pt-BR', { maximumFractionDigits: 0 })}`}
         />
         <StatCard 
           title="Investimento em Manutenção" 
@@ -453,7 +549,7 @@ export default function Dashboard({ data, onNavigate }: { data: any, onNavigate?
           <div className="flex items-center justify-between mb-6 pb-2 border-b border-slate-100">
             <div>
               <h3 className="font-bold text-slate-800">Ranking Geral de Veículos</h3>
-              <p className="text-xs text-slate-400 mt-0.5">Análise cruzada de gastos acumulados versus rendimento médio em rodovet.</p>
+              <p className="text-xs text-slate-400 mt-0.5">Análise cruzada de gastos acumulados versus rendimento médio em rodagem.</p>
             </div>
             <Activity className="text-blue-500" size={20} />
           </div>
@@ -463,7 +559,7 @@ export default function Dashboard({ data, onNavigate }: { data: any, onNavigate?
               const spentPct = truckRanking[0].value > 0 ? (truck.value / truckRanking[0].value) * 100 : 0;
               return (
                 <div key={truck.name} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl bg-slate-50/50 hover:bg-slate-100/30 border border-slate-100 transition-all">
-                  <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-4 flex-1">
                     <span className={cn(
                       "w-7 h-7 rounded-xl flex items-center justify-center text-xs font-black shrink-0",
                       idx === 0 ? "bg-amber-100 text-amber-700 font-bold" :
@@ -503,6 +599,247 @@ export default function Dashboard({ data, onNavigate }: { data: any, onNavigate?
           </div>
         </div>
       </div>
+
+      {/* Rankings Section: Gas Stations & Service Companies */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        {/* Gas Stations Spent Ranking */}
+        <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between mb-6 pb-2 border-b border-slate-100">
+              <div>
+                <h3 className="font-bold text-slate-800">Ranking de Abastecimentos por Posto</h3>
+                <p className="text-xs text-slate-400 mt-0.5">Postos com maior volume financeiro de combustível.</p>
+              </div>
+              <Fuel className="text-blue-500" size={20} />
+            </div>
+
+            <div className="space-y-4 max-h-[380px] overflow-y-auto pr-1">
+              {sortedStations.length === 0 ? (
+                <p className="text-xs text-slate-400 text-center py-8">Nenhum abastecimento registrado até o momento.</p>
+              ) : (
+                sortedStations.map((station, idx) => {
+                  return (
+                    <div 
+                      key={station.id} 
+                      onClick={() => setSelectedDetail({ type: 'station', ...station })}
+                      className="group flex items-center justify-between gap-4 p-3 rounded-2xl bg-slate-50 hover:bg-slate-100/70 border border-slate-100 hover:border-blue-100 transition-all cursor-pointer"
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="w-6 h-6 rounded-lg bg-blue-50 text-blue-600 font-bold flex items-center justify-center text-xs">
+                          #{idx + 1}
+                        </span>
+                        <div>
+                          <p className="font-bold text-slate-800 text-xs group-hover:text-blue-600 transition-colors">
+                            {station.name}
+                          </p>
+                          <p className="text-[10px] text-slate-400 font-medium">
+                            {station.city && station.uf ? `${station.city} - ${station.uf}` : "Local não informado"}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-4 shrink-0">
+                        <div className="text-right">
+                          <p className="text-xs font-black text-blue-600 font-mono">
+                            R$ {station.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </p>
+                          <p className="text-[9px] text-slate-400 font-bold uppercase">
+                            {station.count} {station.count === 1 ? 'abastecimento' : 'abastecimentos'}
+                          </p>
+                        </div>
+                        <ArrowUpRight size={14} className="text-slate-400 group-hover:text-blue-500 transition-colors" />
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+          <p className="text-[10px] font-medium text-slate-400 mt-4 italic text-center">Clique em qualquer posto para ver o histórico detalhado por data e placa.</p>
+        </div>
+
+        {/* Expense/Service Companies Spent Ranking */}
+        <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between mb-6 pb-2 border-b border-slate-100">
+              <div>
+                <h3 className="font-bold text-slate-800">Ranking de Despesas por Credor / Empresa</h3>
+                <p className="text-xs text-slate-400 mt-0.5">Empresas e oficinas com maior concentração de faturas.</p>
+              </div>
+              <Receipt className="text-indigo-500" size={20} />
+            </div>
+
+            <div className="space-y-4 max-h-[380px] overflow-y-auto pr-1">
+              {sortedCompanies.length === 0 ? (
+                <p className="text-xs text-slate-400 text-center py-8">Nenhuma despesa de empresa lançada.</p>
+              ) : (
+                sortedCompanies.map((company, idx) => {
+                  return (
+                    <div 
+                      key={company.id} 
+                      onClick={() => setSelectedDetail({ type: 'company', ...company })}
+                      className="group flex items-center justify-between gap-4 p-3 rounded-2xl bg-slate-50 hover:bg-indigo-50/40 border border-slate-100 hover:border-indigo-100 transition-all cursor-pointer"
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="w-6 h-6 rounded-lg bg-indigo-50 text-indigo-600 font-bold flex items-center justify-center text-xs">
+                          #{idx + 1}
+                        </span>
+                        <div>
+                          <p className="font-bold text-slate-800 text-xs group-hover:text-indigo-600 transition-colors">
+                            {company.name}
+                          </p>
+                          <p className="text-[10px] text-slate-400 font-medium">
+                            {company.city && company.uf ? `${company.city} - ${company.uf}` : "Local não informado"}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-4 shrink-0">
+                        <div className="text-right">
+                          <p className="text-xs font-black text-indigo-600 font-mono">
+                            R$ {company.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                          </p>
+                          <p className="text-[9px] text-slate-400 font-bold uppercase">
+                            {company.count} {company.count === 1 ? 'lançamento' : 'lançamentos'}
+                          </p>
+                        </div>
+                        <ArrowUpRight size={14} className="text-slate-400 group-hover:text-indigo-500 transition-colors" />
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+          <p className="text-[10px] font-medium text-slate-400 mt-4 italic text-center">Clique em qualquer credor para analisar as faturas e datas correspondentes.</p>
+        </div>
+      </div>
+
+      {/* Detail Modal for Interactive Ranking Cards */}
+      <Modal
+        isOpen={selectedDetail !== null}
+        onClose={() => setSelectedDetail(null)}
+        title={selectedDetail?.type === 'station' ? "Histórico de Abastecimentos" : "Extrato de Lançamentos de Despesa"}
+        size="large"
+      >
+        {selectedDetail && (
+          <div className="space-y-6">
+            {/* Top overview statistics banner */}
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-slate-50 p-6 rounded-2xl border border-slate-200">
+              <div>
+                <span className="text-[10px] font-extrabold uppercase bg-blue-100 text-blue-700 px-2.5 py-1 rounded-full">
+                  {selectedDetail.type === 'station' ? 'Fornecedor de Diesel' : 'Fornecedor de Serviços'}
+                </span>
+                <h4 className="text-lg font-black text-slate-800 mt-2">{selectedDetail.name}</h4>
+                <div className="flex items-center gap-1.5 text-xs text-slate-500 mt-1">
+                  <MapPin size={14} className="text-slate-400" />
+                  <span>{selectedDetail.city && selectedDetail.uf ? `${selectedDetail.city} - ${selectedDetail.uf}` : "Endereço não cadastrado"}</span>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-4">
+                <div className="bg-white border border-slate-200 rounded-xl px-4 py-3 min-w-[120px]">
+                  <p className="text-[9px] font-bold text-slate-400 uppercase">Gasto Acumulado</p>
+                  <p className="text-base font-black text-slate-800 mt-0.5 font-mono">
+                    R$ {selectedDetail.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </p>
+                </div>
+                <div className="bg-white border border-slate-200 rounded-xl px-4 py-3 min-w-[100px]">
+                  <p className="text-[9px] font-bold text-slate-400 uppercase">Lançamentos</p>
+                  <p className="text-base font-black text-slate-800 mt-0.5">
+                    {selectedDetail.count} {selectedDetail.count === 1 ? 'registro' : 'registros'}
+                  </p>
+                </div>
+                {selectedDetail.type === 'station' && selectedDetail.liters !== undefined && (
+                  <div className="bg-white border border-slate-200 rounded-xl px-4 py-3 min-w-[100px]">
+                    <p className="text-[9px] font-bold text-slate-400 uppercase">Litros Abastecidos</p>
+                    <p className="text-base font-black text-slate-800 mt-0.5 font-mono">
+                      {selectedDetail.liters.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} L
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* List Table of transactions */}
+            <div>
+              <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Extrato de Movimentação</p>
+              <div className="border border-slate-200 rounded-2xl overflow-hidden bg-white overflow-x-auto">
+                <table className="w-full text-left text-xs min-w-[600px]">
+                  <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] font-bold border-b border-slate-200">
+                    <tr>
+                      <th className="px-6 py-4">Data</th>
+                      <th className="px-6 py-4">Veículo / Placa</th>
+                      <th className="px-6 py-4">{selectedDetail.type === 'station' ? 'Motorista' : 'Tipo / Categoria'}</th>
+                      <th className="px-6 py-4">{selectedDetail.type === 'station' ? 'Consumo / Detalhes' : 'Histórico / Descritivo'}</th>
+                      <th className="px-6 py-4 text-right">Valor</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
+                    {selectedDetail.logs.map((log: any, idx: number) => {
+                      const formattedDate = log.data ? log.data.split('-').reverse().join('/') : "-";
+                      
+                      // For station logs
+                      const matchedDriver = selectedDetail.type === 'station' 
+                        ? (data.drivers || []).find((d: any) => d.id === log.driverId)?.nome 
+                        : null;
+
+                      return (
+                        <tr key={log.id || idx} className="hover:bg-slate-50/50 transition-colors">
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="flex items-center gap-2">
+                              <Calendar size={13} className="text-slate-400" />
+                              <span className="font-mono">{formattedDate}</span>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className="font-mono bg-slate-100 text-slate-800 px-2 py-0.5 rounded border border-slate-200 font-bold text-[10px]">
+                              {log.truckId || log.placa || "-"}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            {selectedDetail.type === 'station' ? (
+                              <span>{matchedDriver || "Motorista não informado"}</span>
+                            ) : (
+                              <span className="capitalize font-semibold text-indigo-600 bg-indigo-50/60 px-2 py-0.5 rounded text-[10px]">
+                                {log.tipo || "Geral"}
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4">
+                            {selectedDetail.type === 'station' ? (
+                              <span className="text-slate-500">
+                                {log.litros ? `${log.litros} Litros` : ""} 
+                                {log.litrosArla ? ` + ${log.litrosArla} L Arla` : ""}
+                              </span>
+                            ) : (
+                              <span className="text-slate-500 block truncate max-w-xs animate-pulse-none" title={log.obs || log.descritivo}>
+                                {log.obs || log.descritivo || "Despesa lançada no financeiro"}
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 text-right whitespace-nowrap font-mono font-bold text-slate-900">
+                            R$ {log.valor ? Number(log.valor).toLocaleString('pt-BR', { minimumFractionDigits: 2 }) : "0,00"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                onClick={() => setSelectedDetail(null)}
+                className="px-5 py-2.5 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-600 font-semibold text-xs transition-colors"
+              >
+                Fechar Detalhamento
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
@@ -513,6 +850,7 @@ function StatCard({ title, value, trend, trendUp, icon: Icon, color, subtitle }:
     emerald: "bg-emerald-50 text-emerald-600 border-emerald-100/20",
     amber: "bg-amber-50 text-amber-600 border-amber-100/20",
     indigo: "bg-indigo-50 text-indigo-600 border-indigo-100/20",
+    rose: "bg-rose-50 text-rose-600 border-rose-100/20",
   };
 
   return (

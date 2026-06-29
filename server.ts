@@ -1323,7 +1323,7 @@ app.use(ensureDBSynced);
       tipo: 'saida',
       valor: parseFloat(newLog.valor || 0),
       data: newLog.data,
-      descricao: `Abastecimento Diesel: ${newLog.truckId} (${newLog.litros}L)`
+      descricao: `Abastecimento Diesel ${newLog.tipoDiesel || 'S10'}: ${newLog.truckId} (${newLog.litros}L)`
     });
 
     if (parseFloat(newLog.valorArla) > 0) {
@@ -1376,7 +1376,7 @@ app.use(ensureDBSynced);
       tipo: 'saida',
       valor: parseFloat(updatedLog.valor || 0),
       data: updatedLog.data,
-      descricao: `Abastecimento Diesel: ${updatedLog.truckId} (${updatedLog.litros}L)`
+      descricao: `Abastecimento Diesel ${updatedLog.tipoDiesel || 'S10'}: ${updatedLog.truckId} (${updatedLog.litros}L)`
     });
 
     if (parseFloat(updatedLog.valorArla) > 0) {

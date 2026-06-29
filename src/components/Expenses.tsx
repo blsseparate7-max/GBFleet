@@ -25,7 +25,7 @@ import {
   Eye
 } from 'lucide-react';
 import Modal from './ui/Modal';
-import { cn } from '../lib/utils';
+import { cn, maskBRL, unmaskBRL } from '../lib/utils';
 import { compressAndSetFile, AttachmentPreview } from '../lib/fileCompressor';
 
 export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () => void }) {
@@ -181,12 +181,24 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
   };
 
   const handleSave = async () => {
-    if (!newExpense.truckId || !newExpense.tipo || !newExpense.valor) return;
+    if (!newExpense.truckId) {
+      alert("Por favor, selecione um veículo (Caminhão).");
+      return;
+    }
+    if (!newExpense.tipo) {
+      alert("Por favor, selecione o tipo de despesa.");
+      return;
+    }
+    if (!newExpense.valor || isNaN(Number(newExpense.valor)) || Number(newExpense.valor) <= 0) {
+      alert("Por favor, insira um valor numérico válido maior que zero.");
+      return;
+    }
     if (isSaving) return;
 
     try {
       setIsSaving(true);
       const companyId = data?.company?.id || 'comp_1';
+      const userId = data?.currentUser?.id || 'user_1';
 
       await fetch('/api/expenses', {
         method: 'POST',
@@ -206,7 +218,7 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           companyId,
-          userId: 'user_1',
+          userId,
           mensagem: `Registro manual de despesa: ${newExpense.tipo} no ${newExpense.truckId}`,
           resposta: `Despesa de ${newExpense.tipo} (R$ ${Number(newExpense.valor).toLocaleString('pt-BR')}) lançada com sucesso para o veículo ${newExpense.truckId}.`,
           acaoGerada: 'REGISTER_EXPENSE'
@@ -241,7 +253,19 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
   };
 
   const handleUpdateExpense = async () => {
-    if (!editExpenseForm.truckId || !editExpenseForm.tipo || !editExpenseForm.valor || !selectedExpenseDetail) return;
+    if (!selectedExpenseDetail) return;
+    if (!editExpenseForm.truckId) {
+      alert("Por favor, selecione um veículo (Caminhão).");
+      return;
+    }
+    if (!editExpenseForm.tipo) {
+      alert("Por favor, selecione o tipo de despesa.");
+      return;
+    }
+    if (!editExpenseForm.valor || isNaN(Number(editExpenseForm.valor)) || Number(editExpenseForm.valor) <= 0) {
+      alert("Por favor, insira um valor numérico válido maior que zero.");
+      return;
+    }
 
     try {
       const response = await fetch(`/api/expenses/${selectedExpenseDetail.id}`, {
@@ -339,7 +363,23 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
 
     // 2. CUSTOS VARIÁVEIS DA OPERAÇÃO (Viagens)
     // Fuel costs are managed under the dedicated Fuel and Freight Management tabs
-    const custoDiesel = fuelLogsFiltered.reduce((sum: number, l: any) => sum + (Number(l.valor) || 0), 0);
+    const realFuelS10 = fuelLogsFiltered
+      .filter((l: any) => !l.tipoDiesel || l.tipoDiesel === 'S10')
+      .reduce((sum: number, l: any) => sum + (Number(l.valor) || 0), 0);
+    const manualFuelS10 = manualExpensesFiltered
+      .filter((e: any) => isCombustivelByTipo(e.tipo) && !e.tipo?.toLowerCase().includes("s500"))
+      .reduce((sum: number, e: any) => sum + (Number(e.valor) || 0), 0);
+    const custoDieselS10 = realFuelS10 + manualFuelS10;
+
+    const realFuelS500 = fuelLogsFiltered
+      .filter((l: any) => l.tipoDiesel === 'S500')
+      .reduce((sum: number, l: any) => sum + (Number(l.valor) || 0), 0);
+    const manualFuelS500 = manualExpensesFiltered
+      .filter((e: any) => isCombustivelByTipo(e.tipo) && e.tipo?.toLowerCase().includes("s500"))
+      .reduce((sum: number, e: any) => sum + (Number(e.valor) || 0), 0);
+    const custoDieselS500 = realFuelS500 + manualFuelS500;
+
+    const custoDiesel = custoDieselS10 + custoDieselS500;
     
     // Arla 32 (Ar)
     const custoArlaFromFuel = fuelLogsFiltered.reduce((sum: number, l: any) => sum + (Number(l.valorArla) || 0), 0);
@@ -432,6 +472,8 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
       receitaEstadiasEExtras,
       receitaBrutaTotal,
       custoDiesel,
+      custoDieselS10,
+      custoDieselS500,
       custoArla,
       custoPedagios,
       custoMotoristas,
@@ -459,6 +501,8 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
     receitaEstadiasEExtras: 0,
     receitaBrutaTotal: 0,
     custoDiesel: 0,
+    custoDieselS10: 0,
+    custoDieselS500: 0,
     custoArla: 0,
     custoPedagios: 0,
     custoMotoristas: 0,
@@ -725,6 +769,30 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
                   - R$ {currentDRE.custoDiesel.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                 </span>
               </div>
+
+              {currentDRE.custoDieselS10 > 0 && (
+                <div className="p-2 pl-14 flex justify-between items-center text-slate-500 text-xs border-l-2 border-slate-100 ml-10">
+                  <span className="flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                    Diesel S10
+                  </span>
+                  <span className="font-medium font-mono text-red-500">
+                    - R$ {currentDRE.custoDieselS10.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+              )}
+
+              {currentDRE.custoDieselS500 > 0 && (
+                <div className="p-2 pl-14 flex justify-between items-center text-slate-500 text-xs border-l-2 border-slate-100 ml-10">
+                  <span className="flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                    Diesel S500
+                  </span>
+                  <span className="font-medium font-mono text-red-500">
+                    - R$ {currentDRE.custoDieselS500.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+              )}
 
               <div className="p-3.5 pl-8 flex justify-between items-center text-slate-600">
                 <span className="flex items-center gap-2">
@@ -1070,7 +1138,8 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
               }
 
               const categoryShares = [
-                { name: "Diesel / Combustível", value: currentDRE.custoDiesel, color: "bg-amber-500", labelColor: "text-amber-800" },
+                { name: "Diesel S10", value: currentDRE.custoDieselS10, color: "bg-amber-500", labelColor: "text-amber-800" },
+                { name: "Diesel S500", value: currentDRE.custoDieselS500, color: "bg-blue-500", labelColor: "text-blue-800" },
                 { name: "Arla 32 (Ar)", value: currentDRE.custoArla, color: "bg-sky-400", labelColor: "text-sky-800" },
                 { name: "Motoristas (Diárias/Comissões)", value: currentDRE.custoMotoristas, color: "bg-blue-600", labelColor: "text-blue-800" },
                 { name: "Manutenção & Consertos", value: currentDRE.custoManutencoes, color: "bg-indigo-600", labelColor: "text-indigo-800" },
@@ -1274,11 +1343,14 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
             <div>
               <label className="block text-xs font-bold text-slate-750 mb-1.5">Valor (R$)</label>
               <input 
-                type="number" 
-                value={newExpense.valor}
-                onChange={e => setNewExpense({...newExpense, valor: e.target.value})}
+                type="text" 
+                value={newExpense.valor ? maskBRL(newExpense.valor) : ""}
+                onChange={e => {
+                  const masked = maskBRL(e.target.value);
+                  setNewExpense({...newExpense, valor: masked ? String(unmaskBRL(masked)) : ""});
+                }}
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 font-bold font-mono focus:outline-none text-xs"
-                placeholder="0,00"
+                placeholder="R$ 0,00"
               />
             </div>
             <div>
@@ -1542,10 +1614,14 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
                   <div>
                     <label className="block text-xs font-bold text-slate-750 mb-1.5">Valor (R$)</label>
                     <input 
-                      type="number" 
-                      value={editExpenseForm.valor}
-                      onChange={e => setEditExpenseForm({...editExpenseForm, valor: e.target.value})}
+                      type="text" 
+                      value={editExpenseForm.valor ? maskBRL(editExpenseForm.valor) : ""}
+                      onChange={e => {
+                        const masked = maskBRL(e.target.value);
+                        setEditExpenseForm({...editExpenseForm, valor: masked ? String(unmaskBRL(masked)) : ""});
+                      }}
                       className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 font-bold font-mono focus:outline-none text-xs text-slate-700"
+                      placeholder="R$ 0,00"
                     />
                   </div>
                   <div>

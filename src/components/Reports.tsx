@@ -29,7 +29,7 @@ type RankingTab = 'vehicles' | 'drivers' | 'routes' | 'expenses';
 
 const isMaintenanceByTipo = (tipo: string) => {
   const t = (tipo || "").toLowerCase();
-  return t.includes("manut") || t.includes("peça") || t.includes("oficina") || t.includes("mecan");
+  return t.includes("manut") || t.includes("peça") || t.includes("oficina") || t.includes("mecan") || t.includes("pneu") || t.includes("óleo") || t.includes("oleo") || t.includes("filtro");
 };
 
 const isPedagioByTipo = (tipo: string) => {
@@ -117,6 +117,18 @@ export default function Reports({ data }: ReportsProps) {
     const realFuel = filteredFuelLogs.reduce((acc, f) => acc + Number(f.valor || 0), 0);
     const manualFuel = filteredExpenses.filter((e: any) => isCombustivelByTipo(e.tipo) && e.documento !== "Auto-Abastecimento").reduce((acc, e) => acc + Number(e.valor || 0), 0);
     return realFuel + manualFuel;
+  }, [filteredFuelLogs, filteredExpenses]);
+
+  const totalFuelS10 = useMemo(() => {
+    const realS10 = filteredFuelLogs.filter((l: any) => !l.tipoDiesel || l.tipoDiesel === 'S10').reduce((acc, f) => acc + Number(f.valor || 0), 0);
+    const manualS10 = filteredExpenses.filter((e: any) => isCombustivelByTipo(e.tipo) && e.documento !== "Auto-Abastecimento" && !e.tipo?.toLowerCase().includes("s500")).reduce((acc, e) => acc + Number(e.valor || 0), 0);
+    return realS10 + manualS10;
+  }, [filteredFuelLogs, filteredExpenses]);
+
+  const totalFuelS500 = useMemo(() => {
+    const realS500 = filteredFuelLogs.filter((l: any) => l.tipoDiesel === 'S500').reduce((acc, f) => acc + Number(f.valor || 0), 0);
+    const manualS500 = filteredExpenses.filter((e: any) => isCombustivelByTipo(e.tipo) && e.documento !== "Auto-Abastecimento" && e.tipo?.toLowerCase().includes("s500")).reduce((acc, e) => acc + Number(e.valor || 0), 0);
+    return realS500 + manualS500;
   }, [filteredFuelLogs, filteredExpenses]);
 
   const directFreightExpenses = useMemo(() => {
@@ -343,7 +355,15 @@ export default function Reports({ data }: ReportsProps) {
     const rawCategorias: { [key: string]: number } = {};
 
     // 1. Fuel (Diesel)
-    rawCategorias['Diesel (Abastecimento)'] = totalFuelCost;
+    if (totalFuelS10 > 0) {
+      rawCategorias['Diesel S10 (Abastecimento)'] = totalFuelS10;
+    }
+    if (totalFuelS500 > 0) {
+      rawCategorias['Diesel S500 (Abastecimento)'] = totalFuelS500;
+    }
+    if (totalFuelS10 === 0 && totalFuelS500 === 0) {
+      rawCategorias['Diesel (Abastecimento)'] = 0;
+    }
 
     // 2. Maintenance
     rawCategorias['Manutenção e Peças'] = maintenanceExpenses;

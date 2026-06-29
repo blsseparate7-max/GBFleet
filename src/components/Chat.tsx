@@ -35,13 +35,16 @@ export default function Chat({ data, onUpdate }: { data: any, onUpdate: () => vo
 
       setMessages(prev => [...prev, { role: 'bot', text: result.response }]);
       
+      const companyId = data?.company?.id || 'comp_1';
+      const userId = data?.currentUser?.id || 'user_1';
+
       // Save to chat logs
       await fetch('/api/chat_logs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          companyId: 'comp_1',
-          userId: 'user_1',
+          companyId,
+          userId,
           mensagem: userMsg,
           resposta: result.response,
           acaoGerada: result.action
@@ -57,7 +60,8 @@ export default function Chat({ data, onUpdate }: { data: any, onUpdate: () => vo
 
   const processAction = async (action: string, actionData: any) => {
     let endpoint = '';
-    let payload = { ...actionData, companyId: 'comp_1', data: new Date().toISOString().split('T')[0] };
+    const companyId = data?.company?.id || 'comp_1';
+    let payload = { ...actionData, companyId, data: new Date().toISOString().split('T')[0] };
 
     switch (action) {
       case 'REGISTER_FUEL':

@@ -162,11 +162,12 @@ export default function Simulator({ data, onUpdate }: SimulatorProps) {
     e.preventDefault();
     setIsLaunching(true);
     try {
+      const companyId = data?.company?.id || 'comp_1';
       const response = await fetch('/api/freights', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          companyId: 'comp_1',
+          companyId,
           truckId: launchTruckPlaca,
           driverId: launchDriverId,
           origem: origem,
@@ -555,8 +556,10 @@ export default function Simulator({ data, onUpdate }: SimulatorProps) {
       return;
     }
 
+    const companyId = data?.company?.id || "comp_1";
+
     const payload = {
-      companyId: "comp_1",
+      companyId,
       nome: formNome.trim() || `${formOrigem} ➔ ${formDestino}`,
       origem: formOrigem.trim(),
       destino: formDestino.trim(),
