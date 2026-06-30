@@ -101,7 +101,7 @@ export async function pullDB() {
           remoteData.users = remoteData.users.filter((u: any) => u.id !== "user_1" && u.companyId !== "comp_1");
           scrubbed = true;
         }
-        const arrayKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "gas_stations", "expense_companies"];
+        const arrayKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "gas_stations", "expense_companies", "bills"];
         arrayKeys.forEach(key => {
           if (remoteData[key] && remoteData[key].some((item: any) => item.companyId === "comp_1" || item.id?.includes("init"))) {
             remoteData[key] = remoteData[key].filter((item: any) => item.companyId !== "comp_1" && !item.id?.includes("init"));
@@ -111,7 +111,7 @@ export async function pullDB() {
 
         // No merging of old local storage items is performed to prevent resurrection of deleted/modified records.
         // Firestore is the absolute source of truth. We only ensure that required array fields exist on the pulled data.
-        const allKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "gas_stations", "expense_companies", "chat_logs"];
+        const allKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "gas_stations", "expense_companies", "chat_logs", "bills"];
         allKeys.forEach(key => {
           if (!remoteData[key]) {
             remoteData[key] = [];
@@ -726,6 +726,153 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       const parts = cleanPath.split("/");
       const targetId = parts[parts.length - 1];
       liveDb.cash_flow = liveDb.cash_flow.filter((c: any) => c.id !== targetId);
+      await persistDB();
+      return jsonResponse({ success: true });
+    }
+
+    // 14.5) POST, PUT, DELETE /api/bills
+    if (cleanPath === "/api/bills" && method === "POST") {
+      if (!liveDb.bills) liveDb.bills = [];
+      const recorrencia = body.recorrencia || 'unico';
+      const createdBills: any[] = [];
+
+      function addTime(dateStr: string, index: number, type: 'week' | 'month'): string {
+        const date = new Date(dateStr + "T12:00:00");
+        if (type === 'month') {
+          date.setMonth(date.getMonth() + index);
+        } else {
+          date.setDate(date.getDate() + (index * 7));
+        }
+        return date.toISOString().split('T')[0];
+      }
+
+      if (recorrencia === 'unico') {
+        const bill = {
+          id: "bill_" + Math.random().toString(36).substr(2, 9),
+          companyId: ctx.companyId,
+          descricao: body.descricao,
+          valorTotal: Number(body.valorTotal),
+          valorParcela: Number(body.valorTotal),
+          recorrencia: 'unico',
+          status: 'Pendente',
+          vencimento: body.vencimento || new Date().toISOString().split("T")[0],
+          truckId: body.truckId || '',
+          categoria: body.categoria,
+          observacao: body.observacao || '',
+          parcelas: 1,
+          parcelaAtual: 1,
+          createdAt: new Date().toISOString()
+        };
+        liveDb.bills.push(bill);
+        createdBills.push(bill);
+      } else if (recorrencia === 'parcelado_mes' || recorrencia === 'parcelado_semana') {
+        const numParcelas = Number(body.parcelas) || 1;
+        const groupId = "group_" + Math.random().toString(36).substr(2, 9);
+        const freqType = recorrencia === 'parcelado_mes' ? 'month' : 'week';
+
+        for (let i = 1; i <= numParcelas; i++) {
+          const bill = {
+            id: "bill_" + Math.random().toString(36).substr(2, 9),
+            companyId: ctx.companyId,
+            groupId,
+            descricao: `${body.descricao} (${i}/${numParcelas})`,
+            valorTotal: Number(body.valorTotal),
+            valorParcela: Number(body.valorParcela),
+            recorrencia,
+            status: 'Pendente',
+            vencimento: addTime(body.vencimento || new Date().toISOString().split("T")[0], i - 1, freqType),
+            truckId: body.truckId || '',
+            categoria: body.categoria,
+            observacao: body.observacao || '',
+            parcelas: numParcelas,
+            parcelaAtual: i,
+            createdAt: new Date().toISOString()
+          };
+          liveDb.bills.push(bill);
+          createdBills.push(bill);
+        }
+      }
+
+      await persistDB();
+      return jsonResponse({ success: true, bills: createdBills });
+    }
+
+    if (cleanPath.startsWith("/api/bills/") && method === "PUT") {
+      if (!liveDb.bills) liveDb.bills = [];
+      const parts = cleanPath.split("/");
+      const targetId = parts[parts.length - 1];
+      const idx = liveDb.bills.findIndex((b: any) => b.id === targetId);
+
+      if (idx === -1) {
+        return jsonResponse({ error: "Conta a pagar não encontrada." }, 404);
+      }
+
+      const oldBill = { ...liveDb.bills[idx] };
+      liveDb.bills[idx] = {
+        ...liveDb.bills[idx],
+        ...body,
+        id: targetId,
+        companyId: ctx.companyId,
+        valorTotal: body.valorTotal !== undefined ? Number(body.valorTotal) : liveDb.bills[idx].valorTotal,
+        valorParcela: body.valorParcela !== undefined ? Number(body.valorParcela) : liveDb.bills[idx].valorParcela
+      };
+
+      const newBill = liveDb.bills[idx];
+
+      // Sync to expenses and cashflow if marked as Paid
+      if (newBill.status === "Pago" && oldBill.status !== "Pago") {
+        // Create matching expense and cashflow entries
+        const pagData = body.pagamentoData || new Date().toISOString().split("T")[0];
+        const newExp = {
+          id: "exp_" + Math.random().toString(36).substr(2, 9),
+          billId: targetId,
+          companyId: ctx.companyId,
+          truckId: newBill.truckId || '',
+          tipo: newBill.categoria,
+          valor: Number(newBill.valorParcela),
+          data: pagData,
+          km: undefined,
+          obs: `Pago Ref. Conta: ${newBill.descricao}. Obs: ${newBill.observacao || ""}`,
+          comprovante: "",
+          empresaDespesa: "",
+          expenseCompanyId: "",
+          documento: "Auto-ContaPagar",
+          descritivo: `Pagamento automático de Conta a Pagar: ${newBill.descricao}`
+        };
+        liveDb.expenses.push(newExp);
+
+        const newCash = {
+          id: "cash_" + Math.random().toString(36).substr(2, 9),
+          billId: targetId,
+          companyId: ctx.companyId,
+          tipo: "saida",
+          categoria: newBill.categoria,
+          valor: Number(newBill.valorParcela),
+          data: pagData,
+          descricao: `Pagamento de Conta: ${newBill.descricao} - Placa ${newBill.truckId || "N/A"}`
+        };
+        liveDb.cash_flow.push(newCash);
+      }
+
+      // Revert from Paid to Pendente
+      if (newBill.status === "Pendente" && oldBill.status === "Pago") {
+        liveDb.expenses = liveDb.expenses.filter((e: any) => e.billId !== targetId);
+        liveDb.cash_flow = liveDb.cash_flow.filter((c: any) => c.billId !== targetId);
+      }
+
+      await persistDB();
+      return jsonResponse({ success: true, bill: liveDb.bills[idx] });
+    }
+
+    if (cleanPath.startsWith("/api/bills/") && method === "DELETE") {
+      if (!liveDb.bills) liveDb.bills = [];
+      const parts = cleanPath.split("/");
+      const targetId = parts[parts.length - 1];
+
+      liveDb.bills = liveDb.bills.filter((b: any) => b.id !== targetId);
+      liveDb.expenses = liveDb.expenses.filter((e: any) => e.billId !== targetId);
+      liveDb.cash_flow = liveDb.cash_flow.filter((c: any) => c.billId !== targetId);
+
       await persistDB();
       return jsonResponse({ success: true });
     }

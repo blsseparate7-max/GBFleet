@@ -59,5 +59,6 @@ export const dbTemplate = {
   "routes": [],
   "gas_stations": [],
   "expense_companies": [],
-  "chat_logs": []
+  "chat_logs": [],
+  "bills": []
 };

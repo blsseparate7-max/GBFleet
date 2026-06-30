@@ -70,7 +70,31 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
     return t.includes("motorista") || t.includes("diária") || t.includes("diaria") || t.includes("comissão") || t.includes("comissao");
   };
 
-  const [activeSubTab, setActiveSubTab] = useState<'dre' | 'manual' | 'charts' | 'empresas'>('dre');
+  const [activeSubTab, setActiveSubTab] = useState<'dre' | 'manual' | 'bills' | 'categorias' | 'charts' | 'empresas'>('dre');
+
+  // New Category states
+  const [newCatName, setNewCatName] = useState('');
+  const [editingCatName, setEditingCatName] = useState<string | null>(null);
+  const [editingCatValue, setEditingCatValue] = useState('');
+
+  // Bills states
+  const [isBillModalOpen, setIsBillModalOpen] = useState(false);
+  const [isPayingBillModalOpen, setIsPayingBillModalOpen] = useState(false);
+  const [selectedBillForPayment, setSelectedBillForPayment] = useState<any | null>(null);
+  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
+  const [isSavingBill, setIsSavingBill] = useState(false);
+  const [billFilterStatus, setBillFilterStatus] = useState<'Todos' | 'Pendente' | 'Pago'>('Todos');
+  const [newBill, setNewBill] = useState({
+    descricao: '',
+    truckId: '',
+    categoria: '',
+    valorTotal: '',
+    valorParcela: '',
+    recorrencia: 'unico',
+    parcelas: '1',
+    vencimento: new Date().toISOString().split('T')[0],
+    observacao: ''
+  });
   
   // Filtering DRE & Custos
   const [filterMonth, setFilterMonth] = useState<string>('all'); // format: 'YYYY-MM'
@@ -291,6 +315,180 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
     }
   };
 
+  // Categories Handlers
+  const handleAddCategory = async (nome: string) => {
+    if (!nome.trim()) return;
+    try {
+      const res = await fetch('/api/categories', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tipo: 'saida', nome: nome.trim() })
+      });
+      if (!res.ok) throw new Error();
+      onUpdate();
+    } catch (err) {
+      console.error(err);
+      alert("Erro ao adicionar categoria.");
+    }
+  };
+
+  const handleEditCategory = async (oldNome: string, newNome: string) => {
+    if (!newNome.trim() || oldNome === newNome) return;
+    try {
+      const res = await fetch('/api/categories', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tipo: 'saida', oldNome, newNome: newNome.trim() })
+      });
+      if (!res.ok) throw new Error();
+      onUpdate();
+    } catch (err) {
+      console.error(err);
+      alert("Erro ao editar categoria.");
+    }
+  };
+
+  const handleDeleteCategory = async (nome: string) => {
+    if (!window.confirm(`Deseja realmente excluir a categoria "${nome}"?`)) return;
+    try {
+      const res = await fetch('/api/categories', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tipo: 'saida', nome })
+      });
+      if (!res.ok) throw new Error();
+      onUpdate();
+    } catch (err) {
+      console.error(err);
+      alert("Erro ao excluir categoria.");
+    }
+  };
+
+  // Bills Handlers
+  const handleAddBillSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newBill.descricao.trim()) return alert("A descrição é obrigatória.");
+    if (!newBill.categoria) return alert("A categoria é obrigatória.");
+    if (!newBill.valorTotal && newBill.recorrencia === 'unico') return alert("O valor total é obrigatório.");
+    if (!newBill.valorParcela && newBill.recorrencia !== 'unico') return alert("O valor da parcela é obrigatório.");
+
+    setIsSavingBill(true);
+    try {
+      const valorTotalNum = newBill.recorrencia === 'unico' 
+        ? unmaskBRL(newBill.valorTotal) 
+        : unmaskBRL(newBill.valorParcela) * Number(newBill.parcelas);
+
+      const res = await fetch('/api/bills', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          descricao: newBill.descricao.trim(),
+          truckId: newBill.truckId,
+          categoria: newBill.categoria,
+          valorTotal: valorTotalNum,
+          valorParcela: newBill.recorrencia === 'unico' ? valorTotalNum : unmaskBRL(newBill.valorParcela),
+          recorrencia: newBill.recorrencia,
+          parcelas: Number(newBill.parcelas) || 1,
+          vencimento: newBill.vencimento,
+          observacao: newBill.observacao.trim()
+        })
+      });
+
+      if (!res.ok) throw new Error();
+      
+      onUpdate();
+      setIsBillModalOpen(false);
+      // Reset form
+      setNewBill({
+        descricao: '',
+        truckId: '',
+        categoria: '',
+        valorTotal: '',
+        valorParcela: '',
+        recorrencia: 'unico',
+        parcelas: '1',
+        vencimento: new Date().toISOString().split('T')[0],
+        observacao: ''
+      });
+    } catch (err) {
+      console.error(err);
+      alert("Erro ao cadastrar conta a pagar.");
+    } finally {
+      setIsSavingBill(false);
+    }
+  };
+
+  const handlePayBillClick = (bill: any) => {
+    setSelectedBillForPayment(bill);
+    setPaymentDate(new Date().toISOString().split('T')[0]);
+    setIsPayingBillModalOpen(true);
+  };
+
+  const handleConfirmPayment = async () => {
+    if (!selectedBillForPayment) return;
+    setIsSavingBill(true);
+    try {
+      const res = await fetch(`/api/bills/${selectedBillForPayment.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: 'Pago',
+          pagamentoData: paymentDate
+        })
+      });
+      if (!res.ok) throw new Error();
+      onUpdate();
+      setIsPayingBillModalOpen(false);
+      setSelectedBillForPayment(null);
+    } catch (err) {
+      console.error(err);
+      alert("Erro ao registrar pagamento.");
+    } finally {
+      setIsSavingBill(false);
+    }
+  };
+
+  const handleRevertPayment = async (billId: string) => {
+    if (!window.confirm("Deseja realmente reverter este pagamento? Os lançamentos de despesa e de caixa correspondentes serão excluídos.")) return;
+    try {
+      const res = await fetch(`/api/bills/${billId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: 'Pendente'
+        })
+      });
+      if (!res.ok) throw new Error();
+      onUpdate();
+    } catch (err) {
+      console.error(err);
+      alert("Erro ao reverter pagamento.");
+    }
+  };
+
+  const handleDeleteBill = async (billId: string) => {
+    if (!window.confirm("Deseja realmente excluir esta conta a pagar? Os lançamentos de despesa e fluxo de caixa associados também serão excluídos.")) return;
+    try {
+      const res = await fetch(`/api/bills/${billId}`, {
+        method: 'DELETE'
+      });
+      if (!res.ok) throw new Error();
+      onUpdate();
+    } catch (err) {
+      console.error(err);
+      alert("Erro ao excluir conta a pagar.");
+    }
+  };
+
+  const filteredBills = useMemo(() => {
+    return (data?.bills || []).filter((b: any) => {
+      const matchMonth = filterMonth === 'all' ? true : (b.vencimento && b.vencimento.startsWith(filterMonth));
+      const matchPlaca = filterPlaca === 'all' ? true : b.truckId === filterPlaca;
+      const matchStatus = billFilterStatus === 'Todos' ? true : b.status === billFilterStatus;
+      return matchMonth && matchPlaca && matchStatus;
+    });
+  }, [data?.bills, filterMonth, filterPlaca, billFilterStatus]);
+
   // Extract unique months from all available financial actions
   const availableMonths = useMemo(() => {
     const months = new Set<string>();
@@ -333,7 +531,8 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
     const manualExpensesFiltered = (data.expenses || []).filter((e: any) => {
       const matchMonth = filterMonth === 'all' ? true : (e.data && e.data.startsWith(filterMonth));
       const matchPlaca = filterPlaca === 'all' ? true : e.truckId === filterPlaca;
-      return matchMonth && matchPlaca;
+      const isAuto = e.documento === "Auto-Abastecimento" || e.documento?.startsWith("Auto-Manutenção") || !!e.fuelLogId || !!e.billId;
+      return matchMonth && matchPlaca && !isAuto;
     });
 
     const cashFlowFiltered = (data.cash_flow || []).filter((c: any) => {
@@ -437,8 +636,9 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
       .filter((e: any) => isSeguroByTipo(e.tipo))
       .reduce((sum: number, e: any) => sum + (Number(e.valor) || 0), 0);
 
-    const despesaOutros = manualExpensesFiltered
-      .filter((e: any) => 
+    const dynamicCategoriesMap: { [key: string]: number } = {};
+    manualExpensesFiltered.forEach((e: any) => {
+      if (
         !isMaintenanceByTipo(e.tipo) && 
         !isPedagioByTipo(e.tipo) && 
         !isMultaByTipo(e.tipo) && 
@@ -446,14 +646,24 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
         !isCombustivelByTipo(e.tipo) &&
         !isArlaByTipo(e.tipo) &&
         !isMotoristaByTipo(e.tipo)
-      )
-      .reduce((sum: number, e: any) => sum + (Number(e.valor) || 0), 0);
+      ) {
+        const catName = e.tipo || "Outras Despesas";
+        dynamicCategoriesMap[catName] = (dynamicCategoriesMap[catName] || 0) + (Number(e.valor) || 0);
+      }
+    });
+
+    const dynamicCategories = Object.entries(dynamicCategoriesMap).map(([name, value]) => ({
+      name,
+      value
+    })).filter(c => c.value > 0);
+
+    const despesaOutros = dynamicCategories.reduce((sum, c) => sum + c.value, 0);
     
     // Sum cash flow Saídas not already synced from freights or manual expenses
     const extrasCorporativo = cashFlowFiltered
       .filter((c: any) => {
         // Exclude synced freights and synced expenses to avoid double count
-        const isTripSync = c.id.includes('cash_freight_out') || c.id.includes('cash_freight_in');
+        const isTripSync = c.id.includes('cash_freight_out') || c.id.includes('cash_freight_in') || !!c.billId;
         const isExpSync = c.descricao.startsWith('Despesa');
         const isFuelSync = c.descricao.startsWith('Combustível') || c.categoria?.includes('Diesel') || c.descricao.startsWith('Abastecimento') || c.descricao.includes('Arla');
         const isMaintSync = c.descricao.startsWith('Conclusão Manutenção') || c.descricao.startsWith('Despesa Manutenção') || c.categoria?.includes('Manutenção');
@@ -486,6 +696,7 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
       despesaMultas,
       despesaSeguro,
       despesaOutros,
+      dynamicCategories,
       extrasCorporativo,
       despesasFixasEStrutura,
       resultadoLiquido,
@@ -515,6 +726,7 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
     despesaMultas: 0,
     despesaSeguro: 0,
     despesaOutros: 0,
+    dynamicCategories: [],
     extrasCorporativo: 0,
     despesasFixasEStrutura: 0,
     resultadoLiquido: 0,
@@ -534,7 +746,7 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
         </div>
         
         {/* Sub-navigation Tabs */}
-        <div className="flex items-center gap-1.5 bg-slate-100 p-1.5 rounded-2xl border border-slate-200 text-xs font-bold max-w-max">
+        <div className="flex flex-wrap items-center gap-1.5 bg-slate-100 p-1.5 rounded-2xl border border-slate-200 text-xs font-bold max-w-max">
           <button 
             onClick={() => setActiveSubTab('dre')}
             className={cn(
@@ -554,6 +766,26 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
           >
             <Receipt size={14} />
             <span>Lançamentos Administrativos</span>
+          </button>
+          <button 
+            onClick={() => setActiveSubTab('bills')}
+            className={cn(
+              "px-3.5 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5",
+              activeSubTab === 'bills' ? "bg-white text-slate-900 shadow-xs" : "text-slate-500 hover:text-slate-800"
+            )}
+          >
+            <Calendar size={14} className="text-amber-500" />
+            <span className="font-semibold text-amber-600">Contas a Pagar</span>
+          </button>
+          <button 
+            onClick={() => setActiveSubTab('categorias')}
+            className={cn(
+              "px-3.5 py-1.5 rounded-xl transition-all cursor-pointer flex items-center gap-1.5",
+              activeSubTab === 'categorias' ? "bg-white text-slate-900 shadow-xs" : "text-slate-500 hover:text-slate-800"
+            )}
+          >
+            <Tag size={14} className="text-blue-500" />
+            <span>Categorias</span>
           </button>
           <button 
             onClick={() => setActiveSubTab('charts')}
@@ -905,15 +1137,29 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
                 </span>
               </div>
 
-              <div className="p-3.5 pl-8 flex justify-between items-center text-slate-600">
-                <span className="flex items-center gap-2">
-                  <ChevronRight size={12} className="text-slate-400" />
-                  (-) Despesas Diversas Gerais
-                </span>
-                <span className="font-bold font-mono text-red-600">
-                  - R$ {currentDRE.despesaOutros.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                </span>
-              </div>
+              {currentDRE.dynamicCategories && currentDRE.dynamicCategories.length > 0 ? (
+                currentDRE.dynamicCategories.map((cat: any) => (
+                  <div key={cat.name} className="p-3.5 pl-8 flex justify-between items-center text-slate-600">
+                    <span className="flex items-center gap-2">
+                      <ChevronRight size={12} className="text-slate-400" />
+                      (-) {cat.name}
+                    </span>
+                    <span className="font-bold font-mono text-red-650 text-red-600">
+                      - R$ {cat.value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <div className="p-3.5 pl-8 flex justify-between items-center text-slate-600">
+                  <span className="flex items-center gap-2">
+                    <ChevronRight size={12} className="text-slate-400" />
+                    (-) Despesas Diversas Gerais
+                  </span>
+                  <span className="font-bold font-mono text-red-600">
+                    - R$ 0,00
+                  </span>
+                </div>
+              )}
 
               {/* FINAL NET RESULT CARD */}
               <div className={cn(
@@ -1114,6 +1360,327 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
                 </div>
               ))
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Subtab Contas a Pagar */}
+      {activeSubTab === 'bills' && (
+        <div className="space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <h3 className="text-lg font-bold text-slate-800">Contas a Pagar & Parcelamentos</h3>
+              <p className="text-xs text-slate-500">Acompanhe vencimentos de parcelamentos semanais ou mensais de caminhões e despesas.</p>
+            </div>
+            <button 
+              onClick={() => setIsBillModalOpen(true)}
+              className="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors shadow-lg shadow-amber-200 self-start sm:self-auto cursor-pointer"
+            >
+              <Plus size={16} />
+              <span>Novo Parcelamento / Conta</span>
+            </button>
+          </div>
+
+          {/* Filtros rápidos de Status de Contas a Pagar */}
+          <div className="flex items-center gap-2 border-b border-slate-200/80 pb-3">
+            {(['Todos', 'Pendente', 'Pago'] as const).map((st) => (
+              <button
+                key={st}
+                onClick={() => setBillFilterStatus(st)}
+                className={cn(
+                  "px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer",
+                  billFilterStatus === st 
+                    ? "bg-slate-800 text-white" 
+                    : "text-slate-500 hover:bg-slate-100"
+                )}
+              >
+                {st}
+              </button>
+            ))}
+          </div>
+
+          {/* Tabela de Contas a Pagar */}
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-sm overflow-hidden hidden md:block">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse font-sans text-xs">
+                <thead>
+                  <tr className="bg-slate-50/50 border-b border-slate-100 uppercase font-black text-slate-400">
+                    <th className="px-6 py-4 text-[10px]">Vencimento</th>
+                    <th className="px-6 py-4 text-[10px]">Descrição da Conta</th>
+                    <th className="px-6 py-4 text-[10px]">Caminhão</th>
+                    <th className="px-6 py-4 text-[10px]">Categoria</th>
+                    <th className="px-6 py-4 text-[10px]">Valor da Parcela</th>
+                    <th className="px-6 py-4 text-[10px]">Parcela</th>
+                    <th className="px-6 py-4 text-[10px]">Status</th>
+                    <th className="px-6 py-4 text-[10px] text-right">Ações</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredBills.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="px-6 py-10 text-center text-slate-400 italic">
+                        Nenhuma conta a pagar encontrada para os filtros selecionados.
+                      </td>
+                    </tr>
+                  ) : (
+                    [...filteredBills].sort((a: any, b: any) => a.vencimento.localeCompare(b.vencimento)).map((bill: any) => (
+                      <tr key={bill.id} className="hover:bg-slate-50/50 transition">
+                        <td className="px-6 py-4.5 font-mono font-bold text-slate-600">
+                          {new Date(bill.vencimento + "T12:00:00").toLocaleDateString('pt-BR')}
+                        </td>
+                        <td className="px-6 py-4.5 font-bold text-slate-800">
+                          <div className="space-y-0.5">
+                            <p>{bill.descricao}</p>
+                            {bill.observacao && <p className="text-[10px] text-slate-400 font-medium line-clamp-1">{bill.observacao}</p>}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4.5">
+                          {bill.truckId ? (
+                            <span className="font-mono font-bold bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded text-[10px] border border-slate-200">
+                              {bill.truckId}
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 italic">Administrativo</span>
+                          )}
+                        </td>
+                        <td className="px-6 py-4.5">
+                          <span className="font-semibold text-slate-650 bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-[10px] border border-blue-100">
+                            {bill.categoria}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4.5 font-mono font-bold text-slate-800">
+                          R$ {bill.valorParcela.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </td>
+                        <td className="px-6 py-4.5 font-mono font-medium text-slate-500">
+                          {bill.parcelas > 1 ? `${bill.parcelaAtual}/${bill.parcelas}` : 'Única'}
+                        </td>
+                        <td className="px-6 py-4.5">
+                          {bill.status === "Pago" ? (
+                            <span className="font-bold bg-emerald-50 text-emerald-600 border border-emerald-200 px-2 py-0.5 rounded-full text-[10px]">
+                              Quitação Confirmada
+                            </span>
+                          ) : (
+                            <span className="font-bold bg-amber-50 text-amber-600 border border-amber-200 px-2 py-0.5 rounded-full text-[10px]">
+                              Pendente
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-6 py-4.5 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            {bill.status === "Pendente" ? (
+                              <button
+                                onClick={() => handlePayBillClick(bill)}
+                                className="bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded-lg font-bold transition cursor-pointer text-[10px]"
+                              >
+                                Pagar
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => handleRevertPayment(bill.id)}
+                                className="bg-slate-100 hover:bg-slate-200 text-slate-600 px-2.5 py-1 rounded-lg font-bold transition border border-slate-200 cursor-pointer text-[10px]"
+                              >
+                                Reverter
+                              </button>
+                            )}
+                            <button
+                              onClick={() => handleDeleteBill(bill.id)}
+                              className="p-1 text-rose-600 hover:bg-rose-50 rounded-lg border border-transparent hover:border-rose-100 transition cursor-pointer"
+                              title="Excluir Conta"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Modo Mobile para Contas a Pagar */}
+          <div className="grid grid-cols-1 gap-4 md:hidden">
+            {filteredBills.length === 0 ? (
+              <div className="bg-white rounded-3xl border border-slate-200 p-8 text-center text-slate-400 italic text-xs">
+                Nenhuma conta a pagar para os filtros selecionados.
+              </div>
+            ) : (
+              [...filteredBills].sort((a: any, b: any) => a.vencimento.localeCompare(b.vencimento)).map((bill: any) => (
+                <div key={bill.id} className="bg-white p-4.5 rounded-2xl border border-slate-200 shadow-2xs space-y-3.5">
+                  <div className="flex justify-between items-start gap-2">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {bill.truckId ? (
+                          <span className="font-bold text-slate-700 bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded text-[10px] font-mono">
+                            {bill.truckId}
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-bold text-slate-500 bg-slate-50 border border-slate-200 px-1.5 py-0.5 rounded uppercase">Administrativo</span>
+                        )}
+                        <span className="font-bold text-slate-800 text-xs">{bill.descricao}</span>
+                      </div>
+                      <div className="text-slate-400 font-mono text-[10px]">
+                        📅 Vencimento: {new Date(bill.vencimento + "T12:00:00").toLocaleDateString('pt-BR')}
+                        {bill.parcelas > 1 ? ` • 🔢 Parcela: ${bill.parcelaAtual}/${bill.parcelas}` : ' • Única'}
+                      </div>
+                    </div>
+                    <span className="text-slate-800 font-mono font-bold text-xs shrink-0 whitespace-nowrap">
+                      R$ {bill.valorParcela.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2 border-t border-slate-100 pt-3">
+                    <div>
+                      {bill.status === "Pago" ? (
+                        <span className="font-bold bg-emerald-50 text-emerald-600 border border-emerald-150 px-2 py-0.5 rounded-full text-[9px]">
+                          Quitada
+                        </span>
+                      ) : (
+                        <span className="font-bold bg-amber-50 text-amber-600 border border-amber-150 px-2 py-0.5 rounded-full text-[9px]">
+                          Pendente
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex gap-2">
+                      {bill.status === "Pendente" ? (
+                        <button
+                          onClick={() => handlePayBillClick(bill)}
+                          className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-xl font-bold text-[10px] cursor-pointer transition shadow-sm"
+                        >
+                          Pagar
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleRevertPayment(bill.id)}
+                          className="bg-slate-100 hover:bg-slate-200 text-slate-600 px-3 py-1.5 rounded-xl font-bold text-[10px] border border-slate-200 cursor-pointer transition"
+                        >
+                          Reverter
+                        </button>
+                      )}
+                      <button
+                        onClick={() => handleDeleteBill(bill.id)}
+                        className="p-1.5 text-rose-600 bg-rose-50 hover:bg-rose-100 rounded-xl border border-rose-150 cursor-pointer"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Subtab Categorias */}
+      {activeSubTab === 'categorias' && (
+        <div className="space-y-6">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div>
+              <h3 className="text-lg font-bold text-slate-800">Gerenciamento de Categorias de Despesas</h3>
+              <p className="text-xs text-slate-500">Adicione, edite ou exclua categorias personalizadas para sincronia automática com o DRE e fluxo de caixa.</p>
+            </div>
+            <div className="flex items-center gap-2 w-full md:w-auto">
+              <input 
+                type="text" 
+                placeholder="Nome da nova categoria..." 
+                value={newCatName}
+                onChange={e => setNewCatName(e.target.value)}
+                className="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-bold w-full md:w-64"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    handleAddCategory(newCatName);
+                    setNewCatName('');
+                  }
+                }}
+              />
+              <button 
+                onClick={() => {
+                  handleAddCategory(newCatName);
+                  setNewCatName('');
+                }}
+                className="bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200 shrink-0 cursor-pointer"
+              >
+                <Plus size={14} />
+                <span>Adicionar</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-6">
+            <h4 className="text-xs font-black uppercase text-slate-400 tracking-wider mb-4">Categorias Cadastradas</h4>
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+              {categoriesSaida.map((cat: string) => {
+                const isEditing = editingCatName === cat;
+                return (
+                  <div key={cat} className="p-3 border border-slate-200 rounded-2xl flex items-center justify-between gap-2 bg-slate-50/30 hover:bg-slate-50/80 transition-all">
+                    {isEditing ? (
+                      <input 
+                        type="text"
+                        value={editingCatValue}
+                        onChange={e => setEditingCatValue(e.target.value)}
+                        className="bg-white border border-slate-300 rounded-lg px-2 py-1 text-xs font-bold w-full"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            handleEditCategory(cat, editingCatValue);
+                            setEditingCatName(null);
+                          }
+                          if (e.key === 'Escape') {
+                            setEditingCatName(null);
+                          }
+                        }}
+                        autoFocus
+                      />
+                    ) : (
+                      <span className="font-bold text-slate-700 text-xs truncate" title={cat}>{cat}</span>
+                    )}
+
+                    <div className="flex items-center gap-1 shrink-0">
+                      {isEditing ? (
+                        <>
+                          <button 
+                            onClick={() => {
+                              handleEditCategory(cat, editingCatValue);
+                              setEditingCatName(null);
+                            }}
+                            className="p-1.5 bg-emerald-50 text-emerald-600 rounded-lg border border-emerald-200 hover:bg-emerald-100 transition cursor-pointer text-xs font-bold"
+                          >
+                            Salvar
+                          </button>
+                          <button 
+                            onClick={() => setEditingCatName(null)}
+                            className="p-1.5 bg-slate-100 text-slate-600 rounded-lg border border-slate-200 hover:bg-slate-200 transition cursor-pointer text-xs font-bold"
+                          >
+                            Cancelar
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button 
+                            onClick={() => {
+                              setEditingCatName(cat);
+                              setEditingCatValue(cat);
+                            }}
+                            className="p-1 text-blue-600 hover:bg-blue-50 rounded-lg border border-transparent hover:border-blue-100 transition cursor-pointer"
+                            title="Editar Categoria"
+                          >
+                            <Edit size={14} />
+                          </button>
+                          <button 
+                            onClick={() => handleDeleteCategory(cat)}
+                            className="p-1 text-rose-600 hover:bg-rose-50 rounded-lg border border-transparent hover:border-rose-100 transition cursor-pointer"
+                            title="Excluir Categoria"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
       )}
@@ -1848,6 +2415,196 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
           </div>
         </div>
       </Modal>
+
+      {/* Nova Conta a Pagar Modal */}
+      {isBillModalOpen && (
+        <Modal isOpen={isBillModalOpen} onClose={() => setIsBillModalOpen(false)} title="Cadastrar Nova Conta a Pagar">
+          <form onSubmit={handleAddBillSubmit} className="space-y-4 font-sans text-xs">
+            <div className="space-y-1">
+              <label className="font-bold text-slate-700">Descrição / Título da Conta *</label>
+              <input 
+                type="text"
+                required
+                placeholder="Ex: Parcela de Caminhão Scania"
+                value={newBill.descricao}
+                onChange={e => setNewBill({ ...newBill, descricao: e.target.value })}
+                className="w-full bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="font-bold text-slate-700">Caminhão Placa (Opcional)</label>
+                <select
+                  value={newBill.truckId}
+                  onChange={e => setNewBill({ ...newBill, truckId: e.target.value })}
+                  className="w-full bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-bold"
+                >
+                  <option value="">Geral / Administrativo</option>
+                  {(data?.trucks || []).map((t: any) => (
+                    <option key={t.id} value={t.placa}>{t.placa} ({t.modelo || "Sem Modelo"})</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="font-bold text-slate-700">Categoria de Gasto *</label>
+                <select
+                  required
+                  value={newBill.categoria}
+                  onChange={e => setNewBill({ ...newBill, categoria: e.target.value })}
+                  className="w-full bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-bold"
+                >
+                  <option value="">Selecione...</option>
+                  {categoriesSaida.map((cat: string) => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="font-bold text-slate-700">Recorrência / Frequência *</label>
+                <select
+                  value={newBill.recorrencia}
+                  onChange={e => setNewBill({ ...newBill, recorrencia: e.target.value, parcelas: e.target.value === 'unico' ? '1' : '12' })}
+                  className="w-full bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-bold"
+                >
+                  <option value="unico">Único (À Vista / Vencimento Único)</option>
+                  <option value="parcelado_mes">Parcelamento Mensal (Por Mês)</option>
+                  <option value="parcelado_semana">Parcelamento Semanal (Por Semana)</option>
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="font-bold text-slate-700">Data do 1º Vencimento *</label>
+                <input 
+                  type="date"
+                  required
+                  value={newBill.vencimento}
+                  onChange={e => setNewBill({ ...newBill, vencimento: e.target.value })}
+                  className="w-full bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium"
+                />
+              </div>
+            </div>
+
+            {newBill.recorrencia === 'unico' ? (
+              <div className="space-y-1">
+                <label className="font-bold text-slate-700">Valor Total *</label>
+                <input 
+                  type="text"
+                  required
+                  placeholder="R$ 0,00"
+                  value={newBill.valorTotal}
+                  onChange={e => setNewBill({ ...newBill, valorTotal: maskBRL(e.target.value) })}
+                  className="w-full bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-bold text-blue-600"
+                />
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-700">Qtd de Parcelas *</label>
+                  <input 
+                    type="number"
+                    required
+                    min="2"
+                    max="120"
+                    value={newBill.parcelas}
+                    onChange={e => setNewBill({ ...newBill, parcelas: e.target.value })}
+                    className="w-full bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-700">Valor de Cada Parcela *</label>
+                  <input 
+                    type="text"
+                    required
+                    placeholder="R$ 0,00"
+                    value={newBill.valorParcela}
+                    onChange={e => setNewBill({ ...newBill, valorParcela: maskBRL(e.target.value) })}
+                    className="w-full bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-bold text-amber-600"
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-1">
+              <label className="font-bold text-slate-700">Observações adicionais</label>
+              <textarea 
+                placeholder="Alguma anotação sobre esta conta..."
+                rows={2}
+                value={newBill.observacao}
+                onChange={e => setNewBill({ ...newBill, observacao: e.target.value })}
+                className="w-full bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium"
+              />
+            </div>
+
+            <div className="flex gap-2.5 pt-2">
+              <button 
+                type="button"
+                onClick={() => setIsBillModalOpen(false)}
+                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition font-bold"
+              >
+                Cancelar
+              </button>
+              <button 
+                type="submit"
+                disabled={isSavingBill}
+                className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl transition font-bold shadow-lg shadow-blue-100 flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                {isSavingBill ? "Salvando..." : "Cadastrar Conta"}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* Confirmar Pagamento Modal */}
+      {isPayingBillModalOpen && (
+        <Modal isOpen={isPayingBillModalOpen} onClose={() => setIsPayingBillModalOpen(false)} title="Confirmar Pagamento de Conta">
+          <div className="space-y-4 font-sans text-xs text-slate-700">
+            <p className="text-slate-600 font-semibold leading-relaxed">
+              Você está registrando o pagamento para: <strong className="text-slate-800">{selectedBillForPayment?.descricao}</strong>
+            </p>
+            <div className="bg-slate-50 border border-slate-200 p-3.5 rounded-2xl flex items-center justify-between font-mono">
+              <span className="font-bold text-slate-600">Valor da Parcela:</span>
+              <span className="font-black text-emerald-600 text-sm">
+                R$ {selectedBillForPayment?.valorParcela.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              </span>
+            </div>
+
+            <div className="space-y-1">
+              <label className="font-bold text-slate-700">Data da Quitação / Pagamento *</label>
+              <input 
+                type="date"
+                required
+                value={paymentDate}
+                onChange={e => setPaymentDate(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium"
+              />
+            </div>
+
+            <div className="flex gap-2.5 pt-2 font-bold">
+              <button 
+                type="button"
+                onClick={() => setIsPayingBillModalOpen(false)}
+                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button 
+                onClick={handleConfirmPayment}
+                disabled={isSavingBill}
+                className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl transition shadow-lg shadow-emerald-100 flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                {isSavingBill ? "Processando..." : "Quitar Lançamento"}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
