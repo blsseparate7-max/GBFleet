@@ -525,7 +525,9 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
         km: Number(body.km),
         data: body.data || new Date().toISOString().split("T")[0],
         comprovante: body.comprovante || "",
-        tipoDiesel: body.tipoDiesel || "S10"
+        tipoDiesel: body.tipoDiesel || "S10",
+        litrosArla: body.litrosArla ? Number(body.litrosArla) : undefined,
+        valorArla: body.valorArla ? Number(body.valorArla) : undefined
       };
 
       liveDb.fuel_logs.push(newLog);
@@ -557,6 +559,34 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       };
       liveDb.cash_flow.push(rawCash);
 
+      // Trigger Arla expense and cash flow if valorArla is set
+      if (body.valorArla && Number(body.valorArla) > 0) {
+        const rawExpenseArla = {
+          id: "exp_" + Math.random().toString(36).substr(2, 9),
+          fuelLogId: logId,
+          companyId: ctx.companyId,
+          truckId: body.truckId,
+          tipo: `Arla 32 (Abastecimento)`,
+          valor: Number(body.valorArla),
+          data: body.data || new Date().toISOString().split("T")[0],
+          documento: "Auto-Abastecimento-Arla",
+          descritivo: `Abastecimento automático via painel / chat (${body.litrosArla || 0} Litros de Arla 32)`
+        };
+        liveDb.expenses.push(rawExpenseArla);
+
+        const rawCashArla = {
+          id: "cash_arla_" + logId,
+          fuelLogId: logId,
+          companyId: ctx.companyId,
+          tipo: "saida",
+          categoria: "Arla 32 (Abastecimento)",
+          valor: Number(body.valorArla),
+          data: body.data || new Date().toISOString().split("T")[0],
+          descricao: `Arla Placa ${body.truckId} (${body.litrosArla || 0}L)`
+        };
+        liveDb.cash_flow.push(rawCashArla);
+      }
+
       await persistDB();
       return jsonResponse({ success: true, fuelLog: newLog });
     }
@@ -579,26 +609,76 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       matchLog.data = body.data || new Date().toISOString().split("T")[0];
       matchLog.comprovante = body.comprovante || "";
       matchLog.tipoDiesel = body.tipoDiesel || "S10";
+      matchLog.litrosArla = body.litrosArla ? Number(body.litrosArla) : undefined;
+      matchLog.valorArla = body.valorArla ? Number(body.valorArla) : undefined;
 
-      // Sync corresponding expense
-      const matchedExp = liveDb.expenses.find((e: any) => e.fuelLogId === targetId || (e.documento === "Auto-Abastecimento" && e.truckId === oldLog.truckId && Number(e.valor) === Number(oldLog.valor) && e.data === oldLog.data));
-      if (matchedExp) {
-        matchedExp.truckId = body.truckId;
-        matchedExp.tipo = `Diesel ${body.tipoDiesel || "S10"} (Abastecimento)`;
-        matchedExp.valor = Number(body.valor);
-        matchedExp.data = body.data || new Date().toISOString().split("T")[0];
-        matchedExp.descritivo = `Abastecimento automático via painel / chat (${body.litros} Litros de Diesel ${body.tipoDiesel || "S10"})`;
-        matchedExp.fuelLogId = targetId;
-      }
+      // Filter out old diesel/arla automatic expense entries for this fuel log
+      liveDb.expenses = liveDb.expenses.filter((e: any) => {
+        const isFuelSync = e.fuelLogId === targetId || (e.documento === "Auto-Abastecimento" && e.truckId === oldLog.truckId && Number(e.valor) === Number(oldLog.valor) && e.data === oldLog.data);
+        const isArlaSync = e.fuelLogId === targetId && (e.tipo?.includes("Arla") || e.documento === "Auto-Abastecimento-Arla");
+        return !isFuelSync && !isArlaSync;
+      });
 
-      // Sync corresponding cash flow
-      const matchedCash = liveDb.cash_flow.find((c: any) => c.fuelLogId === targetId || (c.tipo === "saida" && c.categoria?.includes("Diesel") && Number(c.valor) === Number(oldLog.valor) && c.data === oldLog.data && c.descricao?.includes(oldLog.truckId)));
-      if (matchedCash) {
-        matchedCash.categoria = `Diesel ${body.tipoDiesel || "S10"} (Abastecimento)`;
-        matchedCash.valor = Number(body.valor);
-        matchedCash.data = body.data || new Date().toISOString().split("T")[0];
-        matchedCash.descricao = `Combustível Placa ${body.truckId} (${body.tipoDiesel || "S10"})`;
-        matchedCash.fuelLogId = targetId;
+      // Filter out old diesel/arla automatic cash flow entries for this fuel log
+      liveDb.cash_flow = liveDb.cash_flow.filter((c: any) => {
+        const isFuelSync = c.fuelLogId === targetId || c.id === `cash_fuel_${targetId}` || (c.tipo === "saida" && c.categoria?.includes("Diesel") && Number(c.valor) === Number(oldLog.valor) && c.data === oldLog.data && c.descricao?.includes(oldLog.truckId));
+        const isArlaSync = c.fuelLogId === targetId || c.id === `cash_arla_${targetId}` || (c.tipo === "saida" && c.categoria?.includes("Arla") && Number(c.valor) === Number(oldLog.valorArla) && c.data === oldLog.data && c.descricao?.includes(oldLog.truckId));
+        return !isFuelSync && !isArlaSync;
+      });
+
+      // Insert new Diesel expense entry
+      const rawExpense = {
+        id: "exp_" + Math.random().toString(36).substr(2, 9),
+        fuelLogId: targetId,
+        companyId: ctx.companyId,
+        truckId: body.truckId,
+        tipo: `Diesel ${body.tipoDiesel || "S10"} (Abastecimento)`,
+        valor: Number(body.valor),
+        data: body.data || new Date().toISOString().split("T")[0],
+        documento: "Auto-Abastecimento",
+        descritivo: `Abastecimento automático via painel / chat (${body.litros} Litros de Diesel ${body.tipoDiesel || "S10"})`
+      };
+      liveDb.expenses.push(rawExpense);
+
+      // Insert new Diesel cash flow entry
+      const rawCash = {
+        id: "cash_" + Math.random().toString(36).substr(2, 9),
+        fuelLogId: targetId,
+        companyId: ctx.companyId,
+        tipo: "saida",
+        categoria: `Diesel ${body.tipoDiesel || "S10"} (Abastecimento)`,
+        valor: Number(body.valor),
+        data: body.data || new Date().toISOString().split("T")[0],
+        descricao: `Combustível Placa ${body.truckId} (${body.tipoDiesel || "S10"})`
+      };
+      liveDb.cash_flow.push(rawCash);
+
+      // Insert new Arla expense and cash flow if applicable
+      if (body.valorArla && Number(body.valorArla) > 0) {
+        const rawExpenseArla = {
+          id: "exp_" + Math.random().toString(36).substr(2, 9),
+          fuelLogId: targetId,
+          companyId: ctx.companyId,
+          truckId: body.truckId,
+          tipo: `Arla 32 (Abastecimento)`,
+          valor: Number(body.valorArla),
+          data: body.data || new Date().toISOString().split("T")[0],
+          documento: "Auto-Abastecimento-Arla",
+          descritivo: `Abastecimento automático via painel / chat (${body.litrosArla || 0} Litros de Arla 32)`
+        };
+        liveDb.expenses.push(rawExpenseArla);
+
+        const rawCashArla = {
+          id: "cash_arla_" + targetId,
+          fuelLogId: targetId,
+          companyId: ctx.companyId,
+          tipo: "saida",
+          categoria: "Arla 32 (Abastecimento)",
+          valor: Number(body.valorArla),
+          data: body.data || new Date().toISOString().split("T")[0],
+          descricao: `Arla Placa ${body.truckId} (${body.litrosArla || 0}L)`
+        };
+        liveDb.cash_flow.push(rawCashArla);
       }
 
       await persistDB();
