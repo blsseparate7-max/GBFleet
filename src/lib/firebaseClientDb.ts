@@ -1058,6 +1058,7 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
         
         resultadoLiquido: Number(body.resultadoLiquido || 0),
         distanciaKm: Number(body.distanciaKm || 0),
+        kmAbastecimento: Number(body.kmAbastecimento || 0),
         
         data: dateVal,
         dataSaida: dateVal,
@@ -1177,6 +1178,7 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       matchFrt.outrosCustos = Number(body.outrosCustos || body.outrasDespesas || 0);
       matchFrt.resultadoLiquido = Number(body.resultadoLiquido || 0);
       matchFrt.distanciaKm = Number(body.distanciaKm || 0);
+      matchFrt.kmAbastecimento = Number(body.kmAbastecimento || 0);
       matchFrt.data = dateVal;
       matchFrt.dataSaida = dateVal;
       matchFrt.localAbastecimento = body.localAbastecimento || "";

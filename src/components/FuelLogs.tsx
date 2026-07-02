@@ -28,7 +28,7 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
   const [filterTruck, setFilterTruck] = useState('');
   const [filterDriver, setFilterDriver] = useState('');
   const [filterStation, setFilterStation] = useState('');
-  const [filterMonth, setFilterMonth] = useState<string>(new Date().toISOString().substring(0, 7));
+  const [filterMonth, setFilterMonth] = useState<string>('all');
   const [showArlaManual, setShowArlaManual] = useState(false);
 
   // Gas Stations states
