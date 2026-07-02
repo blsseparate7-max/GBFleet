@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Fuel, Plus, Calendar, MapPin, DollarSign, Camera, FileText, CheckCircle, Edit, Trash2, Filter, AlertCircle, Building } from 'lucide-react';
 import Modal from './ui/Modal';
 import { compressAndSetFile, AttachmentPreview } from '../lib/fileCompressor';
@@ -28,6 +28,7 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
   const [filterTruck, setFilterTruck] = useState('');
   const [filterDriver, setFilterDriver] = useState('');
   const [filterStation, setFilterStation] = useState('');
+  const [filterMonth, setFilterMonth] = useState<string>(new Date().toISOString().substring(0, 7));
   const [showArlaManual, setShowArlaManual] = useState(false);
 
   // Gas Stations states
@@ -246,12 +247,24 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
     });
   });
 
+  const availableMonths = useMemo(() => {
+    const months = new Set<string>();
+    months.add(new Date().toISOString().substring(0, 7));
+    (data?.fuel_logs || []).forEach((f: any) => {
+      if (f.data && f.data.length >= 7) {
+        months.add(f.data.substring(0, 7));
+      }
+    });
+    return Array.from(months).sort().reverse();
+  }, [data]);
+
   // Filter fuel logs
   const filteredFuelLogs = (data.fuel_logs || []).filter((log: any) => {
     const matchesTruck = !filterTruck || log.truckId === filterTruck;
     const matchesDriver = !filterDriver || log.driverId === filterDriver;
     const matchesStation = !filterStation || log.gasStationId === filterStation;
-    return matchesTruck && matchesDriver && matchesStation;
+    const matchesMonth = filterMonth === 'all' ? true : (log.data && log.data.startsWith(filterMonth));
+    return matchesTruck && matchesDriver && matchesStation && matchesMonth;
   });
 
   const gasStationsList = data.gas_stations || [];
@@ -333,6 +346,22 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
 
             <div className="flex-1 min-w-[150px]">
               <select
+                value={filterMonth}
+                onChange={e => setFilterMonth(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              >
+                <option value="all">Todos os Meses</option>
+                {availableMonths.map((m: string) => {
+                  const [year, month] = m.split('-');
+                  const dateObj = new Date(Number(year), Number(month) - 1, 1);
+                  const label = dateObj.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+                  return <option key={m} value={m}>{label.charAt(0).toUpperCase() + label.slice(1)}</option>;
+                })}
+              </select>
+            </div>
+
+            <div className="flex-1 min-w-[150px]">
+              <select
                 id="select-filter-truck"
                 value={filterTruck}
                 onChange={e => setFilterTruck(e.target.value)}
@@ -373,13 +402,14 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
               </select>
             </div>
 
-            {(filterTruck || filterDriver || filterStation) && (
+            {(filterTruck || filterDriver || filterStation || filterMonth !== new Date().toISOString().substring(0, 7)) && (
               <button
                 id="btn-clear-fuel-filters"
                 onClick={() => {
                   setFilterTruck('');
                   setFilterDriver('');
                   setFilterStation('');
+                  setFilterMonth(new Date().toISOString().substring(0, 7));
                 }}
                 className="text-xs font-bold text-red-500 hover:text-red-600 uppercase tracking-wider"
               >

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
   BarChart, 
   Bar, 
@@ -57,6 +57,11 @@ const isCombustivelByTipo = (tipo: string) => {
 export default function Dashboard({ data, onNavigate }: { data: any, onNavigate?: (tab: string) => void }) {
   if (!data) return <div className="flex items-center justify-center h-full text-slate-500 font-medium font-sans">Carregando dados da frota...</div>;
 
+  // New dynamic date and view state
+  const [dashboardView, setDashboardView] = useState<'monthly' | 'annual'>('monthly');
+  const [filterMonth, setFilterMonth] = useState<string>(() => new Date().toISOString().substring(0, 7));
+  const [filterYear, setFilterYear] = useState<string>(() => new Date().getFullYear().toString());
+
   // States for interactive supplier detail modal
   const [selectedDetail, setSelectedDetail] = useState<{
     type: 'station' | 'company';
@@ -69,14 +74,90 @@ export default function Dashboard({ data, onNavigate }: { data: any, onNavigate?
     logs: any[];
   } | null>(null);
 
+  // Available Months & Years extracted dynamically
+  const availableMonths = useMemo(() => {
+    const months = new Set<string>();
+    months.add(new Date().toISOString().substring(0, 7)); // Always include current month
+    (data?.cash_flow || []).forEach((c: any) => {
+      if (c.data && c.data.length >= 7) months.add(c.data.substring(0, 7));
+    });
+    (data?.fuel_logs || []).forEach((f: any) => {
+      if (f.data && f.data.length >= 7) months.add(f.data.substring(0, 7));
+    });
+    (data?.expenses || []).forEach((e: any) => {
+      if (e.data && e.data.length >= 7) months.add(e.data.substring(0, 7));
+    });
+    return Array.from(months).sort().reverse();
+  }, [data]);
+
+  const availableYears = useMemo(() => {
+    const years = new Set<string>();
+    years.add(new Date().getFullYear().toString()); // Always include current year
+    (data?.cash_flow || []).forEach((c: any) => {
+      if (c.data && c.data.length >= 4) years.add(c.data.substring(0, 4));
+    });
+    (data?.fuel_logs || []).forEach((f: any) => {
+      if (f.data && f.data.length >= 4) years.add(f.data.substring(0, 4));
+    });
+    (data?.expenses || []).forEach((e: any) => {
+      if (e.data && e.data.length >= 4) years.add(e.data.substring(0, 4));
+    });
+    return Array.from(years).sort().reverse();
+  }, [data]);
+
+  // Filtered lists based on Monthly or Annual view
+  const filteredFuelLogs = useMemo(() => {
+    return (data?.fuel_logs || []).filter((log: any) => {
+      if (!log.data) return false;
+      if (dashboardView === 'monthly') {
+        return log.data.startsWith(filterMonth);
+      } else {
+        return log.data.startsWith(filterYear);
+      }
+    });
+  }, [data?.fuel_logs, dashboardView, filterMonth, filterYear]);
+
+  const filteredExpenses = useMemo(() => {
+    return (data?.expenses || []).filter((exp: any) => {
+      if (!exp.data) return false;
+      if (dashboardView === 'monthly') {
+        return exp.data.startsWith(filterMonth);
+      } else {
+        return exp.data.startsWith(filterYear);
+      }
+    });
+  }, [data?.expenses, dashboardView, filterMonth, filterYear]);
+
+  const filteredCashFlow = useMemo(() => {
+    return (data?.cash_flow || []).filter((c: any) => {
+      if (!c.data) return false;
+      if (dashboardView === 'monthly') {
+        return c.data.startsWith(filterMonth);
+      } else {
+        return c.data.startsWith(filterYear);
+      }
+    });
+  }, [data?.cash_flow, dashboardView, filterMonth, filterYear]);
+
+  const filteredMaintenanceAlerts = useMemo(() => {
+    return (data?.maintenance_alerts || []).filter((m: any) => {
+      if (!m.dataRealizada) return true; // Keep pending alerts
+      if (dashboardView === 'monthly') {
+        return m.dataRealizada.startsWith(filterMonth);
+      } else {
+        return m.dataRealizada.startsWith(filterYear);
+      }
+    });
+  }, [data?.maintenance_alerts, dashboardView, filterMonth, filterYear]);
+
   // 1. Basic Stats Calculation
-  const totalFuel = data.fuel_logs.reduce((acc: number, curr: any) => acc + curr.valor, 0);
-  const totalExpenses = data.expenses
+  const totalFuel = filteredFuelLogs.reduce((acc: number, curr: any) => acc + curr.valor, 0);
+  const totalExpenses = filteredExpenses
     .filter((e: any) => e.documento !== "Auto-Abastecimento")
     .reduce((acc: number, curr: any) => acc + curr.valor, 0);
   const totalSpent = totalFuel + totalExpenses;
 
-  const totalIncome = data.cash_flow
+  const totalIncome = filteredCashFlow
     .filter((f: any) => f.tipo === 'entrada')
     .reduce((acc: number, curr: any) => acc + curr.valor, 0);
 
@@ -95,19 +176,19 @@ export default function Dashboard({ data, onNavigate }: { data: any, onNavigate?
   const travelingDriversCount = data.drivers.filter((d: any) => d.status === 'Em Viagem').length;
 
   // 2. Cost Category Breakdown for Pie Chart
-  const realFuelS10 = data.fuel_logs.filter((l: any) => !l.tipoDiesel || l.tipoDiesel === 'S10').reduce((acc: number, curr: any) => acc + curr.valor, 0);
-  const manualDieselS10 = data.expenses.filter((e: any) => isCombustivelByTipo(e.tipo) && e.documento !== "Auto-Abastecimento" && !e.tipo?.toLowerCase().includes("s500")).reduce((acc: number, curr: any) => acc + curr.valor, 0);
+  const realFuelS10 = filteredFuelLogs.filter((l: any) => !l.tipoDiesel || l.tipoDiesel === 'S10').reduce((acc: number, curr: any) => acc + curr.valor, 0);
+  const manualDieselS10 = filteredExpenses.filter((e: any) => isCombustivelByTipo(e.tipo) && e.documento !== "Auto-Abastecimento" && !e.tipo?.toLowerCase().includes("s500")).reduce((acc: number, curr: any) => acc + curr.valor, 0);
   const totalDieselS10 = realFuelS10 + manualDieselS10;
 
-  const realFuelS500 = data.fuel_logs.filter((l: any) => l.tipoDiesel === 'S500').reduce((acc: number, curr: any) => acc + curr.valor, 0);
-  const manualDieselS500 = data.expenses.filter((e: any) => isCombustivelByTipo(e.tipo) && e.documento !== "Auto-Abastecimento" && e.tipo?.toLowerCase().includes("s500")).reduce((acc: number, curr: any) => acc + curr.valor, 0);
+  const realFuelS500 = filteredFuelLogs.filter((l: any) => l.tipoDiesel === 'S500').reduce((acc: number, curr: any) => acc + curr.valor, 0);
+  const manualDieselS500 = filteredExpenses.filter((e: any) => isCombustivelByTipo(e.tipo) && e.documento !== "Auto-Abastecimento" && e.tipo?.toLowerCase().includes("s500")).reduce((acc: number, curr: any) => acc + curr.valor, 0);
   const totalDieselS500 = realFuelS500 + manualDieselS500;
 
-  const pedagiosValue = data.expenses.filter((e: any) => isPedagioByTipo(e.tipo)).reduce((acc: number, curr: any) => acc + curr.valor, 0);
-  const realMaint = (data.maintenance_alerts || []).filter((m: any) => m.status === 'Realizado' || m.status === 'Realizada').reduce((acc: number, m: any) => acc + Number(m.custo || 0), 0);
-  const manualMaint = data.expenses.filter((e: any) => isMaintenanceByTipo(e.tipo) && !e.documento?.startsWith("Auto-Manutenção")).reduce((acc: number, curr: any) => acc + curr.valor, 0);
+  const pedagiosValue = filteredExpenses.filter((e: any) => isPedagioByTipo(e.tipo)).reduce((acc: number, curr: any) => acc + curr.valor, 0);
+  const realMaint = filteredMaintenanceAlerts.filter((m: any) => m.status === 'Realizado' || m.status === 'Realizada').reduce((acc: number, m: any) => acc + Number(m.custo || 0), 0);
+  const manualMaint = filteredExpenses.filter((e: any) => isMaintenanceByTipo(e.tipo) && !e.documento?.startsWith("Auto-Manutenção")).reduce((acc: number, curr: any) => acc + curr.valor, 0);
   const manutencoesValue = realMaint + manualMaint;
-  const outrosValue = data.expenses.filter((e: any) => 
+  const outrosValue = filteredExpenses.filter((e: any) => 
     !isPedagioByTipo(e.tipo) && 
     !isMaintenanceByTipo(e.tipo) && 
     !isCombustivelByTipo(e.tipo) &&
@@ -124,7 +205,7 @@ export default function Dashboard({ data, onNavigate }: { data: any, onNavigate?
 
   // 3. Overall Fleet FUEL Consumption average
   const logsByTruck: { [key: string]: any[] } = {};
-  data.fuel_logs.forEach((log: any) => {
+  filteredFuelLogs.forEach((log: any) => {
     if (!logsByTruck[log.truckId]) {
       logsByTruck[log.truckId] = [];
     }
@@ -167,7 +248,10 @@ export default function Dashboard({ data, onNavigate }: { data: any, onNavigate?
     '12': { entr: 0, said: 0 }
   };
 
-  data.cash_flow.forEach((c: any) => {
+  const activeYear = dashboardView === 'monthly' ? filterMonth.substring(0, 4) : filterYear;
+  const yearCashFlow = (data?.cash_flow || []).filter((c: any) => c.data && c.data.startsWith(activeYear));
+
+  yearCashFlow.forEach((c: any) => {
     if (!c.data) return;
     const parts = c.data.split('-'); // e.g. 2026-04-15
     if (parts.length >= 2) {
@@ -203,7 +287,7 @@ export default function Dashboard({ data, onNavigate }: { data: any, onNavigate?
 
   // 5. Dynamic Alerts Engine
   const alertsList: any[] = [];
-  const todaySimulated = new Date("2026-06-16");
+  const todaySimulated = new Date();
 
   // A. Check expiring driver CNH within 30 days
   data.drivers.forEach((drv: any) => {
@@ -260,8 +344,8 @@ export default function Dashboard({ data, onNavigate }: { data: any, onNavigate?
 
   // 6. Truck Spent & Consumption Ranking
   const truckRanking = data.trucks.map((t: any) => {
-    const fuelLogs = data.fuel_logs.filter((l: any) => l.truckId === t.placa);
-    const truckExpenses = data.expenses.filter((e: any) => e.truckId === t.placa);
+    const fuelLogs = filteredFuelLogs.filter((l: any) => l.truckId === t.placa);
+    const truckExpenses = filteredExpenses.filter((e: any) => e.truckId === t.placa);
     const totalTruckSpent = fuelLogs.reduce((acc: number, curr: any) => acc + curr.valor, 0) + 
                           truckExpenses.filter((e: any) => e.documento !== "Auto-Abastecimento").reduce((acc: number, curr: any) => acc + curr.valor, 0);
     
@@ -286,7 +370,7 @@ export default function Dashboard({ data, onNavigate }: { data: any, onNavigate?
   // 7. Fuel Stations Ranking calculation
   const stationRankingMap: { [key: string]: { id: string, name: string, city: string, uf: string, total: number, count: number, liters: number, logs: any[] } } = {};
   
-  (data.fuel_logs || []).forEach((log: any) => {
+  (filteredFuelLogs || []).forEach((log: any) => {
     const stationId = log.gasStationId;
     const matchedStation = (data.gas_stations || []).find((g: any) => g.id === stationId);
     const stationName = matchedStation ? matchedStation.nome : "Posto não identificado";
@@ -319,7 +403,7 @@ export default function Dashboard({ data, onNavigate }: { data: any, onNavigate?
   // 8. Expense Companies Ranking calculation
   const companyRankingMap: { [key: string]: { id: string, name: string, city: string, uf: string, total: number, count: number, logs: any[] } } = {};
 
-  (data.expenses || []).forEach((exp: any) => {
+  (filteredExpenses || []).forEach((exp: any) => {
     // Skip fuel logs auto-abastecimento to avoid duplication
     if (exp.documento === "Auto-Abastecimento") return;
 
@@ -371,6 +455,69 @@ export default function Dashboard({ data, onNavigate }: { data: any, onNavigate?
         </div>
       </div>
 
+      {/* Sub-tabs / View Selectors and Period Filters */}
+      <div className="bg-white p-4 rounded-3xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="flex bg-slate-100 p-1 rounded-2xl w-full sm:w-auto">
+          <button
+            onClick={() => setDashboardView('monthly')}
+            className={cn(
+              "flex-1 sm:flex-initial px-5 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2",
+              dashboardView === 'monthly'
+                ? "bg-white text-blue-600 shadow-sm"
+                : "text-slate-500 hover:text-slate-800"
+            )}
+          >
+            <Calendar size={14} />
+            Mensal
+          </button>
+          <button
+            onClick={() => setDashboardView('annual')}
+            className={cn(
+              "flex-1 sm:flex-initial px-5 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2",
+              dashboardView === 'annual'
+                ? "bg-white text-blue-600 shadow-sm"
+                : "text-slate-500 hover:text-slate-800"
+            )}
+          >
+            <TrendingUp size={14} />
+            Anual
+          </button>
+        </div>
+
+        <div className="w-full sm:w-auto flex items-center gap-3">
+          {dashboardView === 'monthly' ? (
+            <>
+              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider shrink-0">Selecione o Mês:</span>
+              <select
+                value={filterMonth}
+                onChange={e => setFilterMonth(e.target.value)}
+                className="w-full sm:w-48 bg-slate-50 border border-slate-200 rounded-2xl px-4 py-2.5 text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              >
+                {availableMonths.map((m: string) => {
+                  const [year, month] = m.split('-');
+                  const dateObj = new Date(Number(year), Number(month) - 1, 1);
+                  const label = dateObj.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+                  return <option key={m} value={m}>{label.charAt(0).toUpperCase() + label.slice(1)}</option>;
+                })}
+              </select>
+            </>
+          ) : (
+            <>
+              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider shrink-0">Selecione o Ano:</span>
+              <select
+                value={filterYear}
+                onChange={e => setFilterYear(e.target.value)}
+                className="w-full sm:w-48 bg-slate-50 border border-slate-200 rounded-2xl px-4 py-2.5 text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+              >
+                {availableYears.map((y: string) => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+            </>
+          )}
+        </div>
+      </div>
+
       {/* Main Core Financial Indicators */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard 
@@ -417,7 +564,7 @@ export default function Dashboard({ data, onNavigate }: { data: any, onNavigate?
         <div className="lg:col-span-2 bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-col justify-between">
           <div className="flex items-center justify-between mb-6">
             <div>
-              <h3 className="font-bold text-slate-800">Evolução de Fluxo de Caixa (2026)</h3>
+              <h3 className="font-bold text-slate-800">Evolução de Fluxo de Caixa ({activeYear})</h3>
               <p className="text-xs text-slate-400 mt-0.5 font-medium">Comparativo mensal entre faturamento bruto, custos totais e margem líquida.</p>
             </div>
             <div className="flex gap-3 text-xs font-extrabold text-slate-500">

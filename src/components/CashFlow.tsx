@@ -84,7 +84,7 @@ export default function CashFlow({ data, onUpdate }: { data: any, onUpdate: () =
   const [filterCategoria, setFilterCategoria] = useState('all');
   const [filterTruckId, setFilterTruckId] = useState('all');
   const [filterDriverId, setFilterDriverId] = useState('all');
-  const [filterPeriodo, setFilterPeriodo] = useState<'all' | 'today' | '7days' | 'month' | 'last_month'>('all');
+  const [filterPeriodo, setFilterPeriodo] = useState<'all' | 'today' | '7days' | 'month' | 'last_month'>('month');
   const [filterMeioPagamento, setFilterMeioPagamento] = useState('all');
 
   // UI feedback triggers
@@ -331,19 +331,22 @@ export default function CashFlow({ data, onUpdate }: { data: any, onUpdate: () =
       let periodMatch = true;
       if (filterPeriodo !== 'all') {
         const itemDate = new Date(item.data);
-        const today = new Date("2026-06-16"); // Simulated operational date
+        const today = new Date();
+        const todayStr = today.toISOString().substring(0, 10);
         
         if (filterPeriodo === 'today') {
-          periodMatch = item.data === "2026-06-16";
+          periodMatch = item.data === todayStr;
         } else if (filterPeriodo === '7days') {
           const sevenDaysAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
           periodMatch = itemDate >= sevenDaysAgo && itemDate <= today;
         } else if (filterPeriodo === 'month') {
-          // This month: 2026-06
-          periodMatch = item.data.startsWith('2026-06');
+          const currentMonthStr = today.toISOString().substring(0, 7);
+          periodMatch = item.data.startsWith(currentMonthStr);
         } else if (filterPeriodo === 'last_month') {
-          // Last month: 2026-05
-          periodMatch = item.data.startsWith('2026-05');
+          const lastMonthDate = new Date();
+          lastMonthDate.setMonth(lastMonthDate.getMonth() - 1);
+          const lastMonthStr = lastMonthDate.toISOString().substring(0, 7);
+          periodMatch = item.data.startsWith(lastMonthStr);
         }
       }
 

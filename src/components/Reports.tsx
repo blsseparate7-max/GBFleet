@@ -49,8 +49,14 @@ const isMotoristaByTipo = (tipo: string) => {
 
 export default function Reports({ data }: ReportsProps) {
   const [activeRankTab, setActiveRankTab] = useState<RankingTab>('vehicles');
-  const [startDate, setStartDate] = useState('2026-05-01');
-  const [endDate, setEndDate] = useState('2026-06-30');
+  const [startDate, setStartDate] = useState(() => {
+    const d = new Date();
+    return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
+  });
+  const [endDate, setEndDate] = useState(() => {
+    const d = new Date();
+    return new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().split('T')[0];
+  });
   const [selectedTruck, setSelectedTruck] = useState('');
   const [selectedDriver, setSelectedDriver] = useState('');
   const [searchQuery, setSearchQuery] = useState('');

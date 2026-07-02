@@ -97,7 +97,7 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
   });
   
   // Filtering DRE & Custos
-  const [filterMonth, setFilterMonth] = useState<string>('all'); // format: 'YYYY-MM'
+  const [filterMonth, setFilterMonth] = useState<string>(new Date().toISOString().substring(0, 7)); // format: 'YYYY-MM'
   const [filterPlaca, setFilterPlaca] = useState<string>('all');
 
   // Manual expense form modal state
@@ -492,6 +492,7 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
   // Extract unique months from all available financial actions
   const availableMonths = useMemo(() => {
     const months = new Set<string>();
+    months.add(new Date().toISOString().substring(0, 7));
     
     // Add from freights
     (data?.freights || []).forEach((f: any) => {

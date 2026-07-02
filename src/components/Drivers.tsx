@@ -43,8 +43,14 @@ export default function Drivers({ data, onUpdate }: DriversProps) {
   // Reporting States
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [reportingDriver, setReportingDriver] = useState<any>(null);
-  const [startDate, setStartDate] = useState('2026-04-01');
-  const [endDate, setEndDate] = useState('2026-06-30');
+  const [startDate, setStartDate] = useState(() => {
+    const d = new Date();
+    return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
+  });
+  const [endDate, setEndDate] = useState(() => {
+    const d = new Date();
+    return new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().split('T')[0];
+  });
 
   // Form states
   const [driverForm, setDriverForm] = useState({

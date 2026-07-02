@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
   Route, 
   MapPin, 
@@ -36,6 +36,7 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTruck, setSelectedTruck] = useState('');
   const [selectedStatus, setSelectedStatus] = useState('');
+  const [filterMonth, setFilterMonth] = useState<string>(new Date().toISOString().substring(0, 7));
 
   // Form states
   const [truckId, setTruckId] = useState('');
@@ -274,6 +275,17 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
   const freightsList = data.freights || [];
   const trucksList = data.trucks || [];
 
+  const availableMonths = useMemo(() => {
+    const months = new Set<string>();
+    months.add(new Date().toISOString().substring(0, 7));
+    (data?.freights || []).forEach((f: any) => {
+      if (f.data && f.data.length >= 7) {
+        months.add(f.data.substring(0, 7));
+      }
+    });
+    return Array.from(months).sort().reverse();
+  }, [data]);
+
   // Filtered lists
   const filteredFreights = freightsList.filter((f: any) => {
     const matchesSearch = 
@@ -283,8 +295,9 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
     
     const matchesTruck = selectedTruck === '' || f.truckId === selectedTruck;
     const matchesStatus = selectedStatus === '' || f.status === selectedStatus;
+    const matchesMonth = filterMonth === 'all' ? true : (f.data && f.data.startsWith(filterMonth));
     
-    return matchesSearch && matchesTruck && matchesStatus;
+    return matchesSearch && matchesTruck && matchesStatus && matchesMonth;
   });
 
   // Totals calculations
@@ -564,6 +577,21 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
         </div>
 
         <div className="flex flex-wrap gap-4 w-full md:w-auto">
+          {/* Month Filter */}
+          <select
+            value={filterMonth}
+            onChange={(e) => setFilterMonth(e.target.value)}
+            className="flex-1 sm:flex-initial bg-slate-50 border border-slate-200 px-4 py-3 rounded-2xl text-sm font-bold text-slate-600 focus:outline-none focus:border-blue-500"
+          >
+            <option value="all">Todos os Meses</option>
+            {availableMonths.map((m: string) => {
+              const [year, month] = m.split('-');
+              const dateObj = new Date(Number(year), Number(month) - 1, 1);
+              const label = dateObj.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+              return <option key={m} value={m}>{label.charAt(0).toUpperCase() + label.slice(1)}</option>;
+            })}
+          </select>
+
           {/* Truck Filter */}
           <select
             value={selectedTruck}
