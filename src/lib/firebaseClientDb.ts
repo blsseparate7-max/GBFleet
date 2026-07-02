@@ -520,8 +520,8 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
         truckId: body.truckId,
         driverId: body.driverId || "",
         gasStationId: body.gasStationId || "",
-        litros: Number(body.litros),
-        valor: Number(body.valor),
+        litros: body.litros ? Number(body.litros) : 0,
+        valor: body.valor ? Number(body.valor) : 0,
         km: Number(body.km),
         data: body.data || new Date().toISOString().split("T")[0],
         comprovante: body.comprovante || "",
@@ -533,31 +533,33 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       liveDb.fuel_logs.push(newLog);
 
       // Trigger automatic operation expense
-      const rawExpense = {
-        id: "exp_" + Math.random().toString(36).substr(2, 9),
-        fuelLogId: logId,
-        companyId: ctx.companyId,
-        truckId: body.truckId,
-        tipo: `Diesel ${body.tipoDiesel || "S10"} (Abastecimento)`,
-        valor: Number(body.valor),
-        data: body.data || new Date().toISOString().split("T")[0],
-        documento: "Auto-Abastecimento",
-        descritivo: `Abastecimento automático via painel / chat (${body.litros} Litros de Diesel ${body.tipoDiesel || "S10"})`
-      };
-      liveDb.expenses.push(rawExpense);
+      if (newLog.valor > 0) {
+        const rawExpense = {
+          id: "exp_" + Math.random().toString(36).substr(2, 9),
+          fuelLogId: logId,
+          companyId: ctx.companyId,
+          truckId: body.truckId,
+          tipo: `Diesel ${body.tipoDiesel || "S10"} (Abastecimento)`,
+          valor: Number(body.valor),
+          data: body.data || new Date().toISOString().split("T")[0],
+          documento: "Auto-Abastecimento",
+          descritivo: `Abastecimento automático via painel / chat (${body.litros} Litros de Diesel ${body.tipoDiesel || "S10"})`
+        };
+        liveDb.expenses.push(rawExpense);
 
-      // Trigger auto flow cash
-      const rawCash = {
-        id: "cash_" + Math.random().toString(36).substr(2, 9),
-        fuelLogId: logId,
-        companyId: ctx.companyId,
-        tipo: "saida",
-        categoria: `Diesel ${body.tipoDiesel || "S10"} (Abastecimento)`,
-        valor: Number(body.valor),
-        data: body.data || new Date().toISOString().split("T")[0],
-        descricao: `Combustível Placa ${body.truckId} (${body.tipoDiesel || "S10"})`
-      };
-      liveDb.cash_flow.push(rawCash);
+        // Trigger auto flow cash
+        const rawCash = {
+          id: "cash_" + Math.random().toString(36).substr(2, 9),
+          fuelLogId: logId,
+          companyId: ctx.companyId,
+          tipo: "saida",
+          categoria: `Diesel ${body.tipoDiesel || "S10"} (Abastecimento)`,
+          valor: Number(body.valor),
+          data: body.data || new Date().toISOString().split("T")[0],
+          descricao: `Combustível Placa ${body.truckId} (${body.tipoDiesel || "S10"})`
+        };
+        liveDb.cash_flow.push(rawCash);
+      }
 
       // Trigger Arla expense and cash flow if valorArla is set
       if (body.valorArla && Number(body.valorArla) > 0) {
@@ -603,8 +605,8 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       matchLog.truckId = body.truckId;
       matchLog.driverId = body.driverId || "";
       matchLog.gasStationId = body.gasStationId || "";
-      matchLog.litros = Number(body.litros);
-      matchLog.valor = Number(body.valor);
+      matchLog.litros = body.litros ? Number(body.litros) : 0;
+      matchLog.valor = body.valor ? Number(body.valor) : 0;
       matchLog.km = Number(body.km);
       matchLog.data = body.data || new Date().toISOString().split("T")[0];
       matchLog.comprovante = body.comprovante || "";
@@ -626,32 +628,34 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
         return !isFuelSync && !isArlaSync;
       });
 
-      // Insert new Diesel expense entry
-      const rawExpense = {
-        id: "exp_" + Math.random().toString(36).substr(2, 9),
-        fuelLogId: targetId,
-        companyId: ctx.companyId,
-        truckId: body.truckId,
-        tipo: `Diesel ${body.tipoDiesel || "S10"} (Abastecimento)`,
-        valor: Number(body.valor),
-        data: body.data || new Date().toISOString().split("T")[0],
-        documento: "Auto-Abastecimento",
-        descritivo: `Abastecimento automático via painel / chat (${body.litros} Litros de Diesel ${body.tipoDiesel || "S10"})`
-      };
-      liveDb.expenses.push(rawExpense);
+      // Insert new Diesel expense entry if valor > 0
+      if (matchLog.valor > 0) {
+        const rawExpense = {
+          id: "exp_" + Math.random().toString(36).substr(2, 9),
+          fuelLogId: targetId,
+          companyId: ctx.companyId,
+          truckId: body.truckId,
+          tipo: `Diesel ${body.tipoDiesel || "S10"} (Abastecimento)`,
+          valor: Number(body.valor),
+          data: body.data || new Date().toISOString().split("T")[0],
+          documento: "Auto-Abastecimento",
+          descritivo: `Abastecimento automático via painel / chat (${body.litros} Litros de Diesel ${body.tipoDiesel || "S10"})`
+        };
+        liveDb.expenses.push(rawExpense);
 
-      // Insert new Diesel cash flow entry
-      const rawCash = {
-        id: "cash_" + Math.random().toString(36).substr(2, 9),
-        fuelLogId: targetId,
-        companyId: ctx.companyId,
-        tipo: "saida",
-        categoria: `Diesel ${body.tipoDiesel || "S10"} (Abastecimento)`,
-        valor: Number(body.valor),
-        data: body.data || new Date().toISOString().split("T")[0],
-        descricao: `Combustível Placa ${body.truckId} (${body.tipoDiesel || "S10"})`
-      };
-      liveDb.cash_flow.push(rawCash);
+        // Insert new Diesel cash flow entry
+        const rawCash = {
+          id: "cash_" + Math.random().toString(36).substr(2, 9),
+          fuelLogId: targetId,
+          companyId: ctx.companyId,
+          tipo: "saida",
+          categoria: `Diesel ${body.tipoDiesel || "S10"} (Abastecimento)`,
+          valor: Number(body.valor),
+          data: body.data || new Date().toISOString().split("T")[0],
+          descricao: `Combustível Placa ${body.truckId} (${body.tipoDiesel || "S10"})`
+        };
+        liveDb.cash_flow.push(rawCash);
+      }
 
       // Insert new Arla expense and cash flow if applicable
       if (body.valorArla && Number(body.valorArla) > 0) {

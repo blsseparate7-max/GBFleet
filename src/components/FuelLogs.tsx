@@ -23,6 +23,7 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
     comprovante: '',
     tipoDiesel: 'S10'
   });
+  const [tipoRegistro, setTipoRegistro] = useState<'diesel' | 'arla' | 'ambos'>('diesel');
 
   // Filters
   const [filterTruck, setFilterTruck] = useState('');
@@ -58,56 +59,87 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
       alert("Por favor, insira uma quilometragem (KM) válida.");
       return;
     }
-    if (!newLog.litros || isNaN(Number(newLog.litros)) || Number(newLog.litros) <= 0) {
-      alert("Por favor, insira uma quantidade de litros válida.");
-      return;
+
+    if (tipoRegistro === 'diesel' || tipoRegistro === 'ambos') {
+      if (!newLog.litros || isNaN(Number(newLog.litros)) || Number(newLog.litros) <= 0) {
+        alert("Por favor, insira uma quantidade de litros de Diesel válida.");
+        return;
+      }
+      if (!newLog.valor || isNaN(Number(newLog.valor)) || Number(newLog.valor) <= 0) {
+        alert("Por favor, insira um valor de Diesel numérico válido maior que zero.");
+        return;
+      }
     }
-    if (!newLog.valor || isNaN(Number(newLog.valor)) || Number(newLog.valor) <= 0) {
-      alert("Por favor, insira um valor numérico válido maior que zero.");
-      return;
+
+    if (tipoRegistro === 'arla' || tipoRegistro === 'ambos') {
+      if (!newLog.litrosArla || isNaN(Number(newLog.litrosArla)) || Number(newLog.litrosArla) <= 0) {
+        alert("Por favor, insira uma quantidade de litros de Arla 32 válida.");
+        return;
+      }
+      if (!newLog.valorArla || isNaN(Number(newLog.valorArla)) || Number(newLog.valorArla) <= 0) {
+        alert("Por favor, insira um valor de Arla 32 numérico válido maior que zero.");
+        return;
+      }
     }
+
     if (isSaving) return;
 
     setIsSaving(true);
     try {
       const companyId = data?.company?.id || 'comp_1';
 
+      // Build payload based on registration type
+      const payload: any = {
+        truckId: newLog.truckId,
+        driverId: newLog.driverId,
+        gasStationId: newLog.gasStationId,
+        data: newLog.data,
+        km: Number(newLog.km),
+        comprovante: newLog.comprovante,
+        companyId
+      };
+
+      if (tipoRegistro === 'diesel') {
+        payload.litros = Number(newLog.litros);
+        payload.valor = Number(newLog.valor);
+        payload.tipoDiesel = newLog.tipoDiesel || 'S10';
+        payload.litrosArla = undefined;
+        payload.valorArla = undefined;
+      } else if (tipoRegistro === 'arla') {
+        payload.litros = 0;
+        payload.valor = 0;
+        payload.tipoDiesel = 'S10';
+        payload.litrosArla = Number(newLog.litrosArla);
+        payload.valorArla = Number(newLog.valorArla);
+      } else { // ambos
+        payload.litros = Number(newLog.litros);
+        payload.valor = Number(newLog.valor);
+        payload.tipoDiesel = newLog.tipoDiesel || 'S10';
+        payload.litrosArla = Number(newLog.litrosArla);
+        payload.valorArla = Number(newLog.valorArla);
+      }
+
       if (selectedLog) {
         // Edit
         await fetch(`/api/fuel_logs/${selectedLog.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            ...newLog,
-            companyId,
-            km: Number(newLog.km),
-            litros: Number(newLog.litros),
-            valor: Number(newLog.valor),
-            litrosArla: newLog.litrosArla ? Number(newLog.litrosArla) : undefined,
-            valorArla: newLog.valorArla ? Number(newLog.valorArla) : undefined,
-            comprovante: newLog.comprovante,
-            tipoDiesel: newLog.tipoDiesel || 'S10'
-          })
+          body: JSON.stringify(payload)
         });
       } else {
         // New
         await fetch('/api/fuel_logs', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            ...newLog,
-            companyId,
-            km: Number(newLog.km),
-            litros: Number(newLog.litros),
-            valor: Number(newLog.valor),
-            litrosArla: newLog.litrosArla ? Number(newLog.litrosArla) : undefined,
-            valorArla: newLog.valorArla ? Number(newLog.valorArla) : undefined,
-            comprovante: newLog.comprovante,
-            tipoDiesel: newLog.tipoDiesel || 'S10'
-          })
+          body: JSON.stringify(payload)
         });
 
         // Notify chat (simulated for demo)
+        const displayValue = tipoRegistro === 'arla' 
+          ? Number(payload.valorArla).toLocaleString('pt-BR') 
+          : Number(payload.valor).toLocaleString('pt-BR');
+        const displayFuel = tipoRegistro === 'arla' ? 'Arla 32' : `Diesel ${payload.tipoDiesel}`;
+
         await fetch('/api/chat_logs', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -115,7 +147,7 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
             companyId,
             userId: 'user_1',
             mensagem: `Registro manual de abastecimento: ${newLog.truckId}`,
-            resposta: `Abastecimento de R$ ${Number(newLog.valor).toLocaleString('pt-BR')} registrado com sucesso no caminhão ${newLog.truckId}. O caixa e a DRE foram atualizados.`,
+            resposta: `Abastecimento de ${displayFuel} (R$ ${displayValue}) registrado com sucesso no caminhão ${newLog.truckId}. O caixa e a DRE foram atualizados.`,
             acaoGerada: 'REGISTER_FUEL'
           })
         });
@@ -160,6 +192,17 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
       comprovante: log.comprovante || '',
       tipoDiesel: log.tipoDiesel || 'S10'
     });
+
+    const hasDiesel = log.valor && Number(log.valor) > 0;
+    const hasArla = log.valorArla && Number(log.valorArla) > 0;
+    if (hasDiesel && hasArla) {
+      setTipoRegistro('ambos');
+    } else if (hasArla) {
+      setTipoRegistro('arla');
+    } else {
+      setTipoRegistro('diesel');
+    }
+
     setShowArlaManual(log.valorArla ? true : false);
     setIsModalOpen(true);
   };
@@ -283,6 +326,7 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
               id="btn-register-fuel-log"
               onClick={() => {
                 setSelectedLog(null);
+                setTipoRegistro('diesel');
                 setNewLog({
                   truckId: '',
                   driverId: '',
@@ -291,7 +335,10 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
                   km: '',
                   litros: '',
                   valor: '',
-                  comprovante: ''
+                  litrosArla: '',
+                  valorArla: '',
+                  comprovante: '',
+                  tipoDiesel: 'S10'
                 });
                 setIsModalOpen(true);
               }}
@@ -625,6 +672,7 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
           setIsModalOpen(false);
           setSelectedLog(null);
           setShowArlaManual(false);
+          setTipoRegistro('diesel');
           setNewLog({
             truckId: '',
             driverId: '',
@@ -673,55 +721,6 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
             </div>
           </div>
           
-          <div className="grid grid-cols-1 gap-4">
-            <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-1.5">Posto de Abastecimento</label>
-              <select 
-                id="input-fuel-station"
-                value={newLog.gasStationId}
-                onChange={e => setNewLog({...newLog, gasStationId: e.target.value})}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500/20 text-slate-800"
-              >
-                <option value="">Geral / Não listado</option>
-                {gasStationsList.map((g: any) => (
-                  <option key={g.id} value={g.id}>{g.nome} {g.cidade ? `(${g.cidade}/${g.uf})` : ''}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 gap-4">
-            <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-1.5">Tipo de Diesel</label>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setNewLog({...newLog, tipoDiesel: 'S10'})}
-                  className={`py-2.5 px-4 rounded-xl font-bold border text-sm transition-all flex items-center justify-center gap-2 ${
-                    (newLog.tipoDiesel || 'S10') === 'S10'
-                      ? 'bg-amber-500/10 border-amber-500 text-amber-700 shadow-sm shadow-amber-500/5'
-                      : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
-                  }`}
-                >
-                  <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
-                  Diesel S10
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setNewLog({...newLog, tipoDiesel: 'S500'})}
-                  className={`py-2.5 px-4 rounded-xl font-bold border text-sm transition-all flex items-center justify-center gap-2 ${
-                    newLog.tipoDiesel === 'S500'
-                      ? 'bg-blue-600/10 border-blue-600 text-blue-700 shadow-sm shadow-blue-600/5'
-                      : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
-                  }`}
-                >
-                  <span className="w-2.5 h-2.5 rounded-full bg-blue-600" />
-                  Diesel S500
-                </button>
-              </div>
-            </div>
-          </div>
-
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-semibold text-slate-700 mb-1.5">Data</label>
@@ -745,103 +744,167 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
               />
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-4">
+
+          <div className="grid grid-cols-1 gap-4">
             <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-1.5">Litros</label>
-              <input 
-                id="input-fuel-litros"
-                type="number" 
-                value={newLog.litros}
-                onChange={e => setNewLog({...newLog, litros: e.target.value})}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                placeholder="0"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-1.5">Valor (R$)</label>
-              <input 
-                id="input-fuel-valor"
-                type="text" 
-                value={newLog.valor ? maskBRL(newLog.valor) : ""}
-                onChange={e => {
-                  const masked = maskBRL(e.target.value);
-                  setNewLog({...newLog, valor: masked ? String(unmaskBRL(masked)) : ""});
-                }}
-                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-bold font-mono text-slate-700"
-                placeholder="R$ 0,00"
-              />
+              <label className="block text-sm font-semibold text-slate-700 mb-1.5">Posto de Abastecimento</label>
+              <select 
+                id="input-fuel-station"
+                value={newLog.gasStationId}
+                onChange={e => setNewLog({...newLog, gasStationId: e.target.value})}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500/20 text-slate-800"
+              >
+                <option value="">Geral / Não listado</option>
+                {gasStationsList.map((g: any) => (
+                  <option key={g.id} value={g.id}>{g.nome} {g.cidade ? `(${g.cidade}/${g.uf})` : ''}</option>
+                ))}
+              </select>
             </div>
           </div>
 
-          {/* Arla 32 conditional fields */}
-          {(() => {
-            const selectedTruckObj = (data.trucks || []).find((t: any) => t.placa === newLog.truckId);
-            const usesArla = selectedTruckObj?.usaArla;
-            const isVisible = usesArla || showArlaManual;
+          {/* O que foi abastecido selector */}
+          <div className="bg-slate-50 p-3 rounded-2xl border border-slate-200/80 space-y-2">
+            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">O que foi abastecido?</label>
+            <div className="grid grid-cols-3 gap-2 bg-slate-200/50 p-1 rounded-xl">
+              <button
+                type="button"
+                onClick={() => setTipoRegistro('diesel')}
+                className={`py-2 px-3 rounded-lg text-xs font-bold transition-all text-center flex items-center justify-center gap-1.5 ${
+                  tipoRegistro === 'diesel'
+                    ? 'bg-white text-blue-600 shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                ⛽ Diesel
+              </button>
+              <button
+                type="button"
+                onClick={() => setTipoRegistro('arla')}
+                className={`py-2 px-3 rounded-lg text-xs font-bold transition-all text-center flex items-center justify-center gap-1.5 ${
+                  tipoRegistro === 'arla'
+                    ? 'bg-white text-sky-600 shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                💨 Arla 32
+              </button>
+              <button
+                type="button"
+                onClick={() => setTipoRegistro('ambos')}
+                className={`py-2 px-3 rounded-lg text-xs font-bold transition-all text-center flex items-center justify-center gap-1.5 ${
+                  tipoRegistro === 'ambos'
+                    ? 'bg-white text-indigo-600 shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                ⚡ Ambos
+              </button>
+            </div>
+          </div>
 
-            if (isVisible) {
-              return (
-                <div className="bg-sky-50/50 p-4 rounded-2xl border border-sky-100 space-y-3">
-                  <div className="flex justify-between items-center border-b border-sky-100/50 pb-2">
-                    <span className="text-xs font-black text-sky-800 uppercase tracking-wider flex items-center gap-1.5">
-                      💨 Abastecimento de Arla 32 (Adicional)
-                    </span>
-                    {!usesArla && (
-                      <button 
-                        type="button"
-                        onClick={() => {
-                          setShowArlaManual(false);
-                          setNewLog({ ...newLog, litrosArla: '', valorArla: '' });
-                        }}
-                        className="text-[10px] font-bold text-sky-600 hover:underline"
-                      >
-                        Ocultar
-                      </button>
-                    )}
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-xs font-bold text-sky-800 mb-1">Litros Arla</label>
-                      <input 
-                        id="input-fuel-litros-arla"
-                        type="number" 
-                        value={newLog.litrosArla}
-                        onChange={e => setNewLog({...newLog, litrosArla: e.target.value})}
-                        className="w-full bg-white border border-sky-200/80 rounded-xl px-4 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-sky-500/20"
-                        placeholder="0"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-sky-800 mb-1">Valor Arla (R$)</label>
-                      <input 
-                        id="input-fuel-valor-arla"
-                        type="text" 
-                        value={newLog.valorArla ? maskBRL(newLog.valorArla) : ""}
-                        onChange={e => {
-                          const masked = maskBRL(e.target.value);
-                          setNewLog({...newLog, valorArla: masked ? String(unmaskBRL(masked)) : ""});
-                        }}
-                        className="w-full bg-white border border-sky-200/80 rounded-xl px-4 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-sky-500/20 font-bold font-mono text-slate-700"
-                        placeholder="R$ 0,00"
-                      />
-                    </div>
+          {/* Diesel specific fields */}
+          {(tipoRegistro === 'diesel' || tipoRegistro === 'ambos') && (
+            <div className="space-y-4 p-4 rounded-2xl bg-amber-50/30 border border-amber-200/60">
+              <span className="text-xs font-black text-amber-800 uppercase tracking-wider flex items-center gap-1.5">
+                ⛽ Abastecimento de Diesel
+              </span>
+              <div className="grid grid-cols-1 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-amber-800 mb-1">Tipo de Diesel</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setNewLog({...newLog, tipoDiesel: 'S10'})}
+                      className={`py-2 px-4 rounded-xl font-bold border text-xs transition-all flex items-center justify-center gap-2 ${
+                        (newLog.tipoDiesel || 'S10') === 'S10'
+                          ? 'bg-white border-amber-500 text-amber-700 shadow-sm shadow-amber-500/5'
+                          : 'bg-slate-100/50 border-slate-200 text-slate-500 hover:bg-slate-100'
+                      }`}
+                    >
+                      <span className="w-2 h-2 rounded-full bg-amber-500" />
+                      Diesel S10
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNewLog({...newLog, tipoDiesel: 'S500'})}
+                      className={`py-2 px-4 rounded-xl font-bold border text-xs transition-all flex items-center justify-center gap-2 ${
+                        newLog.tipoDiesel === 'S500'
+                          ? 'bg-white border-blue-600 text-blue-700 shadow-sm shadow-blue-600/5'
+                          : 'bg-slate-100/50 border-slate-200 text-slate-500 hover:bg-slate-100'
+                      }`}
+                    >
+                      <span className="w-2 h-2 rounded-full bg-blue-600" />
+                      Diesel S500
+                    </button>
                   </div>
                 </div>
-              );
-            } else {
-              return (
-                <div className="flex justify-start">
-                  <button
-                    type="button"
-                    onClick={() => setShowArlaManual(true)}
-                    className="text-xs font-bold text-sky-600 hover:text-sky-750 bg-sky-50 border border-sky-100 hover:bg-sky-100/50 px-3.5 py-1.5 rounded-xl transition cursor-pointer flex items-center gap-1.5"
-                  >
-                    <span>💨 Registrar também Arla 32 para este abastecimento</span>
-                  </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-amber-800 mb-1">Litros</label>
+                  <input 
+                    id="input-fuel-litros"
+                    type="number" 
+                    value={newLog.litros}
+                    onChange={e => setNewLog({...newLog, litros: e.target.value})}
+                    className="w-full bg-white border border-amber-200/60 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                    placeholder="0"
+                  />
                 </div>
-              );
-            }
-          })()}
+                <div>
+                  <label className="block text-xs font-bold text-amber-800 mb-1">Valor (R$)</label>
+                  <input 
+                    id="input-fuel-valor"
+                    type="text" 
+                    value={newLog.valor ? maskBRL(newLog.valor) : ""}
+                    onChange={e => {
+                      const masked = maskBRL(e.target.value);
+                      setNewLog({...newLog, valor: masked ? String(unmaskBRL(masked)) : ""});
+                    }}
+                    className="w-full bg-white border border-amber-200/60 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500/20 font-bold font-mono text-slate-700"
+                    placeholder="R$ 0,00"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Arla 32 specific fields */}
+          {(tipoRegistro === 'arla' || tipoRegistro === 'ambos') && (
+            <div className="space-y-4 p-4 rounded-2xl bg-sky-50/40 border border-sky-200/60">
+              <span className="text-xs font-black text-sky-800 uppercase tracking-wider flex items-center gap-1.5">
+                💨 Abastecimento de Arla 32
+              </span>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-sky-800 mb-1">Litros Arla</label>
+                  <input 
+                    id="input-fuel-litros-arla"
+                    type="number" 
+                    value={newLog.litrosArla}
+                    onChange={e => setNewLog({...newLog, litrosArla: e.target.value})}
+                    className="w-full bg-white border border-sky-200/80 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-sky-500/20"
+                    placeholder="0"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-sky-800 mb-1">Valor Arla (R$)</label>
+                  <input 
+                    id="input-fuel-valor-arla"
+                    type="text" 
+                    value={newLog.valorArla ? maskBRL(newLog.valorArla) : ""}
+                    onChange={e => {
+                      const masked = maskBRL(e.target.value);
+                      setNewLog({...newLog, valorArla: masked ? String(unmaskBRL(masked)) : ""});
+                    }}
+                    className="w-full bg-white border border-sky-200/80 rounded-xl px-4 py-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-sky-500/20 font-bold font-mono text-slate-700"
+                    placeholder="R$ 0,00"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
           <div className="relative border-2 border-dashed border-slate-200 rounded-2xl flex flex-col items-center justify-center p-4 text-center hover:border-blue-500 hover:bg-blue-50/10 transition-all cursor-pointer">
             <input 
               type="file"
@@ -885,6 +948,7 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
               onClick={() => {
                 setIsModalOpen(false);
                 setSelectedLog(null);
+                setTipoRegistro('diesel');
                 setNewLog({
                   truckId: '',
                   driverId: '',
@@ -893,7 +957,10 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
                   km: '',
                   litros: '',
                   valor: '',
-                  comprovante: ''
+                  litrosArla: '',
+                  valorArla: '',
+                  comprovante: '',
+                  tipoDiesel: 'S10'
                 });
               }}
               className="flex-1 px-4 py-3 rounded-xl font-semibold text-slate-600 hover:bg-slate-100 transition-colors"
