@@ -81,6 +81,31 @@ async function extractAndSaveAttachments(obj: any): Promise<void> {
   }
 }
 
+// Helper to recursively sanitize objects for Firestore by converting or deleting undefined values
+function sanitizeForFirestore(obj: any): void {
+  if (!obj || typeof obj !== "object") return;
+
+  if (Array.isArray(obj)) {
+    for (let i = 0; i < obj.length; i++) {
+      if (obj[i] === undefined) {
+        obj[i] = null;
+      } else if (obj[i] && typeof obj[i] === "object") {
+        sanitizeForFirestore(obj[i]);
+      }
+    }
+  } else {
+    const keys = Object.keys(obj);
+    for (const key of keys) {
+      const val = obj[key];
+      if (val === undefined) {
+        delete obj[key];
+      } else if (val && typeof val === "object") {
+        sanitizeForFirestore(val);
+      }
+    }
+  }
+}
+
 // Save in-memory DB back to localStorage and Firestore
 // Promise Chaining Queue for sequential, direct, and reliable blocking writes to Firestore
 let lastWritePromise: Promise<void> = Promise.resolve();
@@ -93,14 +118,17 @@ export async function persistDB() {
       // 1) Extract and save massive attachments to separate Firestore documents first
       await extractAndSaveAttachments(liveDb);
 
-      // 2) Save clean, tiny database locally immediately for 100% responsiveness
+      // 2) Sanitize the database of any 'undefined' properties that Firestore rejects
+      sanitizeForFirestore(liveDb);
+
+      // 3) Save clean, tiny database locally immediately for 100% responsiveness
       try {
         localStorage.setItem("gbfleet_db_local", JSON.stringify(liveDb));
       } catch (e) {
         console.error("Failed to write DB to localStorage:", e);
       }
 
-      // 3) Persist clean, tiny database document to Firestore
+      // 4) Persist clean, tiny database document to Firestore
       const docRef = doc(firestore, "system_state", "gbfleet_db");
       await setDoc(docRef, liveDb);
       console.log("[Firebase Client SDK] Direct write to Firestore successfully completed.");
