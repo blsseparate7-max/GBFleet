@@ -55,28 +55,34 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
       alert("Por favor, selecione um motorista.");
       return;
     }
-    if (!newLog.km || isNaN(Number(newLog.km)) || Number(newLog.km) <= 0) {
+
+    const kmVal = String(newLog.km).replace(',', '.');
+    if (!newLog.km || isNaN(Number(kmVal)) || Number(kmVal) <= 0) {
       alert("Por favor, insira uma quilometragem (KM) válida.");
       return;
     }
 
     if (tipoRegistro === 'diesel' || tipoRegistro === 'ambos') {
-      if (!newLog.litros || isNaN(Number(newLog.litros)) || Number(newLog.litros) <= 0) {
+      const litrosVal = String(newLog.litros).replace(',', '.');
+      const valorVal = String(newLog.valor).replace(',', '.');
+      if (!newLog.litros || isNaN(Number(litrosVal)) || Number(litrosVal) <= 0) {
         alert("Por favor, insira uma quantidade de litros de Diesel válida.");
         return;
       }
-      if (!newLog.valor || isNaN(Number(newLog.valor)) || Number(newLog.valor) <= 0) {
+      if (!newLog.valor || isNaN(Number(valorVal)) || Number(valorVal) <= 0) {
         alert("Por favor, insira um valor de Diesel numérico válido maior que zero.");
         return;
       }
     }
 
     if (tipoRegistro === 'arla' || tipoRegistro === 'ambos') {
-      if (!newLog.litrosArla || isNaN(Number(newLog.litrosArla)) || Number(newLog.litrosArla) <= 0) {
+      const litrosArlaVal = String(newLog.litrosArla).replace(',', '.');
+      const valorArlaVal = String(newLog.valorArla).replace(',', '.');
+      if (!newLog.litrosArla || isNaN(Number(litrosArlaVal)) || Number(litrosArlaVal) <= 0) {
         alert("Por favor, insira uma quantidade de litros de Arla 32 válida.");
         return;
       }
-      if (!newLog.valorArla || isNaN(Number(newLog.valorArla)) || Number(newLog.valorArla) <= 0) {
+      if (!newLog.valorArla || isNaN(Number(valorArlaVal)) || Number(valorArlaVal) <= 0) {
         alert("Por favor, insira um valor de Arla 32 numérico válido maior que zero.");
         return;
       }
@@ -94,14 +100,14 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
         driverId: newLog.driverId,
         gasStationId: newLog.gasStationId,
         data: newLog.data,
-        km: Number(newLog.km),
+        km: Number(String(newLog.km).replace(',', '.')),
         comprovante: newLog.comprovante,
         companyId
       };
 
       if (tipoRegistro === 'diesel') {
-        payload.litros = Number(newLog.litros);
-        payload.valor = Number(newLog.valor);
+        payload.litros = Number(String(newLog.litros).replace(',', '.'));
+        payload.valor = Number(String(newLog.valor).replace(',', '.'));
         payload.tipoDiesel = newLog.tipoDiesel || 'S10';
         payload.litrosArla = undefined;
         payload.valorArla = undefined;
@@ -109,14 +115,14 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
         payload.litros = 0;
         payload.valor = 0;
         payload.tipoDiesel = 'S10';
-        payload.litrosArla = Number(newLog.litrosArla);
-        payload.valorArla = Number(newLog.valorArla);
+        payload.litrosArla = Number(String(newLog.litrosArla).replace(',', '.'));
+        payload.valorArla = Number(String(newLog.valorArla).replace(',', '.'));
       } else { // ambos
-        payload.litros = Number(newLog.litros);
-        payload.valor = Number(newLog.valor);
+        payload.litros = Number(String(newLog.litros).replace(',', '.'));
+        payload.valor = Number(String(newLog.valor).replace(',', '.'));
         payload.tipoDiesel = newLog.tipoDiesel || 'S10';
-        payload.litrosArla = Number(newLog.litrosArla);
-        payload.valorArla = Number(newLog.valorArla);
+        payload.litrosArla = Number(String(newLog.litrosArla).replace(',', '.'));
+        payload.valorArla = Number(String(newLog.valorArla).replace(',', '.'));
       }
 
       if (selectedLog) {
@@ -913,6 +919,10 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
               onChange={(e) => {
                 const file = e.target.files?.[0];
                 if (file) {
+                  if (file.type === "application/pdf" && file.size > 400 * 1024) {
+                    alert("O arquivo PDF selecionado é muito grande (limite de 400KB para arquivos PDF). Por favor, anexe uma imagem ou use um PDF compactado para garantir o salvamento.");
+                    return;
+                  }
                   compressAndSetFile(file, (base64) => {
                     setNewLog({ ...newLog, comprovante: base64 });
                   });
