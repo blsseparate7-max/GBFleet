@@ -1,5 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Eye, FileText, X } from 'lucide-react';
+import { doc, getDoc } from 'firebase/firestore';
+import { firestore } from './firebaseClientDb';
+
+// Cache to store loaded attachments so we don't fetch them multiple times in the same session
+const attachmentCache: Record<string, string> = {};
 
 /**
  * Compresses an image client-side to keep base64 strings tiny (~20kb-60kb),
@@ -64,25 +69,72 @@ interface AttachmentPreviewProps {
 /**
  * A highly immersive Full Screen Lightbox & PDF Viewer component.
  * Allows seamless, sandbox-safe file viewing of custom receipts inside the platform preview.
+ * Now supports dynamic lazy-loading of separated attachments from Firestore on-demand.
  */
 export function AttachmentPreview({ src, label, className }: AttachmentPreviewProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [realSrc, setRealSrc] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
   if (!src) return null;
 
-  const isPdf = src.startsWith('data:application/pdf');
+  const isRef = src.startsWith('attachment_ref:');
+
+  useEffect(() => {
+    if (!isRef) {
+      setRealSrc(src);
+      return;
+    }
+
+    if (isOpen && isRef && !realSrc && !loading) {
+      if (attachmentCache[src]) {
+        setRealSrc(attachmentCache[src]);
+        return;
+      }
+
+      setLoading(true);
+      const docId = src.replace('attachment_ref:', '');
+      const docRef = doc(firestore, 'system_state', docId);
+
+      getDoc(docRef)
+        .then((snap) => {
+          if (snap.exists()) {
+            const fileData = snap.data();
+            if (fileData && fileData.base64) {
+              attachmentCache[src] = fileData.base64;
+              setRealSrc(fileData.base64);
+            }
+          }
+          setLoading(false);
+        })
+        .catch((err) => {
+          console.error("Failed to load lazy attachment from Firestore:", err);
+          setLoading(false);
+        });
+    }
+  }, [isOpen, src, isRef, realSrc, loading]);
+
+  const isPdf = realSrc ? realSrc.startsWith('data:application/pdf') : false;
 
   return (
     <>
       <div className={`relative group rounded-xl overflow-hidden border border-slate-200 bg-slate-100 aspect-video flex flex-col items-center justify-center p-2 ${className || ''}`}>
-        {isPdf ? (
+        {isRef && !realSrc ? (
+          <div className="flex flex-col items-center justify-center text-slate-500 gap-1 w-full h-full text-center">
+            <FileText size={20} className="text-blue-500 shrink-0" />
+            <span className="text-[9px] font-extrabold text-slate-600 truncate max-w-full uppercase tracking-wider">
+              Anexo Salvo
+            </span>
+          </div>
+        ) : isPdf ? (
           <div className="flex flex-col items-center justify-center text-slate-500 gap-1 w-full h-full">
-            <FileText size={28} className="text-rose-500" />
+            <FileText size={24} className="text-rose-500" />
             <span className="text-[10px] font-bold text-slate-600 truncate max-w-full">
               {label || "Ver Comprovante PDF"}
             </span>
           </div>
         ) : (
-          <img src={src} alt={label || "Anexo"} className="object-cover w-full h-full" referrerPolicy="no-referrer" />
+          <img src={realSrc || src} alt={label || "Anexo"} className="object-cover w-full h-full" referrerPolicy="no-referrer" />
         )}
         <div 
           className="absolute inset-0 bg-slate-900/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer gap-1.5"
@@ -107,10 +159,19 @@ export function AttachmentPreview({ src, label, className }: AttachmentPreviewPr
               </button>
             </div>
             <div className="flex-1 bg-slate-100 p-4 flex items-center justify-center overflow-auto">
-              {isPdf ? (
-                <iframe src={src} className="w-full h-full rounded-2xl border border-slate-200 bg-white" title="PDF Viewer" />
+              {loading ? (
+                <div className="flex flex-col items-center justify-center gap-3">
+                  <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+                  <span className="text-sm font-semibold text-slate-600">Buscando documento no Firestore...</span>
+                </div>
+              ) : realSrc ? (
+                isPdf ? (
+                  <iframe src={realSrc} className="w-full h-full rounded-2xl border border-slate-200 bg-white" title="PDF Viewer" />
+                ) : (
+                  <img src={realSrc} alt="Comprovante ampliado" className="max-w-full max-h-full object-contain rounded-2xl" referrerPolicy="no-referrer" />
+                )
               ) : (
-                <img src={src} alt="Comprovante ampliado" className="max-w-full max-h-full object-contain rounded-2xl" referrerPolicy="no-referrer" />
+                <div className="text-sm font-semibold text-slate-500">Nenhum anexo encontrado ou erro ao carregar.</div>
               )}
             </div>
           </div>

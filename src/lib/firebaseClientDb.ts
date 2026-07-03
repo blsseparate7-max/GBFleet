@@ -55,28 +55,57 @@ let liveDb: any = (() => {
   return JSON.parse(JSON.stringify(dbTemplate));
 })();
 
+// Helper to recursively extract base64 attachment files and save them to separate documents in Firestore,
+// replacing the base64 content with lightweight references like "attachment_ref:attach_xxx".
+// This completely bypasses the 1MB Firestore document limit for the main database state doc.
+async function extractAndSaveAttachments(obj: any): Promise<void> {
+  if (!obj || typeof obj !== "object") return;
+
+  const keys = Object.keys(obj);
+  for (const key of keys) {
+    const val = obj[key];
+    if (typeof val === "string" && val.startsWith("data:") && val.includes(";base64,")) {
+      const attachId = "attach_" + Math.random().toString(36).substr(2, 9) + "_" + Date.now();
+      try {
+        const docRef = doc(firestore, "system_state", attachId);
+        await setDoc(docRef, { base64: val });
+        console.log(`[Attachment Sync] Extracted and saved attachment to separate doc: ${attachId}`);
+        obj[key] = `attachment_ref:${attachId}`;
+      } catch (err: any) {
+        console.error(`[Attachment Sync] Failed to save separate attachment ${attachId}:`, err.message);
+        // Fallback: keep original so we don't lose the data
+      }
+    } else if (val && typeof val === "object") {
+      await extractAndSaveAttachments(val);
+    }
+  }
+}
+
 // Save in-memory DB back to localStorage and Firestore
 // Promise Chaining Queue for sequential, direct, and reliable blocking writes to Firestore
 let lastWritePromise: Promise<void> = Promise.resolve();
 
 export async function persistDB() {
-  // Always save locally immediately for 100% responsiveness and offline safety
-  try {
-    localStorage.setItem("gbfleet_db_local", JSON.stringify(liveDb));
-  } catch (e) {
-    console.error("Failed to write DB to localStorage:", e);
-  }
-
   // Chain the Firestore write sequentially to guarantee order and that the absolute latest data is saved.
   // Awaiting this promise blocks until the Firestore write has fully succeeded.
   lastWritePromise = lastWritePromise.then(async () => {
     try {
+      // 1) Extract and save massive attachments to separate Firestore documents first
+      await extractAndSaveAttachments(liveDb);
+
+      // 2) Save clean, tiny database locally immediately for 100% responsiveness
+      try {
+        localStorage.setItem("gbfleet_db_local", JSON.stringify(liveDb));
+      } catch (e) {
+        console.error("Failed to write DB to localStorage:", e);
+      }
+
+      // 3) Persist clean, tiny database document to Firestore
       const docRef = doc(firestore, "system_state", "gbfleet_db");
       await setDoc(docRef, liveDb);
       console.log("[Firebase Client SDK] Direct write to Firestore successfully completed.");
     } catch (err: any) {
       console.error("[Firebase Client SDK] Error: Failed to persist directly to Firestore.", err.message);
-      // Fallback: save locally but don't crash client completely. Let UI know.
     }
   });
 
