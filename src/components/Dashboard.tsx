@@ -49,8 +49,14 @@ const isPedagioByTipo = (tipo: string) => {
   return t.includes("pedág") || t.includes("pedag");
 };
 
+const isArlaByTipo = (tipo: string) => {
+  const t = (tipo || "").toLowerCase();
+  return t.includes("arla");
+};
+
 const isCombustivelByTipo = (tipo: string) => {
   const t = (tipo || "").toLowerCase();
+  if (t.includes("arla")) return false;
   return t.includes("diesel") || t.includes("combust") || t.includes("gasol") || t.includes("abastec");
 };
 
@@ -151,9 +157,9 @@ export default function Dashboard({ data, onNavigate }: { data: any, onNavigate?
   }, [data?.maintenance_alerts, dashboardView, filterMonth, filterYear]);
 
   // 1. Basic Stats Calculation
-  const totalFuel = filteredFuelLogs.reduce((acc: number, curr: any) => acc + curr.valor, 0);
+  const totalFuel = filteredFuelLogs.reduce((acc: number, curr: any) => acc + curr.valor + (curr.valorArla || 0), 0);
   const totalExpenses = filteredExpenses
-    .filter((e: any) => e.documento !== "Auto-Abastecimento")
+    .filter((e: any) => e.documento !== "Auto-Abastecimento" && e.documento !== "Auto-Abastecimento-Arla")
     .reduce((acc: number, curr: any) => acc + curr.valor, 0);
   const totalSpent = totalFuel + totalExpenses;
 
@@ -184,6 +190,10 @@ export default function Dashboard({ data, onNavigate }: { data: any, onNavigate?
   const manualDieselS500 = filteredExpenses.filter((e: any) => isCombustivelByTipo(e.tipo) && e.documento !== "Auto-Abastecimento" && e.tipo?.toLowerCase().includes("s500")).reduce((acc: number, curr: any) => acc + curr.valor, 0);
   const totalDieselS500 = realFuelS500 + manualDieselS500;
 
+  const realFuelArla = filteredFuelLogs.reduce((acc: number, curr: any) => acc + (curr.valorArla || 0), 0);
+  const manualArla = filteredExpenses.filter((e: any) => isArlaByTipo(e.tipo) && e.documento !== "Auto-Abastecimento-Arla").reduce((acc: number, curr: any) => acc + curr.valor, 0);
+  const totalArla = realFuelArla + manualArla;
+
   const pedagiosValue = filteredExpenses.filter((e: any) => isPedagioByTipo(e.tipo)).reduce((acc: number, curr: any) => acc + curr.valor, 0);
   const realMaint = filteredMaintenanceAlerts.filter((m: any) => m.status === 'Realizado' || m.status === 'Realizada').reduce((acc: number, m: any) => acc + Number(m.custo || 0), 0);
   const manualMaint = filteredExpenses.filter((e: any) => isMaintenanceByTipo(e.tipo) && !e.documento?.startsWith("Auto-Manutenção")).reduce((acc: number, curr: any) => acc + curr.valor, 0);
@@ -192,12 +202,15 @@ export default function Dashboard({ data, onNavigate }: { data: any, onNavigate?
     !isPedagioByTipo(e.tipo) && 
     !isMaintenanceByTipo(e.tipo) && 
     !isCombustivelByTipo(e.tipo) &&
-    e.documento !== "Auto-Abastecimento"
+    !isArlaByTipo(e.tipo) &&
+    e.documento !== "Auto-Abastecimento" &&
+    e.documento !== "Auto-Abastecimento-Arla"
   ).reduce((acc: number, curr: any) => acc + curr.valor, 0);
 
   const costBreakdownData = [
     { name: 'Diesel S10', value: totalDieselS10, color: '#f59e0b' },
     { name: 'Diesel S500', value: totalDieselS500, color: '#3b82f6' },
+    { name: 'Arla 32', value: totalArla, color: '#38bdf8' },
     { name: 'Pedágios', value: pedagiosValue, color: '#10b981' },
     { name: 'Manutenção', value: manutencoesValue, color: '#ef4444' },
     { name: 'Outras Custas', value: outrosValue, color: '#6366f1' },
@@ -346,8 +359,8 @@ export default function Dashboard({ data, onNavigate }: { data: any, onNavigate?
   const truckRanking = data.trucks.map((t: any) => {
     const fuelLogs = filteredFuelLogs.filter((l: any) => l.truckId === t.placa);
     const truckExpenses = filteredExpenses.filter((e: any) => e.truckId === t.placa);
-    const totalTruckSpent = fuelLogs.reduce((acc: number, curr: any) => acc + curr.valor, 0) + 
-                          truckExpenses.filter((e: any) => e.documento !== "Auto-Abastecimento").reduce((acc: number, curr: any) => acc + curr.valor, 0);
+    const totalTruckSpent = fuelLogs.reduce((acc: number, curr: any) => acc + curr.valor + (curr.valorArla || 0), 0) + 
+                          truckExpenses.filter((e: any) => e.documento !== "Auto-Abastecimento" && e.documento !== "Auto-Abastecimento-Arla").reduce((acc: number, curr: any) => acc + curr.valor, 0);
     
     // Calculate custom average for this truck
     const sortedLogs = [...fuelLogs].sort((a: any, b: any) => a.km - b.km);
@@ -391,9 +404,9 @@ export default function Dashboard({ data, onNavigate }: { data: any, onNavigate?
       };
     }
 
-    stationRankingMap[key].total += Number(log.valor) || 0;
+    stationRankingMap[key].total += (Number(log.valor) || 0) + (Number(log.valorArla) || 0);
     stationRankingMap[key].count += 1;
-    stationRankingMap[key].liters += Number(log.litros) || 0;
+    stationRankingMap[key].liters += (Number(log.litros) || 0) + (Number(log.litrosArla) || 0);
     stationRankingMap[key].logs.push(log);
   });
 
@@ -404,8 +417,8 @@ export default function Dashboard({ data, onNavigate }: { data: any, onNavigate?
   const companyRankingMap: { [key: string]: { id: string, name: string, city: string, uf: string, total: number, count: number, logs: any[] } } = {};
 
   (filteredExpenses || []).forEach((exp: any) => {
-    // Skip fuel logs auto-abastecimento to avoid duplication
-    if (exp.documento === "Auto-Abastecimento") return;
+    // Skip fuel logs auto-abastecimento and auto-abastecimento-arla to avoid duplication
+    if (exp.documento === "Auto-Abastecimento" || exp.documento === "Auto-Abastecimento-Arla") return;
 
     const companyId = exp.expenseCompanyId;
     const matchedCompany = (data.expense_companies || []).find((ec: any) => ec.id === companyId);

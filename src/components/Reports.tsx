@@ -37,8 +37,14 @@ const isPedagioByTipo = (tipo: string) => {
   return t.includes("pedág") || t.includes("pedag");
 };
 
+const isArlaByTipo = (tipo: string) => {
+  const t = (tipo || "").toLowerCase();
+  return t.includes("arla");
+};
+
 const isCombustivelByTipo = (tipo: string) => {
   const t = (tipo || "").toLowerCase();
+  if (t.includes("arla")) return false;
   return t.includes("diesel") || t.includes("combust") || t.includes("gasol") || t.includes("abastec");
 };
 
@@ -125,6 +131,12 @@ export default function Reports({ data }: ReportsProps) {
     return realFuel + manualFuel;
   }, [filteredFuelLogs, filteredExpenses]);
 
+  const totalArlaCost = useMemo(() => {
+    const realArla = filteredFuelLogs.reduce((acc, f) => acc + Number(f.valorArla || 0), 0);
+    const manualArla = filteredExpenses.filter((e: any) => isArlaByTipo(e.tipo) && e.documento !== "Auto-Abastecimento-Arla").reduce((acc, e) => acc + Number(e.valor || 0), 0);
+    return realArla + manualArla;
+  }, [filteredFuelLogs, filteredExpenses]);
+
   const totalFuelS10 = useMemo(() => {
     const realS10 = filteredFuelLogs.filter((l: any) => !l.tipoDiesel || l.tipoDiesel === 'S10').reduce((acc, f) => acc + Number(f.valor || 0), 0);
     const manualS10 = filteredExpenses.filter((e: any) => isCombustivelByTipo(e.tipo) && e.documento !== "Auto-Abastecimento" && !e.tipo?.toLowerCase().includes("s500")).reduce((acc, e) => acc + Number(e.valor || 0), 0);
@@ -155,6 +167,7 @@ export default function Reports({ data }: ReportsProps) {
     return filteredExpenses
       .filter((e: any) => 
         !isCombustivelByTipo(e.tipo) && 
+        !isArlaByTipo(e.tipo) && 
         !isMaintenanceByTipo(e.tipo) && 
         !isPedagioByTipo(e.tipo) && 
         !isMotoristaByTipo(e.tipo)
@@ -169,8 +182,8 @@ export default function Reports({ data }: ReportsProps) {
   }, [filteredMaintenance, filteredExpenses]);
 
   const totalCosts = useMemo(() => {
-    return totalFuelCost + administrativeExpenses + maintenanceExpenses + directFreightExpenses;
-  }, [totalFuelCost, administrativeExpenses, maintenanceExpenses, directFreightExpenses]);
+    return totalFuelCost + totalArlaCost + administrativeExpenses + maintenanceExpenses + directFreightExpenses;
+  }, [totalFuelCost, totalArlaCost, administrativeExpenses, maintenanceExpenses, directFreightExpenses]);
 
   const netBalance = useMemo(() => {
     return rawRevenue - totalCosts;
@@ -220,10 +233,11 @@ export default function Reports({ data }: ReportsProps) {
       const countTrips = truckFreights.length;
       const grossRev = truckFreights.reduce((sum, f) => sum + Number(f.valorBruto || 0), 0);
       const fuelCost = truckFuel.reduce((sum, f) => sum + Number(f.valor || 0), 0);
+      const arlaCost = truckFuel.reduce((sum, f) => sum + Number(f.valorArla || 0), 0);
       
       // Filter out auto-abastecimento and auto-manutenção logs from adminCosts to avoid duplication with actual fuel and maintenance logs
       const cleanAdminCosts = truckExp
-        .filter((e: any) => e.documento !== "Auto-Abastecimento" && !e.documento?.startsWith("Auto-Manutenção"))
+        .filter((e: any) => e.documento !== "Auto-Abastecimento" && e.documento !== "Auto-Abastecimento-Arla" && !e.documento?.startsWith("Auto-Manutenção"))
         .reduce((sum, f) => sum + Number(f.valor || 0), 0);
         
       const maintCost = truckMaint.reduce((sum, f) => sum + Number(f.custo || 0), 0);
@@ -233,7 +247,7 @@ export default function Reports({ data }: ReportsProps) {
          return sum + Number(f.comissao || f.motorista || 0) + Number(f.pedagio || 0) + Number(f.outrasDespesas || f.outrosCustos || 0);
       }, 0);
 
-      const totalSpentTruck = fuelCost + cleanAdminCosts + maintCost + directFreightsCost;
+      const totalSpentTruck = fuelCost + arlaCost + cleanAdminCosts + maintCost + directFreightsCost;
       const netProfit = grossRev - totalSpentTruck;
       const margin = grossRev > 0 ? (netProfit / grossRev) * 100 : 0;
       const kmCovered = truckFreights.reduce((sum, f) => sum + Number(f.distanciaKm || 0), 0);
@@ -275,13 +289,14 @@ export default function Reports({ data }: ReportsProps) {
       const grossRev = driverFreights.reduce((sum, f) => sum + Number(f.valorBruto || 0), 0);
       const totalComissao = driverFreights.reduce((sum, f) => sum + Number(f.comissao || f.motorista || 0), 0);
       const fuelCost = driverFuel.reduce((sum, f) => sum + Number(f.valor || 0), 0);
+      const arlaCost = driverFuel.reduce((sum, f) => sum + Number(f.valorArla || 0), 0);
       const kmDriven = driverFreights.reduce((sum, f) => sum + Number(f.distanciaKm || 0), 0);
       
       const pedagogicalCosts = driverFreights.reduce((sum, f) => sum + Number(f.pedagio || 0), 0);
       const helperTravelExpenses = driverFreights.reduce((sum, f) => sum + Number(f.outrasDespesas || f.outrosCustos || 0), 0);
 
       // Exclude indirectFuelCostOnTravel as we are already summing the actual fuelCost (fuel logs)
-      const totalIncuredCosts = totalComissao + fuelCost + pedagogicalCosts + helperTravelExpenses;
+      const totalIncuredCosts = totalComissao + fuelCost + arlaCost + pedagogicalCosts + helperTravelExpenses;
       const profitContribution = grossRev - totalIncuredCosts;
       const efficiency = grossRev > 0 ? (profitContribution / grossRev) * 100 : 0;
 
@@ -374,6 +389,11 @@ export default function Reports({ data }: ReportsProps) {
     // 2. Maintenance
     rawCategorias['Manutenção e Peças'] = maintenanceExpenses;
 
+    // Arla 32
+    if (totalArlaCost > 0) {
+      rawCategorias['Arla 32 (Abastecimento)'] = totalArlaCost;
+    }
+
     // 3. Tolls (Pedágios)
     const freightPedagios = filteredFreights.reduce((acc, f) => acc + Number(f.pedagio || 0), 0);
     const manualPedagios = filteredExpenses.filter((e: any) => isPedagioByTipo(e.tipo)).reduce((acc, e) => acc + Number(e.valor || 0), 0);
@@ -394,6 +414,7 @@ export default function Reports({ data }: ReportsProps) {
     filteredExpenses.forEach((exp: any) => {
       if (
         !isCombustivelByTipo(exp.tipo) &&
+        !isArlaByTipo(exp.tipo) &&
         !isMaintenanceByTipo(exp.tipo) &&
         !isPedagioByTipo(exp.tipo) &&
         !isMotoristaByTipo(exp.tipo)
@@ -410,7 +431,7 @@ export default function Reports({ data }: ReportsProps) {
     }));
 
     return list.sort((a, b) => b.sum - a.sum);
-  }, [filteredFreights, filteredFuelLogs, filteredExpenses, filteredMaintenance, totalFuelCost, maintenanceExpenses, totalCosts]);
+  }, [filteredFreights, filteredFuelLogs, filteredExpenses, filteredMaintenance, totalFuelCost, totalArlaCost, maintenanceExpenses, totalCosts]);
 
 
   // 5. Intelligent Insights Engine (Dynamic heuristic analysis of operational patterns)
