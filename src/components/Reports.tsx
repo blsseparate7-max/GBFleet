@@ -151,7 +151,7 @@ export default function Reports({ data }: ReportsProps) {
 
   const directFreightExpenses = useMemo(() => {
     const freightDirect = filteredFreights.reduce((acc, f) => {
-      const motoristaCost = Number(f.comissao || f.motorista || 0);
+      const motoristaCost = Number(f.comissao || f.motorista || 0) + Number(f.valorDiaria || 0) + Number(f.valorAlmoco || 0);
       const pedagio = Number(f.pedagio || 0);
       const otherCosts = Number(f.outrasDespesas || f.outrosCustos || 0);
       return acc + motoristaCost + pedagio + otherCosts;
@@ -244,7 +244,7 @@ export default function Reports({ data }: ReportsProps) {
       
       // Do not include fuel cost here as we are already summing the actual fuelCost (fuel logs)
       const directFreightsCost = truckFreights.reduce((sum, f) => {
-         return sum + Number(f.comissao || f.motorista || 0) + Number(f.pedagio || 0) + Number(f.outrasDespesas || f.outrosCustos || 0);
+         return sum + Number(f.comissao || f.motorista || 0) + Number(f.valorDiaria || 0) + Number(f.valorAlmoco || 0) + Number(f.pedagio || 0) + Number(f.outrasDespesas || f.outrosCustos || 0);
       }, 0);
 
       const totalSpentTruck = fuelCost + arlaCost + cleanAdminCosts + maintCost + directFreightsCost;
@@ -287,7 +287,7 @@ export default function Reports({ data }: ReportsProps) {
 
       const countTrips = driverFreights.length;
       const grossRev = driverFreights.reduce((sum, f) => sum + Number(f.valorBruto || 0), 0);
-      const totalComissao = driverFreights.reduce((sum, f) => sum + Number(f.comissao || f.motorista || 0), 0);
+      const totalComissao = driverFreights.reduce((sum, f) => sum + Number(f.comissao || f.motorista || 0) + Number(f.valorDiaria || 0) + Number(f.valorAlmoco || 0), 0);
       const fuelCost = driverFuel.reduce((sum, f) => sum + Number(f.valor || 0), 0);
       const arlaCost = driverFuel.reduce((sum, f) => sum + Number(f.valorArla || 0), 0);
       const kmDriven = driverFreights.reduce((sum, f) => sum + Number(f.distanciaKm || 0), 0);
@@ -400,7 +400,7 @@ export default function Reports({ data }: ReportsProps) {
     rawCategorias['Pedágios'] = freightPedagios + manualPedagios;
 
     // 4. Drivers (Comissions / Diaries)
-    const freightDrivers = filteredFreights.reduce((acc, f) => acc + Number(f.comissao || f.motorista || 0), 0);
+    const freightDrivers = filteredFreights.reduce((acc, f) => acc + Number(f.comissao || f.motorista || 0) + Number(f.valorDiaria || 0) + Number(f.valorAlmoco || 0), 0);
     const manualDrivers = filteredExpenses.filter((e: any) => isMotoristaByTipo(e.tipo)).reduce((acc, e) => acc + Number(e.valor || 0), 0);
     rawCategorias['Motorista (Diária/Comissão)'] = freightDrivers + manualDrivers;
 

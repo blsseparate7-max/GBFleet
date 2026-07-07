@@ -23,7 +23,8 @@ import {
   Calendar,
   Lock,
   Mail,
-  FileText
+  FileText,
+  DollarSign
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { onDBSync } from '../lib/firebaseClientDb';
@@ -37,12 +38,13 @@ import CashFlow from './CashFlow';
 import Freights from './Freights';
 import Maintenance from './Maintenance';
 import Drivers from './Drivers';
+import DriverFinancials from './DriverFinancials';
 import Simulator from './Simulator';
 import Login from './Login';
 import SaaSAdmin from './SaaSAdmin';
 import Reports from './Reports';
 
-type Tab = 'home' | 'dashboard' | 'trucks' | 'fuel' | 'expenses' | 'cash' | 'freights' | 'maintenance' | 'drivers' | 'simulator' | 'reports' | 'saas';
+type Tab = 'home' | 'dashboard' | 'trucks' | 'fuel' | 'expenses' | 'cash' | 'freights' | 'maintenance' | 'drivers' | 'driver_financials' | 'simulator' | 'reports' | 'saas';
 
 export default function Layout() {
   const [currentUser, setCurrentUser] = useState<any>(() => {
@@ -444,20 +446,45 @@ export default function Layout() {
     );
   }
 
-  const menuItems = [
-    ...(currentUser?.role === 'superadmin' ? [{ id: 'saas', label: 'Gestão SaaS', icon: Shield }] : []),
-    { id: 'home', label: 'Início', icon: HomeIcon },
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'reports', label: 'Relatórios', icon: FileText },
-    { id: 'trucks', label: 'Frota', icon: TruckIcon },
-    { id: 'drivers', label: 'Motoristas', icon: Users },
-    { id: 'fuel', label: 'Abastecimentos', icon: Fuel },
-    { id: 'expenses', label: 'Despesas', icon: Receipt },
-    { id: 'cash', label: 'Caixa', icon: Wallet },
-    { id: 'freights', label: 'Gestão de Fretes', icon: Route },
-    { id: 'simulator', label: 'Simulador de Frete', icon: Calculator },
-    { id: 'maintenance', label: 'Alerta de Manutenção', icon: Wrench },
+  const menuGroups = [
+    {
+      title: 'Visão Geral',
+      items: [
+        { id: 'home', label: 'Início', icon: HomeIcon },
+        { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+        { id: 'reports', label: 'Relatórios', icon: FileText },
+        { id: 'simulator', label: 'Simulador de Frete', icon: Calculator },
+      ]
+    },
+    {
+      title: 'Operações',
+      items: [
+        { id: 'freights', label: 'Gestão de Fretes', icon: Route },
+        { id: 'trucks', label: 'Frota', icon: TruckIcon },
+        { id: 'drivers', label: 'Motoristas', icon: Users },
+        { id: 'maintenance', label: 'Alerta de Manutenção', icon: Wrench },
+      ]
+    },
+    {
+      title: 'Financeiro',
+      items: [
+        { id: 'cash', label: 'Caixa', icon: Wallet },
+        { id: 'expenses', label: 'Despesas', icon: Receipt },
+        { id: 'fuel', label: 'Abastecimentos', icon: Fuel },
+        { id: 'driver_financials', label: 'Financeiro Motoristas', icon: DollarSign },
+      ]
+    },
+    ...(currentUser?.role === 'superadmin' ? [
+      {
+        title: 'Sistema',
+        items: [
+          { id: 'saas', label: 'Gestão SaaS', icon: Shield }
+        ]
+      }
+    ] : [])
   ];
+
+  const menuItems = menuGroups.flatMap(group => group.items);
 
   return (
     <div className="flex h-screen bg-slate-50 font-sans text-slate-900 overflow-hidden">
@@ -498,24 +525,35 @@ export default function Layout() {
             </button>
           </div>
 
-          <nav className="flex-1 px-4 space-y-1 overflow-y-auto">
-            {menuItems.map((item) => (
-              <button
-                key={item.id}
-                onClick={() => {
-                  setActiveTab(item.id as Tab);
-                  setIsMobileMenuOpen(false);
-                }}
-                className={cn(
-                  "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 group text-left",
-                  activeTab === item.id 
-                    ? "bg-blue-50 text-blue-600 font-medium" 
-                    : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
+          <nav className="flex-1 px-4 py-4 space-y-6 overflow-y-auto">
+            {menuGroups.map((group, groupIdx) => (
+              <div key={groupIdx} className="space-y-1">
+                {isDesktopSidebarOpen ? (
+                  <span className="block text-[10px] font-black uppercase text-slate-400 tracking-wider px-3 mb-2 select-none">
+                    {group.title}
+                  </span>
+                ) : (
+                  <div className="border-b border-slate-100 my-2 mx-1 lg:block hidden" />
                 )}
-              >
-                <item.icon className={cn("w-5 h-5 shrink-0", activeTab === item.id ? "text-blue-600" : "text-slate-400 group-hover:text-slate-600")} />
-                <span className={cn("transition-opacity duration-200 truncate", !isDesktopSidebarOpen && "lg:opacity-0 lg:hidden")}>{item.label}</span>
-              </button>
+                {group.items.map((item) => (
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                      setActiveTab(item.id as Tab);
+                      setIsMobileMenuOpen(false);
+                    }}
+                    className={cn(
+                      "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 group text-left cursor-pointer",
+                      activeTab === item.id 
+                        ? "bg-blue-50 text-blue-600 font-semibold" 
+                        : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
+                    )}
+                  >
+                    <item.icon className={cn("w-5 h-5 shrink-0", activeTab === item.id ? "text-blue-600" : "text-slate-400 group-hover:text-slate-600")} />
+                    <span className={cn("transition-opacity duration-200 truncate text-xs font-medium", !isDesktopSidebarOpen && "lg:opacity-0 lg:hidden")}>{item.label}</span>
+                  </button>
+                ))}
+              </div>
             ))}
           </nav>
 
@@ -747,6 +785,7 @@ export default function Layout() {
               {activeTab === 'freights' && <Freights data={data} onUpdate={fetchData} />}
               {activeTab === 'maintenance' && <Maintenance data={data} onUpdate={fetchData} />}
               {activeTab === 'drivers' && <Drivers data={data} onUpdate={fetchData} />}
+              {activeTab === 'driver_financials' && <DriverFinancials data={data} onUpdate={fetchData} />}
               {activeTab === 'simulator' && <Simulator data={data} onUpdate={fetchData} />}
             </>
           )}

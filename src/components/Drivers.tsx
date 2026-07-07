@@ -25,7 +25,7 @@ import {
   Clock
 } from 'lucide-react';
 import Modal from './ui/Modal';
-import { cn } from '../lib/utils';
+import { cn, maskBRL, unmaskBRL } from '../lib/utils';
 
 interface DriversProps {
   data: any;
@@ -61,7 +61,11 @@ export default function Drivers({ data, onUpdate }: DriversProps) {
     vencimentoCnh: '',
     telefone: '',
     email: '',
-    status: 'Ativo'
+    status: 'Ativo',
+    salarioFixo: '0',
+    diariaPadrao: '0',
+    almocoPadrao: '0',
+    tipoRemuneracao: 'Fixo + Variável'
   });
 
   if (!data) return null;
@@ -141,7 +145,11 @@ export default function Drivers({ data, onUpdate }: DriversProps) {
           vencimentoCnh: '',
           telefone: '',
           email: '',
-          status: 'Ativo'
+          status: 'Ativo',
+          salarioFixo: '0',
+          diariaPadrao: '0',
+          almocoPadrao: '0',
+          tipoRemuneracao: 'Fixo + Variável'
         });
         onUpdate();
       } else {
@@ -205,7 +213,11 @@ export default function Drivers({ data, onUpdate }: DriversProps) {
       vencimentoCnh: driver.vencimentoCnh,
       telefone: driver.telefone,
       email: driver.email,
-      status: driver.status
+      status: driver.status,
+      salarioFixo: (driver.salarioFixo || 0).toString(),
+      diariaPadrao: (driver.diariaPadrao || 0).toString(),
+      almocoPadrao: (driver.almocoPadrao || 0).toString(),
+      tipoRemuneracao: driver.tipoRemuneracao || 'Fixo + Variável'
     });
     setIsEditDriverModalOpen(true);
   };
@@ -219,7 +231,11 @@ export default function Drivers({ data, onUpdate }: DriversProps) {
       vencimentoCnh: '',
       telefone: '',
       email: '',
-      status: 'Ativo'
+      status: 'Ativo',
+      salarioFixo: '0',
+      diariaPadrao: '0',
+      almocoPadrao: '0',
+      tipoRemuneracao: 'Fixo + Variável'
     });
     setIsNewDriverModalOpen(true);
   };
@@ -477,6 +493,33 @@ export default function Drivers({ data, onUpdate }: DriversProps) {
                       <span className="truncate">{driver.email || 'E-mail não inserido'}</span>
                     </div>
                   </div>
+
+                  {/* Financial Configuration Indicator */}
+                  <div className="bg-blue-50/40 p-3 rounded-2xl border border-blue-100/60 mt-1">
+                    <p className="text-[10px] font-black uppercase text-blue-700 tracking-wider mb-1.5 flex items-center gap-1">
+                      <DollarSign size={11} /> Configuração Salarial
+                    </p>
+                    <div className="grid grid-cols-3 gap-1 text-center">
+                      <div className="bg-white p-1 rounded-lg border border-slate-100">
+                        <span className="text-[9px] text-slate-400 font-bold block uppercase">Fixo</span>
+                        <span className="font-mono text-[10px] font-black text-slate-700 block">
+                          {maskBRL(driver.salarioFixo || 0)}
+                        </span>
+                      </div>
+                      <div className="bg-white p-1 rounded-lg border border-slate-100">
+                        <span className="text-[9px] text-slate-400 font-bold block uppercase">Diária</span>
+                        <span className="font-mono text-[10px] font-black text-slate-700 block">
+                          {maskBRL(driver.diariaPadrao || 0)}
+                        </span>
+                      </div>
+                      <div className="bg-white p-1 rounded-lg border border-slate-100">
+                        <span className="text-[9px] text-slate-400 font-bold block uppercase">Almoço</span>
+                        <span className="font-mono text-[10px] font-black text-slate-700 block">
+                          {maskBRL(driver.almocoPadrao || 0)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Footer action buttons */}
@@ -620,6 +663,79 @@ export default function Drivers({ data, onUpdate }: DriversProps) {
             </select>
           </div>
 
+          <div className="border-t border-slate-100 pt-4 mt-4">
+            <h5 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-1.5">
+              <DollarSign size={14} className="text-blue-500" />
+              Configurações Financeiras (Padrão)
+            </h5>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1">Tipo de Remuneração</label>
+                <select 
+                  value={driverForm.tipoRemuneracao}
+                  onChange={e => setDriverForm({...driverForm, tipoRemuneracao: e.target.value})}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-sm font-semibold text-slate-700 focus:outline-none"
+                >
+                  <option value="Fixo + Variável">Fixo + Variável (Diárias/Almoço)</option>
+                  <option value="Somente Fixo">Somente Fixo Mensal</option>
+                  <option value="Somente Diárias">Somente Diárias</option>
+                  <option value="Comissão por Frete">Comissão por Frete</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1">Salário Fixo Mensal</label>
+                <div className="relative">
+                  <span className="absolute left-3 top-2 text-slate-400 font-medium text-sm">R$</span>
+                  <input 
+                    type="text" 
+                    placeholder="R$ 0,00"
+                    value={driverForm.salarioFixo ? maskBRL(driverForm.salarioFixo) : ""}
+                    onChange={e => {
+                      const masked = maskBRL(e.target.value);
+                      setDriverForm({...driverForm, salarioFixo: masked ? String(unmaskBRL(masked)) : "0"});
+                    }}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-bold font-mono text-slate-700"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1">Valor Diária Padrão</label>
+                <div className="relative">
+                  <span className="absolute left-3 top-2 text-slate-400 font-medium text-sm">R$</span>
+                  <input 
+                    type="text" 
+                    placeholder="R$ 0,00"
+                    value={driverForm.diariaPadrao ? maskBRL(driverForm.diariaPadrao) : ""}
+                    onChange={e => {
+                      const masked = maskBRL(e.target.value);
+                      setDriverForm({...driverForm, diariaPadrao: masked ? String(unmaskBRL(masked)) : "0"});
+                    }}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-bold font-mono text-slate-700"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1">Almoço Padrão (Diário)</label>
+                <div className="relative">
+                  <span className="absolute left-3 top-2 text-slate-400 font-medium text-sm">R$</span>
+                  <input 
+                    type="text" 
+                    placeholder="R$ 0,00"
+                    value={driverForm.almocoPadrao ? maskBRL(driverForm.almocoPadrao) : ""}
+                    onChange={e => {
+                      const masked = maskBRL(e.target.value);
+                      setDriverForm({...driverForm, almocoPadrao: masked ? String(unmaskBRL(masked)) : "0"});
+                    }}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-bold font-mono text-slate-700"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div className="flex gap-3 pt-4 border-t border-slate-100">
             <button 
               type="button" 
@@ -741,6 +857,79 @@ export default function Drivers({ data, onUpdate }: DriversProps) {
                 <option value="Em Viagem">Em Viagem</option>
                 <option value="Inativo">Inativo</option>
               </select>
+            </div>
+
+            <div className="col-span-1 sm:col-span-2 border-t border-slate-100 pt-4 mt-2">
+              <h5 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3 flex items-center gap-1.5">
+                <DollarSign size={14} className="text-blue-500" />
+                Configurações Financeiras (Padrão)
+              </h5>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1">Tipo de Remuneração</label>
+                  <select 
+                    value={driverForm.tipoRemuneracao}
+                    onChange={e => setDriverForm({...driverForm, tipoRemuneracao: e.target.value})}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-sm font-semibold text-slate-700 focus:outline-none"
+                  >
+                    <option value="Fixo + Variável">Fixo + Variável (Diárias/Almoço)</option>
+                    <option value="Somente Fixo">Somente Fixo Mensal</option>
+                    <option value="Somente Diárias">Somente Diárias</option>
+                    <option value="Comissão por Frete">Comissão por Frete</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1">Salário Fixo Mensal</label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-2 text-slate-400 font-medium text-sm">R$</span>
+                    <input 
+                      type="text" 
+                      placeholder="R$ 0,00"
+                      value={driverForm.salarioFixo ? maskBRL(driverForm.salarioFixo) : ""}
+                      onChange={e => {
+                        const masked = maskBRL(e.target.value);
+                        setDriverForm({...driverForm, salarioFixo: masked ? String(unmaskBRL(masked)) : "0"});
+                      }}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-bold font-mono text-slate-700"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1">Valor Diária Padrão</label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-2 text-slate-400 font-medium text-sm">R$</span>
+                    <input 
+                      type="text" 
+                      placeholder="R$ 0,00"
+                      value={driverForm.diariaPadrao ? maskBRL(driverForm.diariaPadrao) : ""}
+                      onChange={e => {
+                        const masked = maskBRL(e.target.value);
+                        setDriverForm({...driverForm, diariaPadrao: masked ? String(unmaskBRL(masked)) : "0"});
+                      }}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-bold font-mono text-slate-700"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1">Almoço Padrão (Diário)</label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-2 text-slate-400 font-medium text-sm">R$</span>
+                    <input 
+                      type="text" 
+                      placeholder="R$ 0,00"
+                      value={driverForm.almocoPadrao ? maskBRL(driverForm.almocoPadrao) : ""}
+                      onChange={e => {
+                        const masked = maskBRL(e.target.value);
+                        setDriverForm({...driverForm, almocoPadrao: masked ? String(unmaskBRL(masked)) : "0"});
+                      }}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-bold font-mono text-slate-700"
+                    />
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div className="flex gap-3 pt-4 border-t border-slate-100">

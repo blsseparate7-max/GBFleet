@@ -158,7 +158,7 @@ export async function pullDB() {
           remoteData.users = remoteData.users.filter((u: any) => u.id !== "user_1" && u.companyId !== "comp_1");
           scrubbed = true;
         }
-        const arrayKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "gas_stations", "expense_companies", "bills"];
+        const arrayKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "gas_stations", "expense_companies", "bills", "driver_payments", "driver_adjustments"];
         arrayKeys.forEach(key => {
           if (remoteData[key] && remoteData[key].some((item: any) => item.companyId === "comp_1" || item.id?.includes("init"))) {
             remoteData[key] = remoteData[key].filter((item: any) => item.companyId !== "comp_1" && !item.id?.includes("init"));
@@ -168,7 +168,7 @@ export async function pullDB() {
 
         // No merging of old local storage items is performed to prevent resurrection of deleted/modified records.
         // Firestore is the absolute source of truth. We only ensure that required array fields exist on the pulled data.
-        const allKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "gas_stations", "expense_companies", "chat_logs", "bills"];
+        const allKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "gas_stations", "expense_companies", "chat_logs", "bills", "driver_payments", "driver_adjustments"];
         allKeys.forEach(key => {
           if (!remoteData[key]) {
             remoteData[key] = [];
@@ -366,6 +366,8 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       const filteredRoutes = (liveDb.routes || []).filter((r: any) => r.companyId === targetCompId);
       const filteredGasStations = (liveDb.gas_stations || []).filter((g: any) => g.companyId === targetCompId);
       const filteredExpenseCompanies = (liveDb.expense_companies || []).filter((ec: any) => ec.companyId === targetCompId);
+      const filteredDriverPayments = (liveDb.driver_payments || []).filter((dp: any) => dp.companyId === targetCompId);
+      const filteredDriverAdjustments = (liveDb.driver_adjustments || []).filter((da: any) => da.companyId === targetCompId);
 
       const categoriesEntrada = currentCompany?.categories_entrada || liveDb.categories_entrada || [];
       const categoriesSaida = currentCompany?.categories_saida || liveDb.categories_saida || [];
@@ -384,6 +386,8 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
         routes: filteredRoutes,
         gas_stations: filteredGasStations,
         expense_companies: filteredExpenseCompanies,
+        driver_payments: filteredDriverPayments,
+        driver_adjustments: filteredDriverAdjustments,
         categories_entrada: categoriesEntrada,
         categories_saida: categoriesSaida,
         chat_logs: (liveDb.chat_logs || []).filter((cl: any) => cl.companyId === targetCompId)
@@ -1103,6 +1107,9 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
         
         driverId: body.driverId || (!isNumericMotorista ? body.motorista : ""),
         
+        valorDiaria: Number(body.valorDiaria || 0),
+        valorAlmoco: Number(body.valorAlmoco || 0),
+        
         status: body.status || "Em Trânsito",
         valorBruto: Number(body.valorBruto || 0),
         pedagio: Number(body.pedagio || 0),
@@ -1113,6 +1120,8 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
         
         combustivel: Number(body.combustivel || body.dieselPrevisto || 0),
         dieselPrevisto: Number(body.dieselPrevisto || body.combustivel || 0),
+        valorArla: Number(body.valorArla || 0),
+        litrosArla: Number(body.litrosArla || 0),
         
         outrasDespesas: Number(body.outrasDespesas || body.outrosCustos || 0),
         outrosCustos: Number(body.outrosCustos || body.outrasDespesas || 0),
@@ -1126,6 +1135,8 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
 
         // Premium travel notes
         localAbastecimento: body.localAbastecimento || "",
+        gasStationId: body.gasStationId || "",
+        tipoDiesel: body.tipoDiesel || "S10",
         fotoAbastecimento: body.fotoAbastecimento || "",
         localPedagio: body.localPedagio || "",
         localMotorista: body.localMotorista || "",
@@ -1158,28 +1169,100 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
         });
       }
 
-      if (motoristaCost > 0) {
+      const totalDriverFreightCost = motoristaCost + Number(body.valorDiaria || 0) + Number(body.valorAlmoco || 0);
+      if (totalDriverFreightCost > 0) {
         liveDb.cash_flow.push({
           id: "cash_freight_out_driver_" + newFreight.id,
           companyId: ctx.companyId,
           tipo: "saida",
           categoria: "Motorista (Diária/Comissão)",
-          valor: motoristaCost,
+          valor: totalDriverFreightCost,
           data: dateVal,
-          descricao: `Diária/Comissão Motorista (${driverName}) - OS ${newFreight.numeroOrdem}`
+          descricao: `Custo Motorista (${driverName}) [D+A+C] - OS ${newFreight.numeroOrdem}`
         });
       }
 
-      if (Number(newFreight.combustivel) > 0) {
-        liveDb.cash_flow.push({
-          id: "cash_freight_out_fuel_" + newFreight.id,
+      // Synchronize associated Fuel Log, Expense, and Cash Flow cleanly and without duplication
+      const fuelLogId = "fuel_freight_" + newFreight.id;
+      if (!liveDb.fuel_logs) liveDb.fuel_logs = [];
+      if (!liveDb.expenses) liveDb.expenses = [];
+      
+      liveDb.fuel_logs = liveDb.fuel_logs.filter((l: any) => l.id !== fuelLogId);
+      liveDb.expenses = liveDb.expenses.filter((e: any) => e.fuelLogId !== fuelLogId);
+      liveDb.cash_flow = liveDb.cash_flow.filter((c: any) => c.fuelLogId !== fuelLogId && c.id !== "cash_fuel_" + fuelLogId && c.id !== "cash_arla_" + fuelLogId);
+
+      if (Number(newFreight.combustivel) > 0 || Number(body.valorArla) > 0) {
+        const matchedStation = (liveDb.gas_stations || []).find((g: any) => g.id === (body.gasStationId || ""));
+        const priceDiesel = matchedStation?.precoDiesel || 6.20;
+        const estimatedLiters = Number((Number(newFreight.combustivel) / priceDiesel).toFixed(2));
+
+        const newFuelLog = {
+          id: fuelLogId,
           companyId: ctx.companyId,
-          tipo: "saida",
-          categoria: "Diesel (Abastecimento)",
-          valor: Number(newFreight.combustivel),
+          truckId: newFreight.truckId,
+          driverId: newFreight.driverId,
+          gasStationId: body.gasStationId || "",
           data: dateVal,
-          descricao: `Combustível Previsto OS ${newFreight.numeroOrdem}`
-        });
+          km: Number(newFreight.kmAbastecimento || 0),
+          valor: Number(newFreight.combustivel || 0),
+          litros: estimatedLiters,
+          tipoDiesel: body.tipoDiesel || "S10",
+          litrosArla: Number(body.litrosArla || 0),
+          valorArla: Number(body.valorArla || 0),
+          comprovante: newFreight.fotoAbastecimento || "",
+          freightId: newFreight.id
+        };
+        liveDb.fuel_logs.push(newFuelLog);
+
+        if (Number(newFreight.combustivel) > 0) {
+          liveDb.expenses.push({
+            id: "exp_fuel_" + newFreight.id,
+            fuelLogId: fuelLogId,
+            companyId: ctx.companyId,
+            truckId: newFreight.truckId,
+            tipo: `Diesel ${body.tipoDiesel || "S10"} (Abastecimento)`,
+            valor: Number(newFreight.combustivel),
+            data: dateVal,
+            documento: "Auto-Abastecimento",
+            descritivo: `Abastecimento automático via Frete OS ${orderNumber}`
+          });
+
+          liveDb.cash_flow.push({
+            id: "cash_fuel_" + fuelLogId,
+            fuelLogId: fuelLogId,
+            companyId: ctx.companyId,
+            tipo: "saida",
+            categoria: "Diesel (Abastecimento)",
+            valor: Number(newFreight.combustivel),
+            data: dateVal,
+            descricao: `Combustível OS ${orderNumber} - Placa ${newFreight.truckId}`
+          });
+        }
+
+        if (Number(body.valorArla) > 0) {
+          liveDb.expenses.push({
+            id: "exp_arla_" + fuelLogId,
+            fuelLogId: fuelLogId,
+            companyId: ctx.companyId,
+            truckId: newFreight.truckId,
+            tipo: "Arla 32 (Abastecimento)",
+            valor: Number(body.valorArla),
+            data: dateVal,
+            documento: "Auto-Abastecimento-Arla",
+            descritivo: `Abastecimento automático de Arla via Frete OS ${orderNumber} (${body.litrosArla || 0} Litros de Arla 32)`
+          });
+
+          liveDb.cash_flow.push({
+            id: "cash_arla_" + fuelLogId,
+            fuelLogId: fuelLogId,
+            companyId: ctx.companyId,
+            tipo: "saida",
+            categoria: "Arla 32 (Abastecimento)",
+            valor: Number(body.valorArla),
+            data: dateVal,
+            descricao: `Arla OS ${orderNumber} - Placa ${newFreight.truckId} (${body.litrosArla || 0}L)`
+          });
+        }
       }
 
       await persistDB();
@@ -1233,8 +1316,12 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       matchFrt.pedagio = Number(body.pedagio || 0);
       matchFrt.comissao = motoristaCost;
       matchFrt.motorista = motoristaCost;
+      matchFrt.valorDiaria = Number(body.valorDiaria !== undefined ? body.valorDiaria : matchFrt.valorDiaria || 0);
+      matchFrt.valorAlmoco = Number(body.valorAlmoco !== undefined ? body.valorAlmoco : matchFrt.valorAlmoco || 0);
       matchFrt.combustivel = Number(body.combustivel || body.dieselPrevisto || 0);
       matchFrt.dieselPrevisto = Number(body.dieselPrevisto || body.combustivel || 0);
+      matchFrt.valorArla = Number(body.valorArla || 0);
+      matchFrt.litrosArla = Number(body.litrosArla || 0);
       matchFrt.outrasDespesas = Number(body.outrasDespesas || body.outrosCustos || 0);
       matchFrt.outrosCustos = Number(body.outrosCustos || body.outrasDespesas || 0);
       matchFrt.resultadoLiquido = Number(body.resultadoLiquido || 0);
@@ -1243,6 +1330,8 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       matchFrt.data = dateVal;
       matchFrt.dataSaida = dateVal;
       matchFrt.localAbastecimento = body.localAbastecimento || "";
+      matchFrt.gasStationId = body.gasStationId || "";
+      matchFrt.tipoDiesel = body.tipoDiesel || "S10";
       matchFrt.fotoAbastecimento = body.fotoAbastecimento || "";
       matchFrt.localPedagio = body.localPedagio || "";
       matchFrt.localMotorista = body.localMotorista || "";
@@ -1276,28 +1365,100 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
         });
       }
 
-      if (motoristaCost > 0) {
+      const totalDriverFreightCost = motoristaCost + Number(body.valorDiaria || 0) + Number(body.valorAlmoco || 0);
+      if (totalDriverFreightCost > 0) {
         liveDb.cash_flow.push({
           id: "cash_freight_out_driver_" + targetId,
           companyId: ctx.companyId,
           tipo: "saida",
           categoria: "Motorista (Diária/Comissão)",
-          valor: motoristaCost,
+          valor: totalDriverFreightCost,
           data: dateVal,
-          descricao: `Diária/Comissão Motorista (${driverName}) - OS ${matchFrt.numeroOrdem}`
+          descricao: `Custo Motorista (${driverName}) [D+A+C] - OS ${matchFrt.numeroOrdem}`
         });
       }
 
-      if (Number(matchFrt.combustivel) > 0) {
-        liveDb.cash_flow.push({
-          id: "cash_freight_out_fuel_" + targetId,
+      // Synchronize associated Fuel Log, Expense, and Cash Flow cleanly and without duplication
+      const fuelLogId = "fuel_freight_" + targetId;
+      if (!liveDb.fuel_logs) liveDb.fuel_logs = [];
+      if (!liveDb.expenses) liveDb.expenses = [];
+      
+      liveDb.fuel_logs = liveDb.fuel_logs.filter((l: any) => l.id !== fuelLogId);
+      liveDb.expenses = liveDb.expenses.filter((e: any) => e.fuelLogId !== fuelLogId);
+      liveDb.cash_flow = liveDb.cash_flow.filter((c: any) => c.fuelLogId !== fuelLogId && c.id !== "cash_fuel_" + fuelLogId && c.id !== "cash_arla_" + fuelLogId);
+
+      if (Number(matchFrt.combustivel) > 0 || Number(body.valorArla) > 0) {
+        const matchedStation = (liveDb.gas_stations || []).find((g: any) => g.id === (body.gasStationId || ""));
+        const priceDiesel = matchedStation?.precoDiesel || 6.20;
+        const estimatedLiters = Number((Number(matchFrt.combustivel) / priceDiesel).toFixed(2));
+
+        const newFuelLog = {
+          id: fuelLogId,
           companyId: ctx.companyId,
-          tipo: "saida",
-          categoria: "Diesel (Abastecimento)",
-          valor: Number(matchFrt.combustivel),
+          truckId: matchFrt.truckId,
+          driverId: matchFrt.driverId,
+          gasStationId: body.gasStationId || "",
           data: dateVal,
-          descricao: `Combustível Previsto OS ${matchFrt.numeroOrdem}`
-        });
+          km: Number(matchFrt.kmAbastecimento || 0),
+          valor: Number(matchFrt.combustivel || 0),
+          litros: estimatedLiters,
+          tipoDiesel: body.tipoDiesel || "S10",
+          litrosArla: Number(body.litrosArla || 0),
+          valorArla: Number(body.valorArla || 0),
+          comprovante: matchFrt.fotoAbastecimento || "",
+          freightId: matchFrt.id
+        };
+        liveDb.fuel_logs.push(newFuelLog);
+
+        if (Number(matchFrt.combustivel) > 0) {
+          liveDb.expenses.push({
+            id: "exp_fuel_" + matchFrt.id,
+            fuelLogId: fuelLogId,
+            companyId: ctx.companyId,
+            truckId: matchFrt.truckId,
+            tipo: `Diesel ${body.tipoDiesel || "S10"} (Abastecimento)`,
+            valor: Number(matchFrt.combustivel),
+            data: dateVal,
+            documento: "Auto-Abastecimento",
+            descritivo: `Abastecimento automático via Frete OS ${matchFrt.numeroOrdem}`
+          });
+
+          liveDb.cash_flow.push({
+            id: "cash_fuel_" + fuelLogId,
+            fuelLogId: fuelLogId,
+            companyId: ctx.companyId,
+            tipo: "saida",
+            categoria: "Diesel (Abastecimento)",
+            valor: Number(matchFrt.combustivel),
+            data: dateVal,
+            descricao: `Combustível OS ${matchFrt.numeroOrdem} - Placa ${matchFrt.truckId}`
+          });
+        }
+
+        if (Number(body.valorArla) > 0) {
+          liveDb.expenses.push({
+            id: "exp_arla_" + fuelLogId,
+            fuelLogId: fuelLogId,
+            companyId: ctx.companyId,
+            truckId: matchFrt.truckId,
+            tipo: "Arla 32 (Abastecimento)",
+            valor: Number(body.valorArla),
+            data: dateVal,
+            documento: "Auto-Abastecimento-Arla",
+            descritivo: `Abastecimento automático de Arla via Frete OS ${matchFrt.numeroOrdem} (${body.litrosArla || 0} Litros de Arla 32)`
+          });
+
+          liveDb.cash_flow.push({
+            id: "cash_arla_" + fuelLogId,
+            fuelLogId: fuelLogId,
+            companyId: ctx.companyId,
+            tipo: "saida",
+            categoria: "Arla 32 (Abastecimento)",
+            valor: Number(body.valorArla),
+            data: dateVal,
+            descricao: `Arla OS ${matchFrt.numeroOrdem} - Placa ${matchFrt.truckId} (${body.litrosArla || 0}L)`
+          });
+        }
       }
 
       await persistDB();
@@ -1309,7 +1470,12 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       const targetId = parts[parts.length - 1];
 
       liveDb.freights = liveDb.freights.filter((f: any) => f.id !== targetId);
-      liveDb.cash_flow = liveDb.cash_flow.filter((c: any) => !c.id.includes(targetId));
+      
+      // Cascade delete fuel logs, expenses, and cash flows cleanly
+      const fuelLogId = "fuel_freight_" + targetId;
+      liveDb.fuel_logs = (liveDb.fuel_logs || []).filter((l: any) => l.id !== fuelLogId);
+      liveDb.expenses = (liveDb.expenses || []).filter((e: any) => e.fuelLogId !== fuelLogId);
+      liveDb.cash_flow = (liveDb.cash_flow || []).filter((c: any) => c.fuelLogId !== fuelLogId && c.id !== "cash_fuel_" + fuelLogId && !c.id.includes(targetId));
 
       await persistDB();
       return jsonResponse({ success: true });
@@ -1421,7 +1587,11 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
         categoriaCnh: body.categoriaCnh || "D",
         vencimentoCnh: body.vencimentoCnh,
         telefone: body.telefone || "",
-        status: body.status || "Ativo"
+        status: body.status || "Ativo",
+        salarioFixo: Number(body.salarioFixo || 0),
+        diariaPadrao: Number(body.diariaPadrao || 0),
+        almocoPadrao: Number(body.almocoPadrao || 0),
+        tipoRemuneracao: body.tipoRemuneracao || "Fixo + Variável"
       };
       liveDb.drivers.push(newDriver);
       await persistDB();
@@ -1442,6 +1612,10 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       if (body.vencimentoCnh !== undefined) matchDrv.vencimentoCnh = body.vencimentoCnh;
       if (body.telefone !== undefined) matchDrv.telefone = body.telefone;
       if (body.status !== undefined) matchDrv.status = body.status;
+      if (body.salarioFixo !== undefined) matchDrv.salarioFixo = Number(body.salarioFixo);
+      if (body.diariaPadrao !== undefined) matchDrv.diariaPadrao = Number(body.diariaPadrao);
+      if (body.almocoPadrao !== undefined) matchDrv.almocoPadrao = Number(body.almocoPadrao);
+      if (body.tipoRemuneracao !== undefined) matchDrv.tipoRemuneracao = body.tipoRemuneracao;
 
       await persistDB();
       return jsonResponse({ success: true, driver: matchDrv });
@@ -1494,6 +1668,91 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       const parts = cleanPath.split("/");
       const targetId = parts[parts.length - 1];
       liveDb.routes = liveDb.routes.filter((r: any) => r.id !== targetId);
+      await persistDB();
+      return jsonResponse({ success: true });
+    }
+
+    // 20.1) POST, PUT, DELETE /api/driver_payments
+    if (cleanPath === "/api/driver_payments" && method === "POST") {
+      const newPay = {
+        id: "pay_" + Math.random().toString(36).substr(2, 9),
+        companyId: ctx.companyId,
+        driverId: body.driverId,
+        data: body.data || new Date().toISOString().split("T")[0],
+        referenciaMesAno: body.referenciaMesAno || new Date().toISOString().slice(0, 7), // "YYYY-MM"
+        valorSalario: Number(body.valorSalario || 0),
+        valorDiarias: Number(body.valorDiarias || 0),
+        valorAlmoco: Number(body.valorAlmoco || 0),
+        valorComissoes: Number(body.valorComissoes || 0),
+        valorAjustes: Number(body.valorAjustes || 0),
+        valorTotalPago: Number(body.valorTotalPago || 0),
+        meioPagamento: body.meioPagamento || "Pix",
+        observacao: body.observacao || ""
+      };
+      if (!liveDb.driver_payments) liveDb.driver_payments = [];
+      liveDb.driver_payments.push(newPay);
+
+      // Register matching Expense in the central system
+      if (newPay.valorTotalPago > 0) {
+        const foundDriver = (liveDb.drivers || []).find((d: any) => d.id === newPay.driverId);
+        const drvName = foundDriver ? foundDriver.nome : "Motorista";
+
+        liveDb.expenses.push({
+          id: "exp_" + Math.random().toString(36).substr(2, 9),
+          companyId: ctx.companyId,
+          tipo: "Salários e Pró-Labore",
+          valor: newPay.valorTotalPago,
+          data: newPay.data,
+          documento: `Recibo Fechamento ${newPay.referenciaMesAno}`,
+          descritivo: `Fechamento financeiro de motorista (${drvName}) para o período ${newPay.referenciaMesAno}. Refeição, diárias, comissão e adiantamentos.`
+        });
+
+        liveDb.cash_flow.push({
+          id: "cash_" + Math.random().toString(36).substr(2, 9),
+          companyId: ctx.companyId,
+          tipo: "saida",
+          categoria: "Salários, Pró-Labore e Comissões",
+          valor: newPay.valorTotalPago,
+          data: newPay.data,
+          meioPagamento: newPay.meioPagamento,
+          descricao: `Fechamento motorista ${drvName} - Período ${newPay.referenciaMesAno}`
+        });
+      }
+
+      await persistDB();
+      return jsonResponse({ success: true, payment: newPay });
+    }
+
+    if (cleanPath.startsWith("/api/driver_payments/") && method === "DELETE") {
+      const parts = cleanPath.split("/");
+      const targetId = parts[parts.length - 1];
+      liveDb.driver_payments = (liveDb.driver_payments || []).filter((p: any) => p.id !== targetId);
+      await persistDB();
+      return jsonResponse({ success: true });
+    }
+
+    // 20.2) POST, PUT, DELETE /api/driver_adjustments
+    if (cleanPath === "/api/driver_adjustments" && method === "POST") {
+      const newAdj = {
+        id: "adj_" + Math.random().toString(36).substr(2, 9),
+        companyId: ctx.companyId,
+        driverId: body.driverId,
+        data: body.data || new Date().toISOString().split("T")[0],
+        tipo: body.tipo || "Vale", // "Vale" (Adiantamento), "Desconto", "Bônus"
+        valor: Number(body.valor || 0),
+        descricao: body.descricao || "",
+        referenciaMesAno: body.referenciaMesAno || new Date().toISOString().slice(0, 7)
+      };
+      if (!liveDb.driver_adjustments) liveDb.driver_adjustments = [];
+      liveDb.driver_adjustments.push(newAdj);
+      await persistDB();
+      return jsonResponse({ success: true, adjustment: newAdj });
+    }
+
+    if (cleanPath.startsWith("/api/driver_adjustments/") && method === "DELETE") {
+      const parts = cleanPath.split("/");
+      const targetId = parts[parts.length - 1];
+      liveDb.driver_adjustments = (liveDb.driver_adjustments || []).filter((a: any) => a.id !== targetId);
       await persistDB();
       return jsonResponse({ success: true });
     }

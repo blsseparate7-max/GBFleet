@@ -218,6 +218,12 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
 
   // Premium travel note fields & photo attachment simulation
   const [localAbastecimento, setLocalAbastecimento] = useState('');
+  const [gasStationId, setGasStationId] = useState('');
+  const [tipoDiesel, setTipoDiesel] = useState('S10');
+  const [valorArla, setValorArla] = useState('');
+  const [litrosArla, setLitrosArla] = useState('');
+  const [showArla, setShowArla] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [fotoAbastecimento, setFotoAbastecimento] = useState('');
   const [localPedagio, setLocalPedagio] = useState('');
   const [localMotorista, setLocalMotorista] = useState('');
@@ -226,6 +232,8 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
 
   // Freight calculation base: 'fixo' | 'quilo' | 'cabeca'
   const [tipoCalculo, setTipoCalculo] = useState('fixo');
+  const [valorDiaria, setValorDiaria] = useState('');
+  const [valorAlmoco, setValorAlmoco] = useState('');
   const [pesoTotalKg, setPesoTotalKg] = useState('');
   const [valorPorKg, setValorPorKg] = useState('');
   const [quantidadeCabecas, setQuantidadeCabecas] = useState('');
@@ -304,10 +312,11 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
   const totalRevenue = filteredFreights.reduce((acc: number, f: any) => acc + (f.valorBruto || 0), 0);
   const totalTolls = filteredFreights.reduce((acc: number, f: any) => acc + (f.pedagio || 0), 0);
   const totalFuel = filteredFreights.reduce((acc: number, f: any) => acc + (f.combustivel || 0), 0);
+  const totalArla = filteredFreights.reduce((acc: number, f: any) => acc + (f.valorArla || 0), 0);
   const totalDriver = filteredFreights.reduce((acc: number, f: any) => acc + (f.motorista || 0), 0);
   const totalOthers = filteredFreights.reduce((acc: number, f: any) => acc + (f.outrasDespesas || 0), 0);
 
-  const totalCosts = totalTolls + totalFuel + totalDriver + totalOthers;
+  const totalCosts = totalTolls + totalFuel + totalArla + totalDriver + totalOthers;
   const netProfit = totalRevenue - totalCosts;
   const averageMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
 
@@ -343,8 +352,15 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
     setPedagio(freight.pedagio ? String(freight.pedagio) : '');
     setCombustivel(freight.combustivel ? String(freight.combustivel) : '');
     setMotorista(freight.motorista ? String(freight.motorista) : '');
+    setValorDiaria(freight.valorDiaria ? String(freight.valorDiaria) : '');
+    setValorAlmoco(freight.valorAlmoco ? String(freight.valorAlmoco) : '');
     setOutrasDespesas(freight.outrasDespesas ? String(freight.outrasDespesas) : '');
     setLocalAbastecimento(freight.localAbastecimento || '');
+    setGasStationId(freight.gasStationId || '');
+    setTipoDiesel(freight.tipoDiesel || 'S10');
+    setValorArla(freight.valorArla ? String(freight.valorArla) : '');
+    setLitrosArla(freight.litrosArla ? String(freight.litrosArla) : '');
+    setShowArla(!!(freight.valorArla || freight.litrosArla));
     setFotoAbastecimento(freight.fotoAbastecimento || '');
     setLocalPedagio(freight.localPedagio || '');
     setLocalMotorista(freight.localMotorista || '');
@@ -381,11 +397,13 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSaving) return;
     if (!truckId || !origem || !destino || !valorBruto) {
       alert("Por favor, preencha todos os campos obrigatórios (*)");
       return;
     }
 
+    setIsSaving(true);
     try {
       const companyId = data?.company?.id || 'comp_1';
       const url = selectedFreight ? `/api/freights/${selectedFreight.id}` : '/api/freights';
@@ -405,8 +423,14 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
           pedagio: parseFloat(pedagio || '0'),
           combustivel: parseFloat(combustivel || '0'),
           motorista: parseFloat(motorista || '0'),
+          valorDiaria: parseFloat(valorDiaria || '0'),
+          valorAlmoco: parseFloat(valorAlmoco || '0'),
           outrasDespesas: parseFloat(outrasDespesas || '0'),
           localAbastecimento,
+          gasStationId,
+          tipoDiesel,
+          valorArla: parseFloat(valorArla || '0'),
+          litrosArla: parseFloat(litrosArla || '0'),
           fotoAbastecimento,
           localPedagio,
           localMotorista,
@@ -440,8 +464,15 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
         setPedagio('');
         setCombustivel('');
         setMotorista('');
+        setValorDiaria('');
+        setValorAlmoco('');
         setOutrasDespesas('');
         setLocalAbastecimento('');
+        setGasStationId('');
+        setTipoDiesel('S10');
+        setValorArla('');
+        setLitrosArla('');
+        setShowArla(false);
         setFotoAbastecimento('');
         setLocalPedagio('');
         setLocalMotorista('');
@@ -455,9 +486,15 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
         setQuantidadeCabecas('');
         setValorPorCabeca('');
         onUpdate();
+      } else {
+        const errorText = await response.text();
+        alert("Erro ao salvar o frete: " + errorText);
       }
     } catch (err) {
       console.error(err);
+      alert("Erro de conexão ao salvar o frete.");
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -485,8 +522,15 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
             setPedagio('');
             setCombustivel('');
             setMotorista('');
+            setValorDiaria('');
+            setValorAlmoco('');
             setOutrasDespesas('');
             setLocalAbastecimento('');
+            setGasStationId('');
+            setTipoDiesel('S10');
+            setValorArla('');
+            setLitrosArla('');
+            setShowArla(false);
             setFotoAbastecimento('');
             setLocalPedagio('');
             setLocalMotorista('');
@@ -640,7 +684,10 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
               const freightExpensesSum = 
                 (freight.pedagio || 0) + 
                 (freight.combustivel || 0) + 
+                (freight.valorArla || 0) + 
                 (freight.motorista || 0) + 
+                (freight.valorDiaria || 0) + 
+                (freight.valorAlmoco || 0) + 
                 (freight.outrasDespesas || 0);
               const freightProfit = (freight.valorBruto || 0) - freightExpensesSum;
               const freightMargin = freight.valorBruto > 0 ? (freightProfit / freight.valorBruto) * 100 : 0;
@@ -816,14 +863,31 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
                               <p className="text-[11px] text-blue-600 font-bold mt-0.5">📟 Odr. KM: {freight.kmAbastecimento?.toLocaleString('pt-BR')} km</p>
                             )}
                           </div>
-                          {freight.localAbastecimento ? (
-                            <div className="text-xs text-slate-600 bg-slate-50 p-2.5 rounded-xl border border-slate-150">
-                              <span className="font-bold block text-slate-500 text-[10px] uppercase tracking-wider mb-0.5">Local / Notas:</span>
-                              {freight.localAbastecimento}
-                            </div>
-                          ) : (
-                            <div className="text-[10px] text-slate-400 italic">Sem notas do local</div>
-                          )}
+                          {(() => {
+                            const matchedStation = (data.gas_stations || []).find((g: any) => g.id === freight.gasStationId);
+                            const stationDisplay = matchedStation
+                              ? `${matchedStation.nome}${matchedStation.cidade ? ` (${matchedStation.cidade}/${matchedStation.uf})` : ''}`
+                              : freight.localAbastecimento;
+
+                            if (stationDisplay) {
+                              return (
+                                <div className="text-xs text-slate-600 bg-slate-50 p-2.5 rounded-xl border border-slate-150">
+                                  <span className="font-bold block text-slate-500 text-[10px] uppercase tracking-wider mb-0.5">Local / Posto:</span>
+                                  <div className="flex flex-wrap items-center gap-1">
+                                    <span className="font-semibold text-slate-800">{stationDisplay}</span>
+                                    {matchedStation && <span className="text-[8px] bg-emerald-100 text-emerald-800 font-extrabold px-1.5 py-0.5 rounded-full uppercase shrink-0">Cadastrado</span>}
+                                  </div>
+                                  {freight.tipoDiesel && (
+                                    <span className="text-[9px] text-slate-400 font-bold block mt-1">Combustível: Diesel {freight.tipoDiesel}</span>
+                                  )}
+                                  {Number(freight.valorArla || 0) > 0 && (
+                                    <span className="text-[9px] text-sky-600 font-extrabold block mt-0.5">💨 Arla 32: R$ {Number(freight.valorArla).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} ({freight.litrosArla || 0}L)</span>
+                                  )}
+                                </div>
+                              );
+                            }
+                            return <div className="text-[10px] text-slate-400 italic">Sem notas do local</div>;
+                          })()}
                            {freight.fotoAbastecimento ? (
                              <div className="space-y-1 pt-1">
                                <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider block">Comprovante de Combustível:</span>
@@ -853,8 +917,13 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
                         {/* Diárias */}
                         <div className="bg-white p-4 rounded-2xl border border-slate-100 space-y-3 shadow-xs">
                           <div>
-                            <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">Motorista / Diárias</p>
-                            <p className="font-extrabold text-slate-800 text-base">R$ {freight.motorista?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                            <p className="text-xs text-slate-400 font-bold uppercase tracking-wider">Custo de Escala (Motorista)</p>
+                            <p className="font-extrabold text-slate-800 text-base">R$ {((freight.valorDiaria || 0) + (freight.valorAlmoco || 0) + (freight.motorista || 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                            <div className="flex gap-2 mt-1 text-[10px] font-mono font-bold text-slate-500">
+                              <span>D: R${(freight.valorDiaria || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                              <span>A: R${(freight.valorAlmoco || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                              <span>C: R${(freight.motorista || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                            </div>
                           </div>
                           {freight.localMotorista ? (
                             <div className="text-xs text-slate-600 bg-slate-50 p-2.5 rounded-xl border border-slate-150">
@@ -922,7 +991,17 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
               <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Motorista Vinculado</label>
               <select
                 value={driverId}
-                onChange={(e) => setDriverId(e.target.value)}
+                onChange={(e) => {
+                  const selectedId = e.target.value;
+                  setDriverId(selectedId);
+                  if (selectedId) {
+                    const drv = (data.drivers || []).find((d: any) => d.id === selectedId);
+                    if (drv) {
+                      setValorDiaria(drv.diariaPadrao ? String(drv.diariaPadrao) : '0');
+                      setValorAlmoco(drv.almocoPadrao ? String(drv.almocoPadrao) : '0');
+                    }
+                  }
+                }}
                 className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:border-blue-500 transition-colors text-sm"
               >
                 <option value="">Nenhum / Sem vínculo</option>
@@ -1245,7 +1324,7 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
             <div className="grid grid-cols-1 gap-6 p-5 bg-slate-50 rounded-2xl border border-slate-200">
               {/* Combustível Section inside Modal */}
               <div className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div>
                     <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Combustível (R$)</label>
                     <div className="relative">
@@ -1273,17 +1352,115 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Local / Posto</label>
+                    <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Posto de Abastecimento</label>
+                    <select
+                      value={gasStationId}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setGasStationId(val);
+                        if (val) {
+                          const station = (data.gas_stations || []).find((g: any) => g.id === val);
+                          if (station) {
+                            setLocalAbastecimento(station.nome);
+                          }
+                        } else {
+                          setLocalAbastecimento('');
+                        }
+                      }}
+                      className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-blue-500 transition-colors text-sm font-semibold text-slate-700"
+                    >
+                      <option value="">Geral / Não listado</option>
+                      {(data.gas_stations || []).map((g: any) => (
+                        <option key={g.id} value={g.id}>
+                          {g.nome} {g.cidade ? `(${g.cidade}/${g.uf})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Tipo de Diesel</label>
+                    <select
+                      value={tipoDiesel}
+                      onChange={(e) => setTipoDiesel(e.target.value)}
+                      className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-blue-500 transition-colors text-sm font-semibold text-slate-700"
+                    >
+                      <option value="S10">Diesel S10</option>
+                      <option value="S500">Diesel S500</option>
+                    </select>
+                  </div>
+                </div>
+                {gasStationId === "" && (
+                  <div>
+                    <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Local do Abastecimento (Texto livre)</label>
                     <input
                       type="text"
                       placeholder="Ex: Posto Ipiranga, Dutra KM 145"
                       value={localAbastecimento}
                       onChange={(e) => setLocalAbastecimento(e.target.value)}
-                      className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-blue-500 transition-colors text-sm"
+                      className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-blue-500 transition-colors text-sm text-slate-700"
                     />
                   </div>
-                </div>
+                )}
                 
+                {/* Opção de Arla 32 */}
+                <div className="bg-sky-50/50 p-4 rounded-xl border border-sky-100 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-sky-800 uppercase tracking-wider">💨 Incluir Abastecimento de Arla 32?</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = !showArla;
+                        setShowArla(next);
+                        if (!next) {
+                          setValorArla('');
+                          setLitrosArla('');
+                        }
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-extrabold uppercase transition-all ${
+                        showArla 
+                          ? 'bg-sky-600 text-white hover:bg-sky-700 shadow-sm' 
+                          : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      {showArla ? "Remover Arla" : "Adicionar Arla"}
+                    </button>
+                  </div>
+
+                  {showArla && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+                      <div>
+                        <label className="block text-[11px] font-bold uppercase text-sky-700 mb-1.5">Valor do Arla 32 (R$)</label>
+                        <div className="relative">
+                          <span className="absolute left-3.5 top-2.5 text-sky-400 text-xs font-bold font-mono">R$</span>
+                          <input
+                            type="text"
+                            placeholder="0,00"
+                            value={valorArla ? maskBRL(valorArla) : ""}
+                            onChange={(e) => {
+                              const masked = maskBRL(e.target.value);
+                              setValorArla(masked ? String(unmaskBRL(masked)) : "");
+                            }}
+                            className="w-full pl-9 pr-4 py-2.5 bg-white border border-sky-200 rounded-xl focus:outline-none focus:border-sky-500 transition-colors text-xs font-bold font-mono text-sky-900"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold uppercase text-sky-700 mb-1.5">Quantidade de Arla 32 (Litros)</label>
+                        <input
+                          type="number"
+                          step="any"
+                          placeholder="Ex: 20"
+                          value={litrosArla}
+                          onChange={(e) => setLitrosArla(e.target.value)}
+                          className="w-full px-4 py-2.5 bg-white border border-sky-200 rounded-xl focus:outline-none focus:border-sky-500 transition-colors text-xs font-bold font-mono text-sky-900"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                  <div>
                    <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Anexar Cupom Fiscal Combustível</label>
                    <div className="relative group border-2 border-dashed border-slate-200 rounded-xl p-4 bg-white hover:border-blue-500 hover:bg-blue-50/10 transition-all text-center cursor-pointer">
@@ -1347,29 +1524,70 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
                 </div>
               </div>
 
-              {/* Motorista */}
-              <div className="grid grid-cols-2 gap-4 border-t border-slate-200 pt-4">
-                <div>
-                  <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Diárias / Motorista (R$)</label>
-                  <div className="relative">
-                    <span className="absolute left-4 top-3 text-slate-400 font-medium text-sm">R$</span>
-                    <input
-                      type="text"
-                      placeholder="R$ 0,00"
-                      value={motorista ? maskBRL(motorista) : ""}
-                      onChange={(e) => {
-                        const masked = maskBRL(e.target.value);
-                        setMotorista(masked ? String(unmaskBRL(masked)) : "");
-                      }}
-                      className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-blue-500 transition-colors text-sm font-bold font-mono text-slate-700"
-                    />
+              {/* Motorista Financials */}
+              <div className="border-t border-slate-200 pt-4 space-y-4">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                  Valores Próprios do Motorista para esta Viagem (Custos de Escala)
+                </h4>
+                
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Diária do Frete (R$)</label>
+                    <div className="relative">
+                      <span className="absolute left-4 top-3 text-slate-400 font-medium text-sm">R$</span>
+                      <input
+                        type="text"
+                        placeholder="R$ 0,00"
+                        value={valorDiaria ? maskBRL(valorDiaria) : ""}
+                        onChange={(e) => {
+                          const masked = maskBRL(e.target.value);
+                          setValorDiaria(masked ? String(unmaskBRL(masked)) : "");
+                        }}
+                        className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-blue-500 transition-colors text-sm font-bold font-mono text-slate-700"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Almoço da Viagem (R$)</label>
+                    <div className="relative">
+                      <span className="absolute left-4 top-3 text-slate-400 font-medium text-sm">R$</span>
+                      <input
+                        type="text"
+                        placeholder="R$ 0,00"
+                        value={valorAlmoco ? maskBRL(valorAlmoco) : ""}
+                        onChange={(e) => {
+                          const masked = maskBRL(e.target.value);
+                          setValorAlmoco(masked ? String(unmaskBRL(masked)) : "");
+                        }}
+                        className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-blue-500 transition-colors text-sm font-bold font-mono text-slate-700"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Comissão / Adicional (R$)</label>
+                    <div className="relative">
+                      <span className="absolute left-4 top-3 text-slate-400 font-medium text-sm">R$</span>
+                      <input
+                        type="text"
+                        placeholder="R$ 0,00"
+                        value={motorista ? maskBRL(motorista) : ""}
+                        onChange={(e) => {
+                          const masked = maskBRL(e.target.value);
+                          setMotorista(masked ? String(unmaskBRL(masked)) : "");
+                        }}
+                        className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-blue-500 transition-colors text-sm font-bold font-mono text-slate-700"
+                      />
+                    </div>
                   </div>
                 </div>
+
                 <div>
-                  <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Notas de Escala/Diária</label>
+                  <label className="block text-xs font-bold uppercase text-slate-500 mb-2">Descrição dos Custos com Motorista</label>
                   <input
                     type="text"
-                    placeholder="Ex: Diária de viagem motorista principal"
+                    placeholder="Ex: Escala de viagem com pernoite + almoço especial + comissão base"
                     value={localMotorista}
                     onChange={(e) => setLocalMotorista(e.target.value)}
                     className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-blue-500 transition-colors text-sm"

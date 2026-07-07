@@ -32,6 +32,8 @@ export interface FuelLog {
   litros: number;
   valor: number;
   fotoUrl?: string;
+  litrosArla?: number;
+  valorArla?: number;
 }
 
 export interface Expense {
