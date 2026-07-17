@@ -15,7 +15,7 @@ import {
   Activity
 } from 'lucide-react';
 import Modal from './ui/Modal';
-import { cn, maskBRL, unmaskBRL } from '../lib/utils';
+import { cn, maskBRL, unmaskBRL, formatDateBR } from '../lib/utils';
 
 interface MaintenanceProps {
   data: any;
@@ -115,7 +115,7 @@ export default function Maintenance({ data, onUpdate }: MaintenanceProps) {
         computedStatus,
         progressoDesc: diffDays <= 0 
           ? `Vencido há ${Math.abs(diffDays)} dia(s)` 
-          : `Faltam ${diffDays} dia(s) (${new Date(alert.limiteData).toLocaleDateString('pt-BR')})`
+          : `Faltam ${diffDays} dia(s) (${formatDateBR(alert.limiteData)})`
       };
     }
   });
@@ -427,14 +427,14 @@ export default function Maintenance({ data, onUpdate }: MaintenanceProps) {
                       ) : (
                         <>
                           <Calendar size={14} className="text-slate-400" />
-                          <span>Prazo Limite: <b className="text-slate-700">{alert.limiteData ? new Date(alert.limiteData).toLocaleDateString('pt-BR') : '---'}</b></span>
+                          <span>Prazo Limite: <b className="text-slate-700">{formatDateBR(alert.limiteData)}</b></span>
                         </>
                       )}
                     </div>
                     {isRealizado && (
                       <div className="flex items-center gap-2 text-emerald-600">
                         <CheckCircle2 size={14} />
-                        <span>Manutenção concluída em {new Date(alert.dataRealizada).toLocaleDateString('pt-BR')} com investimento de <b>R$ {alert.custo?.toLocaleString()}</b></span>
+                        <span>Manutenção concluída em {formatDateBR(alert.dataRealizada)} com investimento de <b>R$ {alert.custo?.toLocaleString()}</b></span>
                       </div>
                     )}
                   </div>

@@ -12,7 +12,7 @@ import {
   Award,
   Wallet
 } from 'lucide-react';
-import { cn, maskBRL, unmaskBRL } from '../lib/utils';
+import { cn, maskBRL, unmaskBRL, formatDateBR } from '../lib/utils';
 
 interface DriverFinancialsProps {
   data: any;
@@ -249,7 +249,7 @@ export default function DriverFinancials({ data, onUpdate }: DriverFinancialsPro
   const printReceipt = (payment: any) => {
     const drvName = selectedDriver ? selectedDriver.nome : 'Motorista';
     const drvCpf = selectedDriver ? selectedDriver.cpf : '';
-    const dateFormatted = new Date(payment.data + 'T00:00:00').toLocaleDateString('pt-BR');
+    const dateFormatted = formatDateBR(payment.data);
     
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
@@ -443,7 +443,7 @@ export default function DriverFinancials({ data, onUpdate }: DriverFinancialsPro
                         return (
                           <tr key={f.id} className="hover:bg-slate-50/30">
                             <td className="p-4 font-mono text-slate-500 whitespace-nowrap">
-                              {new Date(f.data + "T00:00:00").toLocaleDateString('pt-BR')}
+                              {formatDateBR(f.data)}
                             </td>
                             <td className="p-4 text-slate-700">
                               <div className="flex items-center gap-1.5 font-bold">
@@ -510,7 +510,7 @@ export default function DriverFinancials({ data, onUpdate }: DriverFinancialsPro
                                 {a.tipo}
                               </span>
                               <span className="text-[10px] text-slate-400 font-mono font-bold">
-                                {new Date(a.data + "T00:00:00").toLocaleDateString('pt-BR')}
+                                {formatDateBR(a.data)}
                               </span>
                             </div>
                             <p className="font-bold text-slate-700 leading-snug">{a.descricao}</p>
@@ -766,7 +766,7 @@ export default function DriverFinancials({ data, onUpdate }: DriverFinancialsPro
                         {p.referenciaMesAno}
                       </td>
                       <td className="p-4 font-mono text-slate-500 whitespace-nowrap">
-                        {new Date(p.data + "T00:00:00").toLocaleDateString('pt-BR')}
+                        {formatDateBR(p.data)}
                       </td>
                       <td className="p-4 text-right font-mono text-slate-600">{maskBRL(p.valorSalario)}</td>
                       <td className="p-4 text-right font-mono text-slate-600">{maskBRL(p.valorDiarias)}</td>

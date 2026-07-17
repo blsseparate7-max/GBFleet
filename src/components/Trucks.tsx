@@ -21,7 +21,7 @@ import {
   TrendingDown
 } from 'lucide-react';
 import Modal from './ui/Modal';
-import { cn } from '../lib/utils';
+import { cn, formatDateBR } from '../lib/utils';
 
 export default function Trucks({ data, onUpdate }: { data: any, onUpdate: () => void }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -502,7 +502,7 @@ export default function Trucks({ data, onUpdate }: { data: any, onUpdate: () => 
                                 <span className="font-extrabold text-[10px] uppercase tracking-wider bg-slate-100 text-slate-600 px-2 py-0.5 rounded">
                                   {f.status}
                                 </span>
-                                <span>{new Date(f.data + "T00:00:00").toLocaleDateString('pt-BR')}</span>
+                                <span>{formatDateBR(f.data)}</span>
                               </div>
                               <div className="flex items-center gap-1.5 font-bold text-slate-800 text-sm">
                                 <MapPin size={14} className="text-slate-400 animate-pulse" />
@@ -547,7 +547,7 @@ export default function Trucks({ data, onUpdate }: { data: any, onUpdate: () => 
                         <tbody className="divide-y divide-slate-150">
                           {stats.fuelLogs.map((log: any) => (
                             <tr key={log.id} className="hover:bg-slate-50/50">
-                             <td className="px-5 py-3 text-slate-600">{new Date(log.data + "T00:00:00").toLocaleDateString('pt-BR')}</td>
+                             <td className="px-5 py-3 text-slate-600">{formatDateBR(log.data)}</td>
                               <td className="px-5 py-3 font-medium text-slate-700">{log.km.toLocaleString()} km</td>
                               <td className="px-5 py-3 font-medium text-slate-700">{log.litros} L</td>
                               <td className="px-5 py-3 font-bold text-slate-950">R$ {log.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
@@ -574,7 +574,7 @@ export default function Trucks({ data, onUpdate }: { data: any, onUpdate: () => 
                         <div key={exp.id} className="p-3.5 flex items-center justify-between hover:bg-slate-50/50 text-xs">
                           <div>
                             <p className="font-bold text-slate-800">{exp.tipo}</p>
-                            <span className="text-slate-400 block text-[10px]">{new Date(exp.data + "T00:00:00").toLocaleDateString('pt-BR')} {exp.obs ? `• ${exp.obs}` : ''}</span>
+                            <span className="text-slate-400 block text-[10px]">{formatDateBR(exp.data)} {exp.obs ? `• ${exp.obs}` : ''}</span>
                           </div>
                           <span className="font-bold text-rose-500">- R$ {exp.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
                         </div>

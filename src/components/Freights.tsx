@@ -25,7 +25,7 @@ import {
   Navigation,
   Map
 } from 'lucide-react';
-import { cn, maskBRL, unmaskBRL } from '../lib/utils';
+import { cn, maskBRL, unmaskBRL, formatDateBR } from '../lib/utils';
 import Modal from './ui/Modal';
 import { generateFreightPDF } from '../lib/pdfGenerator';
 import { compressAndSetFile, AttachmentPreview } from '../lib/fileCompressor';
@@ -726,7 +726,7 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
                           </select>
                         </div>
                         <span className="text-xs font-mono text-slate-400">
-                          {new Date(freight.data + "T00:00:00").toLocaleDateString('pt-BR')}
+                          {formatDateBR(freight.data)}
                         </span>
                         <span className="text-xs bg-blue-50 text-blue-700 px-2.5 py-1 rounded-full font-bold">
                           Veículo: {freight.truckId}

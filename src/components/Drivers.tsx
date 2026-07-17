@@ -25,7 +25,7 @@ import {
   Clock
 } from 'lucide-react';
 import Modal from './ui/Modal';
-import { cn, maskBRL, unmaskBRL } from '../lib/utils';
+import { cn, maskBRL, unmaskBRL, formatDateBR } from '../lib/utils';
 
 interface DriversProps {
   data: any;
@@ -463,7 +463,7 @@ export default function Drivers({ data, onUpdate }: DriversProps) {
                         isVencendoBreve ? "text-amber-600" :
                         "text-slate-700"
                       )}>
-                        {driver.vencimentoCnh ? new Date(driver.vencimentoCnh).toLocaleDateString('pt-BR') : '---'}
+                        {formatDateBR(driver.vencimentoCnh)}
                       </span>
                     </div>
 
@@ -1003,7 +1003,7 @@ export default function Drivers({ data, onUpdate }: DriversProps) {
                   <div className="text-left sm:text-right text-xs">
                     <p className="text-slate-400 font-bold uppercase tracking-wider">Período</p>
                     <p className="font-extrabold text-slate-800 font-sans mt-0.5">
-                      {new Date(startDate).toLocaleDateString('pt-BR')} à {new Date(endDate).toLocaleDateString('pt-BR')}
+                      {formatDateBR(startDate)} à {formatDateBR(endDate)}
                     </p>
                   </div>
                 </div>
@@ -1047,7 +1047,7 @@ export default function Drivers({ data, onUpdate }: DriversProps) {
                               <span className="font-extrabold text-[9px] uppercase tracking-wider bg-slate-100 text-slate-600 px-2 py-0.5 rounded">
                                 {f.status}
                               </span>
-                              <span className="text-slate-400 font-medium">{new Date(f.data + "T00:00:00").toLocaleDateString('pt-BR')}</span>
+                              <span className="text-slate-400 font-medium">{formatDateBR(f.data)}</span>
                               <span className="text-slate-300">•</span>
                               <span className="text-slate-500 font-bold flex items-center gap-1">
                                 <TruckIcon size={12} /> Placa: {f.truckId}

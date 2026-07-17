@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { Fuel, Plus, Calendar, MapPin, DollarSign, Camera, FileText, CheckCircle, Edit, Trash2, Filter, AlertCircle, Building } from 'lucide-react';
 import Modal from './ui/Modal';
 import { compressAndSetFile, AttachmentPreview } from '../lib/fileCompressor';
-import { maskBRL, unmaskBRL } from '../lib/utils';
+import { maskBRL, unmaskBRL, formatDateBR } from '../lib/utils';
 
 export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () => void }) {
   const [activeTab, setActiveTab] = useState<'logs' | 'stations'>('logs');
@@ -520,7 +520,7 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
                             )}
                           </td>
                           <td className="px-6 py-4 text-sm text-slate-600">
-                            {new Date(log.data + "T00:00:00").toLocaleDateString('pt-BR')}
+                            {formatDateBR(log.data)}
                           </td>
                           <td className="px-6 py-4 text-sm font-medium text-slate-700">
                             {log.km?.toLocaleString()} km

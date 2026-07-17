@@ -27,7 +27,7 @@ import {
   Check,
   Percent
 } from 'lucide-react';
-import { cn, maskBRL, unmaskBRL } from '../lib/utils';
+import { cn, maskBRL, unmaskBRL, formatDateBR } from '../lib/utils';
 import Modal from './ui/Modal';
 
 // Category options for Trucking industry
@@ -859,7 +859,7 @@ export default function CashFlow({ data, onUpdate }: { data: any, onUpdate: () =
                     <tr key={item.id} className="hover:bg-slate-50/40 transition-colors">
                       {/* Date */}
                       <td className="px-6 py-4 font-mono font-bold text-slate-500 whitespace-nowrap">
-                        {new Date(item.data + "T00:00:00").toLocaleDateString('pt-BR')}
+                        {formatDateBR(item.data)}
                       </td>
 
                       {/* Category Badge */}
