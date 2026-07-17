@@ -814,6 +814,18 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
         return jsonResponse({ error: "Despesa não encontrada." }, 404);
       }
 
+      const oldExpense = { ...liveDb.expenses[idx] };
+
+      // Remove matching old cash flow entry
+      liveDb.cash_flow = liveDb.cash_flow.filter((c: any) => {
+        const isMatch = c.companyId === ctx.companyId &&
+          (c.descricao === `Despesa ${oldExpense.tipo} - Placa ${oldExpense.truckId}` ||
+           c.descricao === `Despesa: ${oldExpense.tipo} - ${oldExpense.truckId}`) &&
+          c.valor === oldExpense.valor &&
+          c.data === oldExpense.data;
+        return !isMatch;
+      });
+
       liveDb.expenses[idx] = {
         ...liveDb.expenses[idx],
         ...body,
@@ -823,6 +835,20 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
         km: body.km !== undefined ? (body.km ? Number(body.km) : undefined) : liveDb.expenses[idx].km
       };
 
+      const updatedExpense = liveDb.expenses[idx];
+
+      // Add updated cash flow entry
+      const newCash = {
+        id: "cash_" + Math.random().toString(36).substr(2, 9),
+        companyId: ctx.companyId,
+        tipo: "saida",
+        categoria: updatedExpense.tipo,
+        valor: updatedExpense.valor,
+        data: updatedExpense.data || new Date().toISOString().split("T")[0],
+        descricao: `Despesa ${updatedExpense.tipo} - Placa ${updatedExpense.truckId}`
+      };
+      liveDb.cash_flow.push(newCash);
+
       await persistDB();
       return jsonResponse({ success: true, expense: liveDb.expenses[idx] });
     }
@@ -830,7 +856,22 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
     if (cleanPath.startsWith("/api/expenses/") && method === "DELETE") {
       const parts = cleanPath.split("/");
       const targetId = parts[parts.length - 1];
-      liveDb.expenses = liveDb.expenses.filter((e: any) => e.id !== targetId);
+      const idx = liveDb.expenses.findIndex((e: any) => e.id === targetId);
+      if (idx !== -1) {
+        const oldExpense = liveDb.expenses[idx];
+        
+        // Remove matching cash flow entry
+        liveDb.cash_flow = liveDb.cash_flow.filter((c: any) => {
+          const isMatch = c.companyId === ctx.companyId &&
+            (c.descricao === `Despesa ${oldExpense.tipo} - Placa ${oldExpense.truckId}` ||
+             c.descricao === `Despesa: ${oldExpense.tipo} - ${oldExpense.truckId}`) &&
+            c.valor === oldExpense.valor &&
+            c.data === oldExpense.data;
+          return !isMatch;
+        });
+
+        liveDb.expenses = liveDb.expenses.filter((e: any) => e.id !== targetId);
+      }
       await persistDB();
       return jsonResponse({ success: true });
     }

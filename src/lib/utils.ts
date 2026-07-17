@@ -43,3 +43,30 @@ export function unmaskBRL(value: string | number): number {
   const num = parseFloat(value);
   return isNaN(num) ? 0 : num;
 }
+
+export function formatDateBR(dateStr: any): string {
+  if (!dateStr) return "---";
+  try {
+    const cleanStr = String(dateStr).trim();
+    if (!cleanStr) return "---";
+    
+    // If it's in YYYY-MM-DD format
+    const parts = cleanStr.split('T')[0].split('-');
+    if (parts.length === 3) {
+      const [year, month, day] = parts;
+      if (year.length === 4 && month.length <= 2 && day.length <= 2) {
+        return `${day.padStart(2, '0')}/${month.padStart(2, '0')}/${year}`;
+      }
+    }
+    
+    // Fallback
+    const dateObj = new Date(cleanStr.includes('T') ? cleanStr : cleanStr + "T12:00:00");
+    if (isNaN(dateObj.getTime())) {
+      return "---";
+    }
+    return dateObj.toLocaleDateString('pt-BR');
+  } catch (e) {
+    return "---";
+  }
+}
+

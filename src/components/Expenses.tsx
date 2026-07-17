@@ -25,7 +25,7 @@ import {
   Eye
 } from 'lucide-react';
 import Modal from './ui/Modal';
-import { cn, maskBRL, unmaskBRL } from '../lib/utils';
+import { cn, maskBRL, unmaskBRL, formatDateBR } from '../lib/utils';
 import { compressAndSetFile, AttachmentPreview } from '../lib/fileCompressor';
 
 export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () => void }) {
@@ -829,8 +829,10 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
             >
               <option value="all">Todos os Meses</option>
               {availableMonths.map((m: string) => {
+                if (!m || !m.includes('-')) return null;
                 const [year, month] = m.split('-');
                 const dateObj = new Date(Number(year), Number(month) - 1, 1);
+                if (isNaN(dateObj.getTime())) return null;
                 const label = dateObj.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
                 return <option key={m} value={m}>{label.charAt(0).toUpperCase() + label.slice(1)}</option>;
               })}
@@ -1246,7 +1248,7 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
                           </div>
                         </td>
                         <td className="px-6 py-4 text-slate-500 font-mono">
-                          {new Date(exp.data + "T00:00:00").toLocaleDateString('pt-BR')}
+                          {formatDateBR(exp.data)}
                         </td>
                         <td className="px-6 py-4 text-slate-600 font-medium max-w-xs">
                           {exp.empresaDespesa && (
@@ -1314,7 +1316,7 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
                         <span className="font-bold text-slate-800 text-xs">{exp.tipo}</span>
                       </div>
                       <div className="text-slate-400 font-mono text-[10px]">
-                        📅 {new Date(exp.data + "T00:00:00").toLocaleDateString('pt-BR')}
+                        📅 {formatDateBR(exp.data)}
                         {exp.km ? ` • 🛣️ ${Number(exp.km).toLocaleString('pt-BR')} km` : ''}
                       </div>
                     </div>
@@ -1427,7 +1429,7 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
                     [...filteredBills].sort((a: any, b: any) => a.vencimento.localeCompare(b.vencimento)).map((bill: any) => (
                       <tr key={bill.id} className="hover:bg-slate-50/50 transition">
                         <td className="px-6 py-4.5 font-mono font-bold text-slate-600">
-                          {new Date(bill.vencimento + "T12:00:00").toLocaleDateString('pt-BR')}
+                          {formatDateBR(bill.vencimento)}
                         </td>
                         <td className="px-6 py-4.5 font-bold text-slate-800">
                           <div className="space-y-0.5">
@@ -1522,7 +1524,7 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
                         <span className="font-bold text-slate-800 text-xs">{bill.descricao}</span>
                       </div>
                       <div className="text-slate-400 font-mono text-[10px]">
-                        📅 Vencimento: {new Date(bill.vencimento + "T12:00:00").toLocaleDateString('pt-BR')}
+                        📅 Vencimento: {formatDateBR(bill.vencimento)}
                         {bill.parcelas > 1 ? ` • 🔢 Parcela: ${bill.parcelaAtual}/${bill.parcelas}` : ' • Única'}
                       </div>
                     </div>
@@ -2063,7 +2065,7 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
                   <div>
                     <span className="block text-[10px] font-black uppercase text-slate-400 mb-0.5">Data de Emissão</span>
                     <span className="font-bold text-slate-800 text-sm font-mono">
-                      {new Date(selectedExpenseDetail.data + "T00:00:00").toLocaleDateString('pt-BR')}
+                      {formatDateBR(selectedExpenseDetail.data)}
                     </span>
                   </div>
                   <div>
