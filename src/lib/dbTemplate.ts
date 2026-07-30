@@ -10,7 +10,11 @@ export const dbTemplate = {
       "trialDays": 30,
       "supportCode": null,
       "supportCodeCreatedAt": null,
-      "supportAuthorizedUntil": null
+      "supportAuthorizedUntil": null,
+      "dataVencimento": "2026-12-31",
+      "limiteCaminhoes": 10,
+      "valorPorCaminhao": 30,
+      "valorMensalidade": 300
     }
   ],
   "users": [
@@ -39,7 +43,8 @@ export const dbTemplate = {
     "Outros Recebíveis"
   ],
   "categories_saida": [
-    "Diesel (Abastecimento)",
+    "Diesel S10 (Abastecimento)",
+    "Diesel S500 (Abastecimento)",
     "Pedágios",
     "Manutenção e Peças",
     "Motorista (Diária/Comissão)",

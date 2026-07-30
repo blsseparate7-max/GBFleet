@@ -24,7 +24,8 @@ import {
   Lock,
   Mail,
   FileText,
-  DollarSign
+  DollarSign,
+  CreditCard
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { onDBSync } from '../lib/firebaseClientDb';
@@ -120,7 +121,7 @@ export default function Layout() {
       text: string;
       type: 'info' | 'warning' | 'critical' | 'success';
       date: string;
-      category: 'maintenance' | 'driver' | 'cash';
+      category: 'maintenance' | 'driver' | 'cash' | 'subscription';
     }> = [];
 
     // 1. Check Driver CNH Expiration Thresholds
@@ -188,6 +189,35 @@ export default function Layout() {
           type: 'warning',
           date: new Date().toISOString().split('T')[0],
           category: 'cash'
+        });
+      }
+    }
+
+    // 4. Check Subscription Due Date Alerts
+    if (data?.company?.dataVencimento) {
+      const today = new Date();
+      today.setHours(0,0,0,0);
+      const dueDate = new Date(data.company.dataVencimento + 'T00:00:00');
+      const diffDays = Math.ceil((dueDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+      const dateFormatted = dueDate.toLocaleDateString('pt-BR');
+
+      if (diffDays <= 0) {
+        items.unshift({
+          id: `sub_expired_${data.company.dataVencimento}`,
+          title: 'Assinatura GBFleet Vencida',
+          text: `Atenção: A mensalidade do plano da sua empresa venceu em ${dateFormatted}. Entre em contato com o suporte para manter seus serviços sem interrupções.`,
+          type: 'critical',
+          date: data.company.dataVencimento,
+          category: 'subscription'
+        });
+      } else if (diffDays <= 7) {
+        items.unshift({
+          id: `sub_warning_${data.company.dataVencimento}`,
+          title: 'Assinatura Próxima do Vencimento',
+          text: `Sua mensalidade de R$ ${(data.company.valorMensalidade || 300).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} vence em ${diffDays} dia(s) (${dateFormatted}).`,
+          type: 'warning',
+          date: data.company.dataVencimento,
+          category: 'subscription'
         });
       }
     }
@@ -881,6 +911,58 @@ export default function Layout() {
                       value={profilePassword}
                       onChange={e => setProfilePassword(e.target.value)}
                     />
+                  </div>
+                </div>
+              </div>
+
+              {/* Detalhes da Assinatura do SaaS no Perfil do Usuário */}
+              <div className="p-4 bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-2xl shadow-lg space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-700/80 pb-2.5">
+                  <div className="flex items-center gap-2">
+                    <CreditCard size={18} className="text-emerald-400" />
+                    <div>
+                      <h4 className="text-xs font-black uppercase tracking-wider text-slate-100">Assinatura & Plano GBFleet</h4>
+                      <p className="text-[10px] text-slate-400">Registrado centralmente via Portal SaaS</p>
+                    </div>
+                  </div>
+                  <span className={cn(
+                    "px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border",
+                    currentCompany?.pago 
+                      ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40" 
+                      : "bg-amber-500/20 text-amber-300 border-amber-500/40"
+                  )}>
+                    {currentCompany?.pago ? "✓ Ativo / Liberado" : "Aguard. Pagamento"}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2.5 text-xs">
+                  <div className="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700">
+                    <span className="text-[9px] uppercase font-bold text-slate-400 block mb-0.5">Plano Contratado</span>
+                    <span className="font-extrabold text-white text-xs">Plano {currentCompany?.plano || 'Pro'}</span>
+                  </div>
+
+                  <div className="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700">
+                    <span className="text-[9px] uppercase font-bold text-slate-400 block mb-0.5">Frota Liberada</span>
+                    <span className="font-extrabold text-emerald-400 text-xs">
+                      {data?.trucks?.length || 0} / {currentCompany?.limiteCaminhoes || 10} veículos
+                    </span>
+                  </div>
+
+                  <div className="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700">
+                    <span className="text-[9px] uppercase font-bold text-slate-400 block mb-0.5">Mensalidade Total</span>
+                    <span className="font-extrabold text-white text-xs block truncate">
+                      R$ {(currentCompany?.valorMensalidade || ((currentCompany?.limiteCaminhoes||10)*(currentCompany?.valorPorCaminhao||30))).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} /mês
+                    </span>
+                    <span className="text-[9px] text-slate-400 block mt-0.5">(R$ {(currentCompany?.valorPorCaminhao || 30).toFixed(2)} /veíc)</span>
+                  </div>
+
+                  <div className="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700">
+                    <span className="text-[9px] uppercase font-bold text-slate-400 block mb-0.5">Próximo Vencimento</span>
+                    <span className="font-extrabold text-amber-300 text-xs">
+                      {currentCompany?.dataVencimento 
+                        ? new Date(currentCompany.dataVencimento + 'T12:00:00').toLocaleDateString('pt-BR') 
+                        : 'A definir'}
+                    </span>
                   </div>
                 </div>
               </div>

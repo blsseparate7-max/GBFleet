@@ -40,7 +40,9 @@ const CATEGORIES_ENTRADA = [
 ];
 
 const CATEGORIES_SAIDA = [
-  "Diesel (Abastecimento)",
+  "Diesel S10 (Abastecimento)",
+  "Diesel S500 (Abastecimento)",
+  "Arla 32 (Abastecimento)",
   "Pedágios",
   "Manutenção e Peças",
   "Motorista (Diária/Comissão)",
@@ -55,7 +57,9 @@ export default function CashFlow({ data, onUpdate }: { data: any, onUpdate: () =
   if (!data) return <div className="p-12 text-center text-slate-500 font-sans">Carregando controlador do caixa...</div>;
 
   const categoriesEntrada = data.categories_entrada || CATEGORIES_ENTRADA;
-  const categoriesSaida = data.categories_saida || CATEGORIES_SAIDA;
+  const categoriesSaida = (data.categories_saida || CATEGORIES_SAIDA).filter((c: string) => c !== "Diesel (Abastecimento)");
+  if (!categoriesSaida.includes("Diesel S10 (Abastecimento)")) categoriesSaida.unshift("Diesel S10 (Abastecimento)");
+  if (!categoriesSaida.includes("Diesel S500 (Abastecimento)")) categoriesSaida.splice(1, 0, "Diesel S500 (Abastecimento)");
 
   // Modal and Form state
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -271,29 +275,33 @@ export default function CashFlow({ data, onUpdate }: { data: any, onUpdate: () =
     data.cash_flow
       .filter((f: any) => f.tipo === 'saida')
       .forEach((f: any) => {
-        let cat = f.categoria || 'Outras Despesas';
-        // Infer standard categorizing for synced logs
-        if (!f.categoria) {
-          if (f.descricao.includes('Abastecimento') || f.descricao.includes('Diesel')) {
-            cat = "Diesel (Abastecimento)";
-          } else if (f.descricao.includes('Pedágio')) {
+        let cat = f.categoria;
+        if (!cat || cat === "Diesel (Abastecimento)") {
+          if (f.descricao?.includes('S500')) {
+            cat = "Diesel S500 (Abastecimento)";
+          } else if (f.descricao?.includes('Abastecimento') || f.descricao?.includes('Diesel') || cat === "Diesel (Abastecimento)") {
+            cat = "Diesel S10 (Abastecimento)";
+          } else if (f.descricao?.includes('Pedágio')) {
             cat = "Pedágios";
-          } else if (f.descricao.includes('Manutenção')) {
+          } else if (f.descricao?.includes('Manutenção')) {
             cat = "Manutenção e Peças";
-          } else if (f.descricao.includes('Motorista') || f.descricao.includes('Diária')) {
+          } else if (f.descricao?.includes('Motorista') || f.descricao?.includes('Diária')) {
             cat = "Motorista (Diária/Comissão)";
+          } else {
+            cat = "Outras Despesas";
           }
         }
         summary[cat] = (summary[cat] || 0) + f.valor;
       });
     return summary;
-  }, [data.cash_flow]);
+  }, [data.cash_flow, categoriesSaida]);
 
   const totalExpensesComputed = Object.values(categorySummary).reduce((a: number, b: number) => a + b, 0) as number;
 
   // Diesel Weigh factor tracker
+  const totalDieselSum = (categorySummary["Diesel S10 (Abastecimento)"] || 0) + (categorySummary["Diesel S500 (Abastecimento)"] || 0);
   const dieselWeightPercent = totalExpensesComputed > 0 
-    ? ((categorySummary["Diesel (Abastecimento)"] || 0) / totalExpensesComputed) * 100 
+    ? (totalDieselSum / totalExpensesComputed) * 100 
     : 0;
 
   // 3. Filtering logic
@@ -310,11 +318,12 @@ export default function CashFlow({ data, onUpdate }: { data: any, onUpdate: () =
 
       // Category selector
       let itemCategory = item.categoria;
-      if (!itemCategory) {
-        if (item.descricao.includes('Abastecimento')) itemCategory = "Diesel (Abastecimento)";
-        else if (item.descricao.includes('Pedágio')) itemCategory = "Pedágios";
-        else if (item.descricao.includes('Manutenção')) itemCategory = "Manutenção e Peças";
-        else if (item.descricao.includes('Motorista')) itemCategory = "Motorista (Diária/Comissão)";
+      if (!itemCategory || itemCategory === "Diesel (Abastecimento)") {
+        if (item.descricao?.includes('S500')) itemCategory = "Diesel S500 (Abastecimento)";
+        else if (item.descricao?.includes('Abastecimento') || item.descricao?.includes('Diesel') || itemCategory === "Diesel (Abastecimento)") itemCategory = "Diesel S10 (Abastecimento)";
+        else if (item.descricao?.includes('Pedágio')) itemCategory = "Pedágios";
+        else if (item.descricao?.includes('Manutenção')) itemCategory = "Manutenção e Peças";
+        else if (item.descricao?.includes('Motorista')) itemCategory = "Motorista (Diária/Comissão)";
       }
       const categoryMatch = filterCategoria === 'all' ? true : itemCategory === filterCategoria;
 

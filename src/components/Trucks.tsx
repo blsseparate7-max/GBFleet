@@ -45,12 +45,18 @@ export default function Trucks({ data, onUpdate }: { data: any, onUpdate: () => 
     
     const companyId = data?.company?.id || 'comp_1';
     
-    await fetch('/api/trucks', {
+    const res = await fetch('/api/trucks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...newTruck, companyId, ativo: true })
     });
     
+    if (!res.ok) {
+      const err = await res.json();
+      alert(err.error || "Erro ao cadastrar veículo.");
+      return;
+    }
+
     setNewTruck({ placa: '', modelo: '', usaArla: false });
     setIsModalOpen(false);
     onUpdate();
@@ -85,7 +91,13 @@ export default function Trucks({ data, onUpdate }: { data: any, onUpdate: () => 
   // Calculate stats for details view of the selected truck
   const getTruckStats = (truckPlaca: string) => {
     const fuelLogs = (data.fuel_logs || []).filter((log: any) => log.truckId === truckPlaca);
-    const expenses = (data.expenses || []).filter((exp: any) => exp.truckId === truckPlaca);
+    // Filtra despesas reais do caminhão, ignorando espelhos de combustível/arla gerados pelos abastecimentos
+    const expenses = (data.expenses || []).filter((exp: any) => 
+      exp.truckId === truckPlaca && 
+      exp.tipo !== 'Combustível' && 
+      exp.tipo !== 'Arla' && 
+      !exp.fuelLogId
+    );
     const freights = (data.freights || []).filter((f: any) => f.truckId === truckPlaca);
     const maintenance = (data.maintenance_alerts || []).filter((alert: any) => alert.truckId === truckPlaca);
 
@@ -129,6 +141,9 @@ export default function Trucks({ data, onUpdate }: { data: any, onUpdate: () => 
     setIsDetailsOpen(true);
   };
 
+  const limiteCaminhoes = data?.company?.limiteCaminhoes ?? 10;
+  const totalCadastrados = data?.trucks?.length || 0;
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -142,13 +157,32 @@ export default function Trucks({ data, onUpdate }: { data: any, onUpdate: () => 
             className="w-full bg-white border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-sm h-11"
           />
         </div>
-        <button 
-          onClick={() => setIsModalOpen(true)}
-          className="bg-blue-600 text-white px-5 py-2.5 rounded-xl font-semibold flex items-center gap-2 hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200 text-sm h-11"
-        >
-          <Plus size={20} />
-          Novo Caminhão
-        </button>
+        
+        <div className="flex items-center gap-3">
+          <div className={cn(
+            "px-3.5 py-2 rounded-xl border text-xs font-bold flex items-center gap-2 h-11",
+            totalCadastrados >= limiteCaminhoes
+              ? "bg-amber-50 text-amber-800 border-amber-200"
+              : "bg-slate-50 text-slate-700 border-slate-200"
+          )}>
+            <TruckIcon size={16} className={totalCadastrados >= limiteCaminhoes ? "text-amber-600" : "text-blue-600"} />
+            <span>Frota: <strong>{totalCadastrados} / {limiteCaminhoes}</strong> veículos</span>
+          </div>
+
+          <button 
+            onClick={() => {
+              if (totalCadastrados >= limiteCaminhoes) {
+                alert(`Limite de frotas ativadas atingido (${totalCadastrados}/${limiteCaminhoes} caminhões).\n\nPara cadastrar mais veículos na sua empresa, solicite a expansão do seu plano no canal de suporte.`);
+                return;
+              }
+              setIsModalOpen(true);
+            }}
+            className="bg-blue-600 text-white px-5 py-2.5 rounded-xl font-semibold flex items-center gap-2 hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200 text-sm h-11 cursor-pointer shrink-0"
+          >
+            <Plus size={20} />
+            Novo Caminhão
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">

@@ -232,6 +232,7 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
 
   // Freight calculation base: 'fixo' | 'quilo' | 'cabeca'
   const [tipoCalculo, setTipoCalculo] = useState('fixo');
+  const [valorPorKmFixo, setValorPorKmFixo] = useState('');
   const [valorDiaria, setValorDiaria] = useState('');
   const [valorAlmoco, setValorAlmoco] = useState('');
   const [pesoTotalKg, setPesoTotalKg] = useState('');
@@ -374,6 +375,14 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
     setValorPorKg(freight.valorPorKg ? String(freight.valorPorKg) : '');
     setQuantidadeCabecas(freight.quantidadeCabecas ? String(freight.quantidadeCabecas) : '');
     setValorPorCabeca(freight.valorPorCabeca ? String(freight.valorPorCabeca) : '');
+    if (freight.distanciaKm && freight.valorBruto) {
+      const d = parseFloat(freight.distanciaKm);
+      const v = parseFloat(freight.valorBruto);
+      if (d > 0 && v > 0) setValorPorKmFixo((v / d).toFixed(2));
+      else setValorPorKmFixo('');
+    } else {
+      setValorPorKmFixo('');
+    }
     setIsModalOpen(true);
   };
 
@@ -543,6 +552,7 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
             setValorPorKg('');
             setQuantidadeCabecas('');
             setValorPorCabeca('');
+            setValorPorKmFixo('');
             setIsModalOpen(true);
           }}
           className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-3 rounded-2xl text-sm font-bold flex items-center gap-2 shadow-lg shadow-blue-100 transition-all self-stretch sm:self-auto justify-center"
@@ -767,6 +777,18 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
                         <div className="mt-2.5 flex items-center gap-1.5">
                           <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold bg-orange-50 text-orange-700 border border-orange-100">
                             🐂 Carga: {freight.quantidadeCabecas} Cabeças de Gado × R$ {parseFloat(freight.valorPorCabeca || '0').toLocaleString('pt-BR', { minimumFractionDigits: 2 })}/cabeça
+                          </span>
+                        </div>
+                      )}
+                      {freight.tipoCalculo === 'fixo' && Number(freight.pesoTotalKg) > 0 && (
+                        <div className="mt-2.5 flex items-center gap-1.5">
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                            ⚖️ Peso Registrado: {Number(freight.pesoTotalKg).toLocaleString('pt-BR')} kg
+                            {Number(freight.valorBruto) > 0 && (
+                              <span className="text-[10px] text-slate-500 ml-1">
+                                (~ R$ {(Number(freight.valorBruto) / Number(freight.pesoTotalKg)).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 })}/kg)
+                              </span>
+                            )}
                           </span>
                         </div>
                       )}
@@ -1294,6 +1316,96 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
               </>
             )}
 
+            {tipoCalculo === 'fixo' && (
+              <div className="col-span-2 bg-blue-50/60 border border-blue-150 p-4 rounded-2xl space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-blue-900 uppercase tracking-wider flex items-center gap-1.5">
+                    <Calculator size={15} className="text-blue-600" />
+                    Simulador & Auxiliar por KM (Calcula o Valor Bruto pelo KM)
+                  </span>
+                  <span className="text-[10px] font-bold text-blue-800 bg-blue-100/80 px-2.5 py-1 rounded-full border border-blue-200">
+                    Distância Total: {distanciaKm || 0} km ({tipoViagem === 'ida_volta' ? 'Ida e Volta' : 'Somente Ida'})
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                      Valor por KM Desejado (R$/km)
+                    </label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-2.5 text-slate-400 font-bold text-xs">R$</span>
+                      <input
+                        type="text"
+                        placeholder="Ex: 8,50"
+                        value={valorPorKmFixo ? maskBRL(valorPorKmFixo) : ""}
+                        onChange={(e) => {
+                          const masked = maskBRL(e.target.value);
+                          const val = masked ? String(unmaskBRL(masked)) : "";
+                          setValorPorKmFixo(val);
+                          const dist = parseFloat(distanciaKm || '0');
+                          const numVal = parseFloat(val || '0');
+                          if (dist > 0 && numVal > 0) {
+                            setValorBruto((dist * numVal).toFixed(2));
+                          }
+                        }}
+                        className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-blue-500 text-xs font-bold font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="bg-white p-2.5 border border-slate-200 rounded-xl flex items-center justify-between gap-2">
+                    <div>
+                      <span className="block text-[10px] font-bold text-slate-400 uppercase">Média R$/KM do Frete</span>
+                      <span className="text-xs font-extrabold text-slate-800 font-mono">
+                        {distanciaKm && parseFloat(distanciaKm) > 0 && valorBruto && parseFloat(valorBruto) > 0
+                          ? `R$ ${(parseFloat(valorBruto) / parseFloat(distanciaKm)).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} / km`
+                          : 'R$ 0,00 / km'}
+                      </span>
+                    </div>
+                    {distanciaKm && parseFloat(distanciaKm) > 0 && valorPorKmFixo && parseFloat(valorPorKmFixo) > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const dist = parseFloat(distanciaKm);
+                          const val = parseFloat(valorPorKmFixo);
+                          if (dist > 0 && val > 0) {
+                            setValorBruto((dist * val).toFixed(2));
+                          }
+                        }}
+                        className="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[10px] font-bold transition-colors shadow-sm"
+                      >
+                        Recalcular
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-blue-200/60 flex flex-wrap sm:flex-nowrap items-center justify-between gap-3">
+                  <div className="w-full sm:w-1/2">
+                    <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                      Peso Total da Carga (Kg) <span className="text-slate-400 font-normal">(Opcional - Registro)</span>
+                    </label>
+                    <input
+                      type="number"
+                      placeholder="Ex: 15000"
+                      value={pesoTotalKg}
+                      onChange={(e) => setPesoTotalKg(e.target.value)}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-blue-500 text-xs font-medium"
+                    />
+                  </div>
+                  {pesoTotalKg && parseFloat(pesoTotalKg) > 0 && valorBruto && parseFloat(valorBruto) > 0 ? (
+                    <div className="w-full sm:w-1/2 bg-white/80 p-2.5 border border-blue-200 rounded-xl text-xs text-blue-900">
+                      <span className="block text-[10px] font-bold text-slate-400 uppercase">Equivalência Média R$/KG</span>
+                      <strong className="font-mono text-blue-900 font-bold">
+                        R$ {(parseFloat(valorBruto) / parseFloat(pesoTotalKg)).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 })} / kg
+                      </strong>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            )}
+
             <div className="col-span-2">
               <label className="block text-xs font-bold uppercase text-slate-500 mb-2">
                 Valor Bruto do Frete (Receita) * {tipoCalculo !== 'fixo' && <span className="text-emerald-600 font-black tracking-wide">(Autocalculado)</span>}
@@ -1308,7 +1420,13 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
                   value={valorBruto ? maskBRL(valorBruto) : ""}
                   onChange={(e) => {
                     const masked = maskBRL(e.target.value);
-                    setValorBruto(masked ? String(unmaskBRL(masked)) : "");
+                    const val = masked ? String(unmaskBRL(masked)) : "";
+                    setValorBruto(val);
+                    const dist = parseFloat(distanciaKm || '0');
+                    const numVal = parseFloat(val || '0');
+                    if (dist > 0 && numVal > 0) {
+                      setValorPorKmFixo((numVal / dist).toFixed(2));
+                    }
                   }}
                   className={`w-full pl-10 pr-4 py-3 border border-slate-200 rounded-2xl focus:outline-none focus:border-blue-500 transition-colors text-sm font-bold font-mono ${
                     tipoCalculo !== 'fixo' ? 'bg-slate-100/80 text-emerald-700 cursor-not-allowed' : 'bg-slate-50'

@@ -383,7 +383,7 @@ export default function Reports({ data }: ReportsProps) {
       rawCategorias['Diesel S500 (Abastecimento)'] = totalFuelS500;
     }
     if (totalFuelS10 === 0 && totalFuelS500 === 0) {
-      rawCategorias['Diesel (Abastecimento)'] = 0;
+      rawCategorias['Diesel S10 (Abastecimento)'] = 0;
     }
 
     // 2. Maintenance

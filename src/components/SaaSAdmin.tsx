@@ -32,6 +32,10 @@ interface CompanyMeta {
   trialDays: number;
   daysRemaining: number;
   supportCode: string | null;
+  dataVencimento?: string;
+  limiteCaminhoes?: number;
+  valorPorCaminhao?: number;
+  valorMensalidade?: number;
   adminUser?: {
     id: string;
     nome: string;
@@ -71,6 +75,10 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
   const [editAdminNome, setEditAdminNome] = useState("");
   const [editAdminEmail, setEditAdminEmail] = useState("");
   const [editAdminPassword, setEditAdminPassword] = useState("");
+  const [editDataVencimento, setEditDataVencimento] = useState("");
+  const [editLimiteCaminhoes, setEditLimiteCaminhoes] = useState(10);
+  const [editValorPorCaminhao, setEditValorPorCaminhao] = useState(30);
+  const [editValorMensalidade, setEditValorMensalidade] = useState(300);
 
   const fetchCompanies = async () => {
     setIsLoading(true);
@@ -203,6 +211,22 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
     setEditAdminNome(company.adminUser?.nome || "");
     setEditAdminEmail(company.adminUser?.email || "");
     setEditAdminPassword("");
+
+    const defaultDueDate = company.dataVencimento || (
+      company.createdAt 
+        ? new Date(new Date(company.createdAt).getTime() + (company.trialDays || 30) * 86400000).toISOString().substring(0, 10)
+        : new Date(Date.now() + 30 * 86400000).toISOString().substring(0, 10)
+    );
+    setEditDataVencimento(defaultDueDate);
+
+    const lim = company.limiteCaminhoes !== undefined ? company.limiteCaminhoes : 10;
+    const valCam = company.valorPorCaminhao !== undefined ? company.valorPorCaminhao : 30;
+    const valTot = company.valorMensalidade !== undefined ? company.valorMensalidade : (lim * valCam);
+
+    setEditLimiteCaminhoes(lim);
+    setEditValorPorCaminhao(valCam);
+    setEditValorMensalidade(valTot);
+
     setIsEditModalOpen(true);
   };
 
@@ -231,7 +255,11 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
           createdAt: isoCreatedAt,
           adminNome: editAdminNome,
           adminEmail: editAdminEmail,
-          adminPassword: editAdminPassword
+          adminPassword: editAdminPassword,
+          dataVencimento: editDataVencimento,
+          limiteCaminhoes: Number(editLimiteCaminhoes),
+          valorPorCaminhao: Number(editValorPorCaminhao),
+          valorMensalidade: Number(editValorMensalidade)
         }),
       });
 
@@ -361,16 +389,22 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
                 <tr className="bg-slate-50 border-b border-slate-200 text-[10px] text-slate-500 uppercase tracking-widest font-extrabold">
                   <th className="py-4 px-6">Empresa / Cliente</th>
                   <th className="py-4 px-6">Plano Assinatura</th>
-                  <th className="py-4 px-6">Frota Ativa</th>
-                  <th className="py-4 px-6">Motoristas</th>
-                  <th className="py-4 px-6">Lançamentos / Fretes</th>
-                  <th className="py-4 px-6">Data de Criação</th>
+                  <th className="py-4 px-6">Frota / Limite</th>
+                  <th className="py-4 px-6">Mensalidade & Vencimento</th>
+                  <th className="py-4 px-6">Motoristas & Fretes</th>
+                  <th className="py-4 px-6">Data de Adesão</th>
                   <th className="py-4 px-6 text-right">Suporte & Controles</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs">
                 {companies.map((company) => {
                   const isBeingImpersonated = activeImpersonatedId === company.id;
+                  const limCam = company.limiteCaminhoes || 10;
+                  const valCam = company.valorPorCaminhao || 30;
+                  const valMensal = company.valorMensalidade || (limCam * valCam);
+                  const vencStr = company.dataVencimento 
+                    ? new Date(company.dataVencimento + 'T12:00:00').toLocaleDateString('pt-BR') 
+                    : 'A definir';
 
                   return (
                     <tr 
@@ -394,11 +428,11 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
                                 ID: {company.id}
                               </span>
                               {company.status === "inativo" ? (
-                                <span className="bg-rose-50 text-rose-600 px-1.5 py-0.5 rounded text-[8px] font-black uppercase">SVA / Inativo</span>
+                                <span className="bg-rose-50 text-rose-600 px-1.5 py-0.5 rounded text-[8px] font-black uppercase">Inativo</span>
                               ) : company.pago ? (
                                 <span className="bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded text-[8px] font-black uppercase">✓ Liberado</span>
                               ) : (
-                                <span className="bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded text-[8px] font-black uppercase">Teste: {company.daysRemaining}d</span>
+                                <span className="bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded text-[8px] font-black uppercase">Aguard. Pagam.</span>
                               )}
                             </div>
                           </div>
@@ -414,19 +448,25 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
                             company.plano === "Pro" && "bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100",
                             company.plano === "Basic" && "bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100"
                           )}
-                          title="Clique para alternar o plano (Basic / Pro / Enterprise)"
+                          title="Clique para alternar o plano"
                         >
                           Plano {company.plano}
                         </button>
                       </td>
                       <td className="py-4 px-6 font-semibold text-slate-700">
-                        {company.truckCount} caminhões
+                        <div className="flex flex-col">
+                          <span className="font-bold text-slate-900">{company.truckCount} / {limCam} caminhões</span>
+                          <span className="text-[10px] text-slate-400">R$ {valCam.toFixed(2)} / veíc</span>
+                        </div>
                       </td>
                       <td className="py-4 px-6 text-slate-600">
-                        {company.driverCount} motoristas
+                        <div className="flex flex-col">
+                          <span className="font-extrabold text-emerald-700">R$ {valMensal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} /mês</span>
+                          <span className="text-[10px] text-slate-500 font-medium">Venc: {vencStr}</span>
+                        </div>
                       </td>
                       <td className="py-4 px-6 text-slate-500">
-                        {company.freightCount} fretes ({company.userCount} usuário)
+                        {company.driverCount} motoristas • {company.freightCount} fretes
                       </td>
                       <td className="py-4 px-6 text-slate-500">
                         {new Date(company.createdAt).toLocaleDateString('pt-BR')}
@@ -712,6 +752,89 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
                   <div className="text-[10px] text-slate-400 italic leading-relaxed pt-1 flex items-start gap-1">
                     <span className="text-rose-500 font-bold">*</span>
                     <p>Caso o faturamento esteja como "Aguardando pagamento" (não marcado como Liberado), o painel verificará se a data de adesão somada aos dias de teste é maior que o dia de hoje para autorizar ou bloquear o painel principal.</p>
+                  </div>
+                </div>
+
+                {/* Seção Cálculo e Precificação por Caminhão */}
+                <div className="p-4 bg-emerald-50/40 rounded-2xl border border-emerald-200/60 space-y-4">
+                  <h4 className="text-[10px] font-black uppercase tracking-wider text-emerald-800 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <Truck size={14} className="text-emerald-600" />
+                      Assinatura por Frota & Faturamento Recorrente
+                    </span>
+                    <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2.5 py-0.5 rounded-full font-bold">
+                      Cálculo por Caminhão
+                    </span>
+                  </h4>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+                    {/* Limite de caminhões */}
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-bold text-slate-700 block">Qtd. Caminhões Liberados</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="500"
+                        value={editLimiteCaminhoes}
+                        onChange={(e) => {
+                          const val = Number(e.target.value);
+                          setEditLimiteCaminhoes(val);
+                          setEditValorMensalidade(val * editValorPorCaminhao);
+                        }}
+                        className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500/20 font-mono"
+                      />
+                      <p className="text-[9px] text-slate-400">Ex: 10 caminhões</p>
+                    </div>
+
+                    {/* Preço por caminhão */}
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-bold text-slate-700 block">Valor por Caminhão (R$)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={editValorPorCaminhao}
+                        onChange={(e) => {
+                          const val = Number(e.target.value);
+                          setEditValorPorCaminhao(val);
+                          setEditValorMensalidade(editLimiteCaminhoes * val);
+                        }}
+                        className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500/20 font-mono"
+                      />
+                      <p className="text-[9px] text-slate-400">Ex: R$ 30,00 por veíc</p>
+                    </div>
+
+                    {/* Mensalidade total calculada */}
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-bold text-slate-700 block">Mensalidade Total (R$)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={editValorMensalidade}
+                        onChange={(e) => setEditValorMensalidade(Number(e.target.value))}
+                        className="w-full bg-emerald-100/60 border border-emerald-300 rounded-xl px-3 py-2 text-xs font-black text-emerald-900 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 font-mono"
+                      />
+                      <p className="text-[9px] text-emerald-700 font-bold">Valor cobrado mensal</p>
+                    </div>
+                  </div>
+
+                  {/* Data de Vencimento */}
+                  <div className="pt-2 border-t border-emerald-200/50 grid grid-cols-1 md:grid-cols-2 gap-3.5 items-center">
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-bold text-slate-700 block">Data de Vencimento da Assinatura</label>
+                      <input
+                        type="date"
+                        required
+                        value={editDataVencimento}
+                        onChange={(e) => setEditDataVencimento(e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 font-mono"
+                      />
+                    </div>
+                    <div className="text-[10px] text-slate-500 leading-tight">
+                      <p className="font-bold text-slate-700">Reflexo no Perfil do Usuário:</p>
+                      <p>Vencimento em <strong>{editDataVencimento ? new Date(editDataVencimento + 'T12:00:00').toLocaleDateString('pt-BR') : 'A definir'}</strong>. O cliente verá os detalhes e alertas no seu próprio perfil.</p>
+                    </div>
                   </div>
                 </div>
               </div>

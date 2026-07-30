@@ -378,7 +378,9 @@ const getInitialData = () => ({
     "Outros Recebíveis"
   ],
   categories_saida: [
-    "Diesel (Abastecimento)",
+    "Diesel S10 (Abastecimento)",
+    "Diesel S500 (Abastecimento)",
+    "Arla 32 (Abastecimento)",
     "Pedágios",
     "Manutenção e Peças",
     "Motorista (Diária/Comissão)",
@@ -634,7 +636,9 @@ app.use(ensureDBSynced);
 
     if (!db.categories_saida) {
       db.categories_saida = [
-        "Diesel (Abastecimento)",
+        "Diesel S10 (Abastecimento)",
+        "Diesel S500 (Abastecimento)",
+        "Arla 32 (Abastecimento)",
         "Pedágios",
         "Manutenção e Peças",
         "Motorista (Diária/Comissão)",
@@ -713,6 +717,24 @@ app.use(ensureDBSynced);
         }
         if (c.supportAuthorizedUntil === undefined) {
           c.supportAuthorizedUntil = null;
+          companiesMigrated = true;
+        }
+        if (c.limiteCaminhoes === undefined) {
+          c.limiteCaminhoes = 10;
+          companiesMigrated = true;
+        }
+        if (c.valorPorCaminhao === undefined) {
+          c.valorPorCaminhao = 30;
+          companiesMigrated = true;
+        }
+        if (c.valorMensalidade === undefined) {
+          c.valorMensalidade = c.limiteCaminhoes * c.valorPorCaminhao;
+          companiesMigrated = true;
+        }
+        if (c.dataVencimento === undefined) {
+          const baseDate = c.createdAt ? new Date(c.createdAt) : new Date();
+          const dueDate = new Date(baseDate.getTime() + (c.trialDays || 30) * 24 * 60 * 60 * 1000);
+          c.dataVencimento = dueDate.toISOString().split("T")[0];
           companiesMigrated = true;
         }
       });
@@ -1032,8 +1054,10 @@ app.use(ensureDBSynced);
       "Outros Recebíveis"
     ];
 
-    const categoriesSaida = currentCompany?.categories_saida || db.categories_saida || [
-      "Diesel (Abastecimento)",
+    let categoriesSaida = (currentCompany?.categories_saida || db.categories_saida || [
+      "Diesel S10 (Abastecimento)",
+      "Diesel S500 (Abastecimento)",
+      "Arla 32 (Abastecimento)",
       "Pedágios",
       "Manutenção e Peças",
       "Motorista (Diária/Comissão)",
@@ -1042,7 +1066,23 @@ app.use(ensureDBSynced);
       "Administrativo & Escritório",
       "Impostos/Licenciamento",
       "Outras Despesas"
-    ];
+    ]).filter((c: string) => c !== "Diesel (Abastecimento)");
+    if (!categoriesSaida.includes("Diesel S10 (Abastecimento)")) categoriesSaida.unshift("Diesel S10 (Abastecimento)");
+    if (!categoriesSaida.includes("Diesel S500 (Abastecimento)")) categoriesSaida.splice(1, 0, "Diesel S500 (Abastecimento)");
+
+    const sanitizedCashFlow = filteredCashFlow.map((c: any) => {
+      if (c.categoria === "Diesel (Abastecimento)") {
+        return { ...c, categoria: c.descricao?.includes("S500") ? "Diesel S500 (Abastecimento)" : "Diesel S10 (Abastecimento)" };
+      }
+      return c;
+    });
+
+    const sanitizedExpenses = filteredExpenses.map((e: any) => {
+      if (e.tipo === "Diesel (Abastecimento)") {
+        return { ...e, tipo: e.descritivo?.includes("S500") || e.obs?.includes("S500") ? "Diesel S500 (Abastecimento)" : "Diesel S10 (Abastecimento)" };
+      }
+      return e;
+    });
 
     res.json({
       currentUser: user,
@@ -1051,8 +1091,8 @@ app.use(ensureDBSynced);
       trucks: filteredTrucks,
       drivers: filteredDrivers,
       fuel_logs: filteredFuelLogs,
-      expenses: filteredExpenses,
-      cash_flow: filteredCashFlow,
+      expenses: sanitizedExpenses,
+      cash_flow: sanitizedCashFlow,
       freights: filteredFreights,
       maintenance_alerts: filteredMaintenanceAlerts,
       routes: filteredRoutes,
@@ -1119,7 +1159,7 @@ app.use(ensureDBSynced);
       return res.status(403).json({ error: "Acesso reservado ao Administrador Master." });
     }
 
-    const { nome, plano, adminNome, adminEmail, adminPassword } = req.body;
+    const { nome, plano, adminNome, adminEmail, adminPassword, dataVencimento, limiteCaminhoes, valorPorCaminhao, valorMensalidade } = req.body;
     if (!nome || !adminNome || !adminEmail || !adminPassword) {
       return res.status(400).json({ error: "Preencha todos os campos obrigatórios." });
     }
@@ -1131,17 +1171,27 @@ app.use(ensureDBSynced);
     }
 
     const newCompanyId = `comp_${Date.now()}`;
+    const createdDate = new Date();
+    const defaultDueDate = new Date(createdDate.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const limiteCaminhoesNum = limiteCaminhoes !== undefined ? Number(limiteCaminhoes) : 10;
+    const valorPorCaminhaoNum = valorPorCaminhao !== undefined ? Number(valorPorCaminhao) : 30;
+    const valorMensalidadeNum = valorMensalidade !== undefined ? Number(valorMensalidade) : (limiteCaminhoesNum * valorPorCaminhaoNum);
+
     const newCompany = {
       id: newCompanyId,
       nome,
       plano: plano || "Pro",
-      createdAt: new Date().toISOString(),
+      createdAt: createdDate.toISOString(),
       status: "ativo",
       pago: false,
       trialDays: 30,
       supportCode: null,
       supportCodeCreatedAt: null,
       supportAuthorizedUntil: null,
+      dataVencimento: dataVencimento || defaultDueDate,
+      limiteCaminhoes: limiteCaminhoesNum,
+      valorPorCaminhao: valorPorCaminhaoNum,
+      valorMensalidade: valorMensalidadeNum,
       categories_entrada: [...db.categories_entrada],
       categories_saida: [...db.categories_saida]
     };
@@ -1169,7 +1219,7 @@ app.use(ensureDBSynced);
     }
 
     const { id } = req.params;
-    const { plano, nome, status, pago, trialDays, createdAt, adminNome, adminEmail, adminPassword } = req.body;
+    const { plano, nome, status, pago, trialDays, createdAt, adminNome, adminEmail, adminPassword, dataVencimento, limiteCaminhoes, valorPorCaminhao, valorMensalidade } = req.body;
 
     const db = readDB();
     const idx = db.companies.findIndex((c: any) => c.id === id);
@@ -1183,6 +1233,10 @@ app.use(ensureDBSynced);
     if (pago !== undefined) db.companies[idx].pago = !!pago;
     if (trialDays !== undefined) db.companies[idx].trialDays = Number(trialDays);
     if (createdAt !== undefined) db.companies[idx].createdAt = createdAt;
+    if (dataVencimento !== undefined) db.companies[idx].dataVencimento = dataVencimento;
+    if (limiteCaminhoes !== undefined) db.companies[idx].limiteCaminhoes = Number(limiteCaminhoes);
+    if (valorPorCaminhao !== undefined) db.companies[idx].valorPorCaminhao = Number(valorPorCaminhao);
+    if (valorMensalidade !== undefined) db.companies[idx].valorMensalidade = Number(valorMensalidade);
 
     // Associated Admin user edit (dados cadastrais e redefinição de senha)
     const companyAdmin = db.users.find((u: any) => u.companyId === id && u.role === "admin");
@@ -1323,6 +1377,7 @@ app.use(ensureDBSynced);
       id: `cash_fuel_${newLog.id}`,
       companyId: companyId,
       tipo: 'saida',
+      categoria: `Diesel ${newLog.tipoDiesel || 'S10'} (Abastecimento)`,
       valor: parseFloat(newLog.valor || 0),
       data: newLog.data,
       descricao: `Abastecimento Diesel ${newLog.tipoDiesel || 'S10'}: ${newLog.truckId} (${newLog.litros}L)`
@@ -1333,6 +1388,7 @@ app.use(ensureDBSynced);
         id: `cash_arla_${newLog.id}`,
         companyId: companyId,
         tipo: 'saida',
+        categoria: 'Arla 32 (Abastecimento)',
         valor: parseFloat(newLog.valorArla || 0),
         data: newLog.data,
         descricao: `Abastecimento Arla: ${newLog.truckId} (${newLog.litrosArla || 0}L)`
@@ -1376,6 +1432,7 @@ app.use(ensureDBSynced);
       id: `cash_fuel_${id}`,
       companyId: companyId,
       tipo: 'saida',
+      categoria: `Diesel ${updatedLog.tipoDiesel || 'S10'} (Abastecimento)`,
       valor: parseFloat(updatedLog.valor || 0),
       data: updatedLog.data,
       descricao: `Abastecimento Diesel ${updatedLog.tipoDiesel || 'S10'}: ${updatedLog.truckId} (${updatedLog.litros}L)`
@@ -1386,6 +1443,7 @@ app.use(ensureDBSynced);
         id: `cash_arla_${id}`,
         companyId: companyId,
         tipo: 'saida',
+        categoria: 'Arla 32 (Abastecimento)',
         valor: parseFloat(updatedLog.valorArla || 0),
         data: updatedLog.data,
         descricao: `Abastecimento Arla: ${updatedLog.truckId} (${updatedLog.litrosArla || 0}L)`
@@ -1661,6 +1719,16 @@ app.use(ensureDBSynced);
   app.post("/api/trucks", (req, res) => {
     const db = readDB();
     const companyId = (req as any).companyId;
+    const company = db.companies.find((c: any) => c.id === companyId);
+    const companyTrucks = db.trucks.filter((t: any) => t.companyId === companyId);
+    const limite = company?.limiteCaminhoes ?? 10;
+
+    if (limite > 0 && companyTrucks.length >= limite) {
+      return res.status(400).json({ 
+        error: `Limite de frotas ativadas atingido (${companyTrucks.length}/${limite} caminhões). Entre em contato com o suporte/SaaS para expandir seu plano.` 
+      });
+    }
+
     const newTruck = { 
       ...req.body, 
       id: `truck_${Date.now()}`,
@@ -1799,7 +1867,8 @@ app.use(ensureDBSynced);
       motorista: parseFloat(req.body.motorista || 0),
       outrasDespesas: parseFloat(req.body.outrasDespesas || 0),
       distanciaKm: parseFloat(req.body.distanciaKm || 0),
-      kmAbastecimento: parseFloat(req.body.kmAbastecimento || 0)
+      kmAbastecimento: parseFloat(req.body.kmAbastecimento || 0),
+      tipoViagem: req.body.tipoViagem || 'ida'
     };
     db.freights.push(newFreight);
 
@@ -1834,7 +1903,8 @@ app.use(ensureDBSynced);
       motorista: parseFloat(req.body.motorista || 0),
       outrasDespesas: parseFloat(req.body.outrasDespesas || 0),
       distanciaKm: parseFloat(req.body.distanciaKm || 0),
-      kmAbastecimento: parseFloat(req.body.kmAbastecimento || 0)
+      kmAbastecimento: parseFloat(req.body.kmAbastecimento || 0),
+      tipoViagem: req.body.tipoViagem || db.freights[idx].tipoViagem || 'ida'
     };
 
     syncFreightData(db, db.freights[idx]);

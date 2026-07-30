@@ -22,14 +22,15 @@ import {
   CheckCircle,
   Building,
   Edit,
-  Eye
+  Eye,
+  Loader2
 } from 'lucide-react';
 import Modal from './ui/Modal';
 import { cn, maskBRL, unmaskBRL, formatDateBR } from '../lib/utils';
 import { compressAndSetFile, AttachmentPreview } from '../lib/fileCompressor';
 
 export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () => void }) {
-  const categoriesSaida = data.categories_saida || [
+  const categoriesSaida = data?.categories_saida || [
     "Pedágios",
     "Manutenção e Peças",
     "Motorista (Diária/Comissão)",
@@ -119,6 +120,7 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
   const [selectedExpenseDetail, setSelectedExpenseDetail] = useState<any | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [isEditingExpense, setIsEditingExpense] = useState(false);
+  const [isUpdatingExpense, setIsUpdatingExpense] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [editExpenseForm, setEditExpenseForm] = useState({
     truckId: '',
@@ -291,6 +293,9 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
       return;
     }
 
+    if (isUpdatingExpense) return;
+    setIsUpdatingExpense(true);
+
     try {
       const response = await fetch(`/api/expenses/${selectedExpenseDetail.id}`, {
         method: 'PUT',
@@ -305,6 +310,7 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
       if (response.ok) {
         setIsDetailModalOpen(false);
         setSelectedExpenseDetail(null);
+        setIsEditingExpense(false);
         onUpdate();
       } else {
         alert("Erro ao atualizar despesa.");
@@ -312,6 +318,8 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
     } catch (err) {
       console.error(err);
       alert("Erro de conexão ao atualizar despesa.");
+    } finally {
+      setIsUpdatingExpense(false);
     }
   };
 
@@ -850,7 +858,7 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
               className="bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-xl px-2.5 py-1.5 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 text-[11px]"
             >
               <option value="all">Toda a Frota Ativa</option>
-              {data.trucks.map((t: any) => (
+              {(data?.trucks || []).map((t: any) => (
                 <option key={t.id} value={t.placa}>{t.placa} ({t.modelo})</option>
               ))}
             </select>
@@ -1881,7 +1889,7 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 text-xs"
               >
                 <option value="">Selecione...</option>
-                {data.trucks.map((t: any) => (
+                {(data?.trucks || []).map((t: any) => (
                   <option key={t.id} value={t.placa}>{t.placa} - {t.modelo}</option>
                 ))}
               </select>
@@ -2053,11 +2061,11 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
                 <div className="grid grid-cols-2 gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
                   <div>
                     <span className="block text-[10px] font-black uppercase text-slate-400 mb-0.5">Veículo / Caminhão</span>
-                    <span className="font-bold text-slate-800 text-sm">{selectedExpenseDetail.truckId}</span>
+                    <span className="font-bold text-slate-800 text-sm">{selectedExpenseDetail?.truckId || "---"}</span>
                   </div>
                   <div>
                     <span className="block text-[10px] font-black uppercase text-slate-400 mb-0.5">Tipo de Despesa</span>
-                    <span className="font-bold text-slate-800 text-sm">{selectedExpenseDetail.tipo}</span>
+                    <span className="font-bold text-slate-800 text-sm">{selectedExpenseDetail?.tipo || "---"}</span>
                   </div>
                 </div>
 
@@ -2065,19 +2073,19 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
                   <div>
                     <span className="block text-[10px] font-black uppercase text-slate-400 mb-0.5">Data de Emissão</span>
                     <span className="font-bold text-slate-800 text-sm font-mono">
-                      {formatDateBR(selectedExpenseDetail.data)}
+                      {formatDateBR(selectedExpenseDetail?.data)}
                     </span>
                   </div>
                   <div>
                     <span className="block text-[10px] font-black uppercase text-slate-400 mb-0.5">Valor da Despesa</span>
                     <span className="font-bold text-red-650 text-sm font-mono">
-                      R$ {selectedExpenseDetail.valor?.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      R$ {Number(selectedExpenseDetail?.valor || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                   </div>
                   <div>
                     <span className="block text-[10px] font-black uppercase text-slate-400 mb-0.5">Odômetro (KM)</span>
                     <span className="font-bold text-slate-850 text-sm font-mono">
-                      {selectedExpenseDetail.km ? `${Number(selectedExpenseDetail.km).toLocaleString('pt-BR')} km` : <span className="text-slate-400 italic">Não informado</span>}
+                      {selectedExpenseDetail?.km ? `${Number(selectedExpenseDetail.km).toLocaleString('pt-BR')} km` : <span className="text-slate-400 italic">Não informado</span>}
                     </span>
                   </div>
                 </div>
@@ -2151,7 +2159,7 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
                       className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 font-bold focus:outline-none focus:ring-1 focus:ring-blue-500 text-xs text-slate-700"
                     >
                       <option value="">Selecione...</option>
-                      {data.trucks.map((t: any) => (
+                      {(data?.trucks || []).map((t: any) => (
                         <option key={t.id} value={t.placa}>{t.placa} - {t.modelo}</option>
                       ))}
                     </select>
@@ -2307,9 +2315,17 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
                   </button>
                   <button 
                     onClick={handleUpdateExpense}
-                    className="flex-1 px-4 py-2.5 rounded-xl bg-blue-600 text-white hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200"
+                    disabled={isUpdatingExpense}
+                    className="flex-1 px-4 py-2.5 rounded-xl bg-blue-600 text-white hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    Salvar Alterações
+                    {isUpdatingExpense ? (
+                      <>
+                        <Loader2 size={15} className="animate-spin" />
+                        <span>Salvando...</span>
+                      </>
+                    ) : (
+                      "Salvar Alterações"
+                    )}
                   </button>
                 </div>
               </div>

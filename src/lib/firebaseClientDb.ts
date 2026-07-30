@@ -370,7 +370,24 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       const filteredDriverAdjustments = (liveDb.driver_adjustments || []).filter((da: any) => da.companyId === targetCompId);
 
       const categoriesEntrada = currentCompany?.categories_entrada || liveDb.categories_entrada || [];
-      const categoriesSaida = currentCompany?.categories_saida || liveDb.categories_saida || [];
+      let categoriesSaida = (currentCompany?.categories_saida || liveDb.categories_saida || []).filter((c: string) => c !== "Diesel (Abastecimento)");
+      if (!categoriesSaida.includes("Diesel S10 (Abastecimento)")) categoriesSaida.unshift("Diesel S10 (Abastecimento)");
+      if (!categoriesSaida.includes("Diesel S500 (Abastecimento)")) categoriesSaida.splice(1, 0, "Diesel S500 (Abastecimento)");
+
+      // Sanitize legacy "Diesel (Abastecimento)" entries in cash_flow and expenses
+      const sanitizedCashFlow = filteredCashFlow.map((c: any) => {
+        if (c.categoria === "Diesel (Abastecimento)") {
+          return { ...c, categoria: c.descricao?.includes("S500") ? "Diesel S500 (Abastecimento)" : "Diesel S10 (Abastecimento)" };
+        }
+        return c;
+      });
+
+      const sanitizedExpenses = filteredExpenses.map((e: any) => {
+        if (e.tipo === "Diesel (Abastecimento)") {
+          return { ...e, tipo: e.descritivo?.includes("S500") || e.obs?.includes("S500") ? "Diesel S500 (Abastecimento)" : "Diesel S10 (Abastecimento)" };
+        }
+        return e;
+      });
 
       return jsonResponse({
         currentUser: ctx.user,
@@ -379,8 +396,8 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
         trucks: filteredTrucks,
         drivers: filteredDrivers,
         fuel_logs: filteredFuelLogs,
-        expenses: filteredExpenses,
-        cash_flow: filteredCashFlow,
+        expenses: sanitizedExpenses,
+        cash_flow: sanitizedCashFlow,
         freights: filteredFreights,
         maintenance_alerts: filteredMaintenanceAlerts,
         routes: filteredRoutes,
@@ -399,7 +416,53 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       if (ctx.user.role !== "superadmin") {
         return jsonResponse({ error: "Não autorizado." }, 403);
       }
-      return jsonResponse(liveDb.companies.filter((c: any) => c.id !== "comp_superadmin"));
+      const list = (liveDb.companies || [])
+        .filter((c: any) => c.id !== "comp_superadmin")
+        .map((c: any) => {
+          const truckCount = (liveDb.trucks || []).filter((t: any) => t.companyId === c.id).length;
+          const driverCount = (liveDb.drivers || []).filter((d: any) => d.companyId === c.id).length;
+          const freightCount = (liveDb.freights || []).filter((f: any) => f.companyId === c.id).length;
+          const userCount = (liveDb.users || []).filter((u: any) => u.companyId === c.id).length;
+          const mainUser = (liveDb.users || []).find((u: any) => u.companyId === c.id && u.role === "admin");
+
+          const entries = (liveDb.cash_flow || [])
+            .filter((cf: any) => cf.companyId === c.id && cf.tipo === "entrada")
+            .reduce((sum: number, cf: any) => sum + (Number(cf.valor) || 0), 0);
+          const egress = (liveDb.cash_flow || [])
+            .filter((cf: any) => cf.companyId === c.id && cf.tipo === "saida")
+            .reduce((sum: number, cf: any) => sum + (Number(cf.valor) || 0), 0);
+
+          const created = new Date(c.createdAt || new Date());
+          const now = new Date();
+          const elapsedDays = Math.floor((now.getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
+          const daysRemaining = Math.max(0, (c.trialDays || 30) - elapsedDays);
+
+          const limiteCaminhoes = c.limiteCaminhoes ?? 10;
+          const valorPorCaminhao = c.valorPorCaminhao ?? 30;
+          const valorMensalidade = c.valorMensalidade ?? (limiteCaminhoes * valorPorCaminhao);
+          const dataVencimento = c.dataVencimento ?? new Date(created.getTime() + (c.trialDays || 30) * 86400000).toISOString().split('T')[0];
+
+          return {
+            ...c,
+            limiteCaminhoes,
+            valorPorCaminhao,
+            valorMensalidade,
+            dataVencimento,
+            truckCount,
+            driverCount,
+            freightCount,
+            userCount,
+            balance: entries - egress,
+            daysRemaining,
+            adminUser: mainUser ? {
+              id: mainUser.id,
+              nome: mainUser.nome,
+              email: mainUser.email
+            } : null
+          };
+        });
+
+      return jsonResponse(list);
     }
 
     // 6) POST /api/superadmin/companies
@@ -408,7 +471,7 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
         return jsonResponse({ error: "Não autorizado." }, 403);
       }
 
-      const { nome, adminNome, adminEmail, adminPassword, plano, status, pago, trialDays } = body;
+      const { nome, adminNome, adminEmail, adminPassword, plano, status, pago, trialDays, dataVencimento, limiteCaminhoes, valorPorCaminhao, valorMensalidade } = body;
       if (!nome || !adminEmail) {
         return jsonResponse({ error: "Nome da empresa e e-mail do admin são obrigatórios." }, 400);
       }
@@ -419,17 +482,27 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
         return jsonResponse({ error: "E-mail de administrador já cadastrado no sistema." }, 400);
       }
 
+      const createdDate = new Date();
+      const defaultDueDate = new Date(createdDate.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      const limiteCaminhoesNum = limiteCaminhoes !== undefined ? Number(limiteCaminhoes) : 10;
+      const valorPorCaminhaoNum = valorPorCaminhao !== undefined ? Number(valorPorCaminhao) : 30;
+      const valorMensalidadeNum = valorMensalidade !== undefined ? Number(valorMensalidade) : (limiteCaminhoesNum * valorPorCaminhaoNum);
+
       const newCompany = {
         id: "comp_" + Math.random().toString(36).substr(2, 9),
         nome: nome.trim(),
         plano: plano || "Enterprise",
-        createdAt: new Date().toISOString(),
+        createdAt: createdDate.toISOString(),
         status: status || "ativo",
-        pago: pago !== undefined ? pago : true,
+        pago: pago !== undefined ? pago : false,
         trialDays: trialDays ? Number(trialDays) : 30,
         supportCode: null,
         supportCodeCreatedAt: null,
-        supportAuthorizedUntil: null
+        supportAuthorizedUntil: null,
+        dataVencimento: dataVencimento || defaultDueDate,
+        limiteCaminhoes: limiteCaminhoesNum,
+        valorPorCaminhao: valorPorCaminhaoNum,
+        valorMensalidade: valorMensalidadeNum
       };
 
       const newAdmin = {
@@ -468,6 +541,10 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       if (body.pago !== undefined) comp.pago = body.pago;
       if (body.trialDays !== undefined) comp.trialDays = Number(body.trialDays);
       if (body.createdAt !== undefined) comp.createdAt = body.createdAt;
+      if (body.dataVencimento !== undefined) comp.dataVencimento = body.dataVencimento;
+      if (body.limiteCaminhoes !== undefined) comp.limiteCaminhoes = Number(body.limiteCaminhoes);
+      if (body.valorPorCaminhao !== undefined) comp.valorPorCaminhao = Number(body.valorPorCaminhao);
+      if (body.valorMensalidade !== undefined) comp.valorMensalidade = Number(body.valorMensalidade);
 
       // Associated Admin user edit (dados cadastrais e redefinição de senha)
       const companyAdmin = liveDb.users.find((u: any) => u.companyId === targetId && u.role === "admin");
@@ -1083,6 +1160,16 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
 
     // 16) POST & DELETE /api/trucks
     if (cleanPath === "/api/trucks" && method === "POST") {
+      const company = (liveDb.companies || []).find((c: any) => c.id === ctx.companyId);
+      const companyTrucks = (liveDb.trucks || []).filter((t: any) => t.companyId === ctx.companyId);
+      const limite = company?.limiteCaminhoes ?? 10;
+
+      if (limite > 0 && companyTrucks.length >= limite) {
+        return jsonResponse({ 
+          error: `Limite de frotas ativadas atingido (${companyTrucks.length}/${limite} caminhões). Entre em contato com o suporte/SaaS para expandir seu plano.` 
+        }, 400);
+      }
+
       const placaStr = String(body.placa || "").toUpperCase().trim();
       const existing = (liveDb.trucks || []).find((t: any) => t.placa === placaStr && t.companyId === ctx.companyId);
       if (existing) {
@@ -1170,6 +1257,12 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
         resultadoLiquido: Number(body.resultadoLiquido || 0),
         distanciaKm: Number(body.distanciaKm || 0),
         kmAbastecimento: Number(body.kmAbastecimento || 0),
+        tipoViagem: body.tipoViagem || "ida",
+        tipoCalculo: body.tipoCalculo || "fixo",
+        pesoTotalKg: Number(body.pesoTotalKg || 0),
+        valorPorKg: Number(body.valorPorKg || 0),
+        quantidadeCabecas: Number(body.quantidadeCabecas || 0),
+        valorPorCabeca: Number(body.valorPorCabeca || 0),
         
         data: dateVal,
         dataSaida: dateVal,
@@ -1273,7 +1366,7 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
             fuelLogId: fuelLogId,
             companyId: ctx.companyId,
             tipo: "saida",
-            categoria: "Diesel (Abastecimento)",
+            categoria: `Diesel ${body.tipoDiesel || "S10"} (Abastecimento)`,
             valor: Number(newFreight.combustivel),
             data: dateVal,
             descricao: `Combustível OS ${orderNumber} - Placa ${newFreight.truckId}`
@@ -1368,6 +1461,12 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       matchFrt.resultadoLiquido = Number(body.resultadoLiquido || 0);
       matchFrt.distanciaKm = Number(body.distanciaKm || 0);
       matchFrt.kmAbastecimento = Number(body.kmAbastecimento || 0);
+      matchFrt.tipoViagem = body.tipoViagem || matchFrt.tipoViagem || "ida";
+      matchFrt.tipoCalculo = body.tipoCalculo || matchFrt.tipoCalculo || "fixo";
+      matchFrt.pesoTotalKg = Number(body.pesoTotalKg !== undefined ? body.pesoTotalKg : matchFrt.pesoTotalKg || 0);
+      matchFrt.valorPorKg = Number(body.valorPorKg !== undefined ? body.valorPorKg : matchFrt.valorPorKg || 0);
+      matchFrt.quantidadeCabecas = Number(body.quantidadeCabecas !== undefined ? body.quantidadeCabecas : matchFrt.quantidadeCabecas || 0);
+      matchFrt.valorPorCabeca = Number(body.valorPorCabeca !== undefined ? body.valorPorCabeca : matchFrt.valorPorCabeca || 0);
       matchFrt.data = dateVal;
       matchFrt.dataSaida = dateVal;
       matchFrt.localAbastecimento = body.localAbastecimento || "";
@@ -1469,7 +1568,7 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
             fuelLogId: fuelLogId,
             companyId: ctx.companyId,
             tipo: "saida",
-            categoria: "Diesel (Abastecimento)",
+            categoria: `Diesel ${body.tipoDiesel || "S10"} (Abastecimento)`,
             valor: Number(matchFrt.combustivel),
             data: dateVal,
             descricao: `Combustível OS ${matchFrt.numeroOrdem} - Placa ${matchFrt.truckId}`
