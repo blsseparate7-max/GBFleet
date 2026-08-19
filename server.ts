@@ -1231,12 +1231,33 @@ app.use(ensureDBSynced);
     if (nome !== undefined) db.companies[idx].nome = nome;
     if (status !== undefined) db.companies[idx].status = status;
     if (pago !== undefined) db.companies[idx].pago = !!pago;
-    if (trialDays !== undefined) db.companies[idx].trialDays = Number(trialDays);
+    if (trialDays !== undefined) {
+      const val = Number(trialDays);
+      db.companies[idx].trialDays = isNaN(val) ? 30 : val;
+    }
     if (createdAt !== undefined) db.companies[idx].createdAt = createdAt;
     if (dataVencimento !== undefined) db.companies[idx].dataVencimento = dataVencimento;
-    if (limiteCaminhoes !== undefined) db.companies[idx].limiteCaminhoes = Number(limiteCaminhoes);
-    if (valorPorCaminhao !== undefined) db.companies[idx].valorPorCaminhao = Number(valorPorCaminhao);
-    if (valorMensalidade !== undefined) db.companies[idx].valorMensalidade = Number(valorMensalidade);
+    
+    if (limiteCaminhoes !== undefined) {
+      const parsedLim = Number(limiteCaminhoes);
+      db.companies[idx].limiteCaminhoes = isNaN(parsedLim) ? 10 : parsedLim;
+    }
+    if (valorPorCaminhao !== undefined) {
+      const parsedVal = Number(valorPorCaminhao);
+      db.companies[idx].valorPorCaminhao = isNaN(parsedVal) ? 30 : parsedVal;
+    }
+    if (valorMensalidade !== undefined) {
+      const parsedMensal = Number(valorMensalidade);
+      db.companies[idx].valorMensalidade = isNaN(parsedMensal) ? ((db.companies[idx].limiteCaminhoes || 10) * (db.companies[idx].valorPorCaminhao || 30)) : parsedMensal;
+    }
+
+    console.log(`[Express Server] Updating company subscription: ${id}`, {
+      nome: db.companies[idx].nome,
+      limiteCaminhoes: db.companies[idx].limiteCaminhoes,
+      valorPorCaminhao: db.companies[idx].valorPorCaminhao,
+      valorMensalidade: db.companies[idx].valorMensalidade,
+      dataVencimento: db.companies[idx].dataVencimento
+    });
 
     // Associated Admin user edit (dados cadastrais e redefinição de senha)
     const companyAdmin = db.users.find((u: any) => u.companyId === id && u.role === "admin");

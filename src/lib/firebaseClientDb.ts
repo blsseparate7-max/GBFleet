@@ -1,5 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { getFirestore, doc, getDoc, setDoc } from "firebase/firestore";
+import { getFirestore, doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
 import { configJson } from "./configJson";
 import { dbTemplate } from "./dbTemplate";
 
@@ -128,6 +128,9 @@ export async function persistDB() {
         console.error("Failed to write DB to localStorage:", e);
       }
 
+      // Notify reactive listeners across the app so all UI views update immediately
+      notifyListeners();
+
       // 4) Persist clean, tiny database document to Firestore
       const docRef = doc(firestore, "system_state", "gbfleet_db");
       await setDoc(docRef, liveDb);
@@ -140,8 +143,8 @@ export async function persistDB() {
   return lastWritePromise;
 }
 
-// Pull / fetch database from Firestore (triggers in background on boot)
-export async function pullDB() {
+// Pull / fetch database from Firestore (triggers in background on boot and on demand)
+export async function pullDB(forceFresh: boolean = false) {
   try {
     const docRef = doc(firestore, "system_state", "gbfleet_db");
     const snap = await getDoc(docRef);
@@ -176,8 +179,12 @@ export async function pullDB() {
         });
 
         liveDb = remoteData;
-        localStorage.setItem("gbfleet_db_local", JSON.stringify(liveDb));
-        console.log("[Firebase Client SDK] Successfully synced remote Firestore data locally.");
+        try {
+          localStorage.setItem("gbfleet_db_local", JSON.stringify(liveDb));
+        } catch (e) {
+          // ignore
+        }
+        console.log("[Firebase Client SDK] Successfully synced fresh Firestore data.");
         
         if (scrubbed) {
           await persistDB();
@@ -186,11 +193,48 @@ export async function pullDB() {
         notifyListeners();
       }
     } else {
-      console.log("[Firebase Client SDK] Remoto gbfleet_db document does not exist. Initializing with local data.");
+      console.log("[Firebase Client SDK] Remote gbfleet_db document does not exist. Initializing with local data.");
       await persistDB();
     }
   } catch (err: any) {
     console.warn("[Firebase Client SDK] Connection fallback: Failed to pull remote Firestore document on initialization.", err.message);
+  }
+}
+
+// Attach Real-Time Firestore onSnapshot Listener
+let snapshotUnsubscribe: (() => void) | null = null;
+function initFirestoreLiveListener() {
+  try {
+    if (snapshotUnsubscribe) {
+      snapshotUnsubscribe();
+    }
+    const docRef = doc(firestore, "system_state", "gbfleet_db");
+    snapshotUnsubscribe = onSnapshot(docRef, (snap) => {
+      if (snap.exists()) {
+        const remoteData = snap.data();
+        if (remoteData && remoteData.users && remoteData.companies) {
+          const allKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "gas_stations", "expense_companies", "chat_logs", "bills", "driver_payments", "driver_adjustments"];
+          allKeys.forEach(key => {
+            if (!remoteData[key]) {
+              remoteData[key] = [];
+            }
+          });
+
+          liveDb = remoteData;
+          try {
+            localStorage.setItem("gbfleet_db_local", JSON.stringify(liveDb));
+          } catch (e) {
+            // ignore
+          }
+          console.log("[Firebase Client SDK] Real-time live Firestore push received! Notifying subscribers.");
+          notifyListeners();
+        }
+      }
+    }, (error) => {
+      console.warn("[Firebase Client SDK] Real-time snapshot listener error:", error.message);
+    });
+  } catch (err: any) {
+    console.warn("[Firebase Client SDK] Failed to set up snapshot listener:", err.message);
   }
 }
 
@@ -199,11 +243,12 @@ let initialPullPromise: Promise<void> | null = null;
 export function ensureDbPulled() {
   if (!initialPullPromise) {
     initialPullPromise = pullDB();
+    initFirestoreLiveListener();
   }
   return initialPullPromise;
 }
 
-// Kick off initial background sync
+// Kick off initial background sync & live listener
 ensureDbPulled();
 
 // Helper to resolve request context dynamically
@@ -539,12 +584,34 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       if (body.plano !== undefined) comp.plano = body.plano;
       if (body.status !== undefined) comp.status = body.status;
       if (body.pago !== undefined) comp.pago = body.pago;
-      if (body.trialDays !== undefined) comp.trialDays = Number(body.trialDays);
+      if (body.trialDays !== undefined) {
+        const val = Number(body.trialDays);
+        comp.trialDays = isNaN(val) ? 30 : val;
+      }
       if (body.createdAt !== undefined) comp.createdAt = body.createdAt;
       if (body.dataVencimento !== undefined) comp.dataVencimento = body.dataVencimento;
-      if (body.limiteCaminhoes !== undefined) comp.limiteCaminhoes = Number(body.limiteCaminhoes);
-      if (body.valorPorCaminhao !== undefined) comp.valorPorCaminhao = Number(body.valorPorCaminhao);
-      if (body.valorMensalidade !== undefined) comp.valorMensalidade = Number(body.valorMensalidade);
+      
+      // Robust handling of fleet limit and pricing variables with logging
+      if (body.limiteCaminhoes !== undefined) {
+        const parsedLim = Number(body.limiteCaminhoes);
+        comp.limiteCaminhoes = isNaN(parsedLim) ? 10 : parsedLim;
+      }
+      if (body.valorPorCaminhao !== undefined) {
+        const parsedVal = Number(body.valorPorCaminhao);
+        comp.valorPorCaminhao = isNaN(parsedVal) ? 30 : parsedVal;
+      }
+      if (body.valorMensalidade !== undefined) {
+        const parsedMensal = Number(body.valorMensalidade);
+        comp.valorMensalidade = isNaN(parsedMensal) ? ((comp.limiteCaminhoes || 10) * (comp.valorPorCaminhao || 30)) : parsedMensal;
+      }
+
+      console.log(`[Firebase Client SDK] Updating company subscription: ${targetId}`, {
+        nome: comp.nome,
+        limiteCaminhoes: comp.limiteCaminhoes,
+        valorPorCaminhao: comp.valorPorCaminhao,
+        valorMensalidade: comp.valorMensalidade,
+        dataVencimento: comp.dataVencimento
+      });
 
       // Associated Admin user edit (dados cadastrais e redefinição de senha)
       const companyAdmin = liveDb.users.find((u: any) => u.companyId === targetId && u.role === "admin");
