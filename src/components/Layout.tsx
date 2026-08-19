@@ -44,6 +44,7 @@ import Simulator from './Simulator';
 import Login from './Login';
 import SaaSAdmin from './SaaSAdmin';
 import Reports from './Reports';
+import { ToastContainer, showToast } from './ui/Toast';
 
 type Tab = 'home' | 'dashboard' | 'trucks' | 'fuel' | 'expenses' | 'cash' | 'freights' | 'maintenance' | 'drivers' | 'driver_financials' | 'simulator' | 'reports' | 'saas';
 
@@ -310,12 +311,12 @@ export default function Layout() {
       if (res.ok) {
         const json = await res.json();
         setSupportCodeState(json.supportCode);
-        alert(`Código gerado com sucesso: ${json.supportCode}\nPasse este código ao suporte master para liberar seu acesso temporário.`);
+        showToast(`Código de suporte gerado: ${json.supportCode}`, 'info', 5000);
       } else {
-        alert("Não foi possível gerar o código.");
+        showToast("Não foi possível gerar o código.", 'error');
       }
     } catch {
-      alert("Erro na conexão ao gerar código.");
+      showToast("Erro na conexão ao gerar código.", 'error');
     }
   };
 
@@ -1058,6 +1059,7 @@ export default function Layout() {
           </div>
         </div>
       )}
+      <ToastContainer />
     </div>
   );
 }

@@ -10,9 +10,11 @@ import {
   CheckCircle, 
   Coins, 
   Award,
-  Wallet
+  Wallet,
+  Loader2
 } from 'lucide-react';
 import { cn, maskBRL, unmaskBRL, formatDateBR } from '../lib/utils';
+import { showToast } from './ui/Toast';
 
 interface DriverFinancialsProps {
   data: any;
@@ -116,19 +118,20 @@ export default function DriverFinancials({ data, onUpdate }: DriverFinancialsPro
   const handleAddAdjustment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedDriverId) {
-      alert('Selecione um motorista primeiro!');
+      showToast('Selecione um motorista primeiro!', 'error');
       return;
     }
     const val = parseFloat(adjustmentValor);
     if (isNaN(val) || val <= 0) {
-      alert('Insira um valor válido para o ajuste.');
+      showToast('Insira um valor válido para o ajuste.', 'error');
       return;
     }
     if (!adjustmentDescricao) {
-      alert('Insira uma breve descrição para o ajuste.');
+      showToast('Insira uma breve descrição para o ajuste.', 'error');
       return;
     }
 
+    if (isSubmittingAdj) return;
     setIsSubmittingAdj(true);
     try {
       const response = await fetch('/api/driver_adjustments', {
@@ -145,14 +148,16 @@ export default function DriverFinancials({ data, onUpdate }: DriverFinancialsPro
       });
 
       if (response.ok) {
+        showToast(`✓ Ajuste de ${adjustmentTipo} registrado com sucesso no banco!`, 'success');
         setAdjustmentValor('');
         setAdjustmentDescricao('');
         onUpdate();
       } else {
-        alert('Erro ao registrar ajuste.');
+        showToast('Erro ao registrar ajuste.', 'error');
       }
     } catch (err) {
       console.error(err);
+      showToast('Erro de conexão ao salvar ajuste.', 'error');
     } finally {
       setIsSubmittingAdj(false);
     }
@@ -166,12 +171,14 @@ export default function DriverFinancials({ data, onUpdate }: DriverFinancialsPro
         method: 'DELETE'
       });
       if (response.ok) {
+        showToast('Ajuste excluído com sucesso!', 'success');
         onUpdate();
       } else {
-        alert('Erro ao excluir ajuste.');
+        showToast('Erro ao excluir ajuste.', 'error');
       }
     } catch (err) {
       console.error(err);
+      showToast('Erro de conexão ao excluir ajuste.', 'error');
     }
   };
 
@@ -192,6 +199,7 @@ export default function DriverFinancials({ data, onUpdate }: DriverFinancialsPro
       }
     }
 
+    if (isSubmittingPay) return;
     setIsSubmittingPay(true);
     try {
       const response = await fetch('/api/driver_payments', {
@@ -213,14 +221,15 @@ export default function DriverFinancials({ data, onUpdate }: DriverFinancialsPro
       });
 
       if (response.ok) {
-        alert('Pagamento registrado e fechamento financeiro realizado com sucesso! O custo foi lançado no fluxo de caixa e despesas.');
+        showToast('✓ Pagamento registrado e integrado às despesas e caixa com sucesso!', 'success');
         setPaymentObservacao('');
         onUpdate();
       } else {
-        alert('Erro ao salvar pagamento.');
+        showToast('Erro ao salvar pagamento.', 'error');
       }
     } catch (err) {
       console.error(err);
+      showToast('Erro de conexão ao registrar pagamento.', 'error');
     } finally {
       setIsSubmittingPay(false);
     }
@@ -236,12 +245,14 @@ export default function DriverFinancials({ data, onUpdate }: DriverFinancialsPro
         method: 'DELETE'
       });
       if (response.ok) {
+        showToast('Recibo de pagamento excluído!', 'success');
         onUpdate();
       } else {
-        alert('Erro ao excluir registro de pagamento.');
+        showToast('Erro ao excluir registro de pagamento.', 'error');
       }
     } catch (err) {
       console.error(err);
+      showToast('Erro de conexão ao excluir recibo.', 'error');
     }
   };
 
@@ -601,10 +612,19 @@ export default function DriverFinancials({ data, onUpdate }: DriverFinancialsPro
                     <button
                       type="submit"
                       disabled={isSubmittingAdj}
-                      className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white font-bold text-xs py-2 px-3 rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-sm active:scale-95"
+                      className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white font-bold text-xs py-2 px-3 rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-sm active:scale-95 cursor-pointer disabled:cursor-not-allowed"
                     >
-                      <Plus size={14} />
-                      <span>{isSubmittingAdj ? 'Salvando...' : 'Lançar'}</span>
+                      {isSubmittingAdj ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
+                          <span>Gravando...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Plus size={14} />
+                          <span>Lançar</span>
+                        </>
+                      )}
                     </button>
                   </div>
                 </form>
@@ -710,10 +730,19 @@ export default function DriverFinancials({ data, onUpdate }: DriverFinancialsPro
                 <button
                   onClick={handleRegisterPayment}
                   disabled={isSubmittingPay}
-                  className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-700 text-white font-black text-xs uppercase tracking-wider py-3 px-4 rounded-xl transition-all shadow-md active:scale-95 flex items-center justify-center gap-2 cursor-pointer mt-2"
+                  className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-700 text-white font-black text-xs uppercase tracking-wider py-3 px-4 rounded-xl transition-all shadow-md active:scale-95 flex items-center justify-center gap-2 cursor-pointer mt-2 disabled:cursor-not-allowed"
                 >
-                  <CheckCircle size={16} />
-                  <span>{isSubmittingPay ? 'REGISTRANDO...' : 'REGISTRAR E INTEGRAR CAIXA'}</span>
+                  {isSubmittingPay ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin text-white" />
+                      <span>GRAVANDO NO BANCO...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle size={16} />
+                      <span>REGISTRAR E INTEGRAR CAIXA</span>
+                    </>
+                  )}
                 </button>
               </div>
 

@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Truck, Lock, Mail, AlertCircle, Eye, EyeOff, User, Building2 } from "lucide-react";
+import { Truck, Lock, Mail, AlertCircle, Eye, EyeOff, User, Building2, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
 interface LoginProps {
@@ -143,7 +143,14 @@ export default function Login({ onLoginSuccess }: LoginProps) {
             disabled={isLoading}
             className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3.5 px-4 rounded-xl text-sm transition-all shadow-lg shadow-blue-500/10 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 mt-6"
           >
-            {isLoading ? "Acessando painel..." : "Entrar no Sistema"}
+            {isLoading ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin text-white" />
+                <span>Acessando painel...</span>
+              </>
+            ) : (
+              <span>Entrar no Sistema</span>
+            )}
           </button>
         </form>
       </motion.div>

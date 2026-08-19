@@ -12,9 +12,11 @@ import {
   Clock,
   DollarSign,
   User,
-  Activity
+  Activity,
+  Loader2
 } from 'lucide-react';
 import Modal from './ui/Modal';
+import { showToast } from './ui/Toast';
 import { cn, maskBRL, unmaskBRL, formatDateBR } from '../lib/utils';
 
 interface MaintenanceProps {
@@ -25,6 +27,7 @@ interface MaintenanceProps {
 export default function Maintenance({ data, onUpdate }: MaintenanceProps) {
   const [isNewAlertModalOpen, setIsNewAlertModalOpen] = useState(false);
   const [isCompleteModalOpen, setIsCompleteModalOpen] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [selectedAlert, setSelectedAlert] = useState<any>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterTruck, setFilterTruck] = useState('');
@@ -140,19 +143,22 @@ export default function Maintenance({ data, onUpdate }: MaintenanceProps) {
   const handleCreateAlert = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newAlert.truckId || !newAlert.tipo) {
-      alert("Preencha todos os campos obrigatórios");
+      showToast("Preencha todos os campos obrigatórios do alerta.", 'error');
       return;
     }
 
     if (newAlert.tipoLimite === 'km' && !newAlert.limiteKm) {
-      alert("Informe a quilometragem recomendada");
+      showToast("Informe a quilometragem recomendada.", 'error');
       return;
     }
 
     if (newAlert.tipoLimite === 'data' && !newAlert.limiteData) {
-      alert("Informe a data limite");
+      showToast("Informe a data limite.", 'error');
       return;
     }
+
+    if (isSaving) return;
+    setIsSaving(true);
 
     try {
       const companyId = data?.company?.id || 'comp_1';
@@ -172,6 +178,7 @@ export default function Maintenance({ data, onUpdate }: MaintenanceProps) {
       });
 
       if (response.ok) {
+        showToast("✓ Alerta de manutenção cadastrado com sucesso no banco!", 'success');
         setIsNewAlertModalOpen(false);
         // Reset form
         setNewAlert({
@@ -185,17 +192,22 @@ export default function Maintenance({ data, onUpdate }: MaintenanceProps) {
         });
         onUpdate();
       } else {
-        alert("Falha ao registrar novo alerta.");
+        showToast("Falha ao registrar novo alerta.", 'error');
       }
     } catch (err) {
       console.error(err);
-      alert("Erro ao conectar com o servidor.");
+      showToast("Erro ao conectar com o servidor.", 'error');
+    } finally {
+      setIsSaving(false);
     }
   };
 
   const handleCompleteAlert = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedAlert) return;
+
+    if (isSaving) return;
+    setIsSaving(true);
 
     try {
       const response = await fetch(`/api/maintenance_alerts/${selectedAlert.id}/complete`, {
@@ -211,6 +223,7 @@ export default function Maintenance({ data, onUpdate }: MaintenanceProps) {
       });
 
       if (response.ok) {
+        showToast("✓ Manutenção concluída e lançada nas despesas e caixa com sucesso!", 'success');
         setIsCompleteModalOpen(false);
         setSelectedAlert(null);
         setCompleteForm({
@@ -222,11 +235,13 @@ export default function Maintenance({ data, onUpdate }: MaintenanceProps) {
         });
         onUpdate();
       } else {
-        alert("Erro ao marcar alerta como realizado.");
+        showToast("Erro ao marcar alerta como realizado.", 'error');
       }
     } catch (err) {
       console.error(err);
-      alert("Erro de conexão.");
+      showToast("Erro de conexão ao realizar manutenção.", 'error');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -240,12 +255,14 @@ export default function Maintenance({ data, onUpdate }: MaintenanceProps) {
         method: 'DELETE'
       });
       if (response.ok) {
+        showToast("Alerta de manutenção excluído!", 'success');
         onUpdate();
       } else {
-        alert("Erro ao excluir alerta.");
+        showToast("Erro ao excluir alerta.", 'error');
       }
     } catch (err) {
       console.error(err);
+      showToast("Erro de conexão ao excluir alerta.", 'error');
     }
   };
 
@@ -621,16 +638,25 @@ export default function Maintenance({ data, onUpdate }: MaintenanceProps) {
           <div className="flex gap-3 pt-4 border-t border-slate-100">
             <button 
               type="button" 
+              disabled={isSaving}
               onClick={() => setIsNewAlertModalOpen(false)}
-              className="flex-1 px-4 py-2.5 rounded-xl font-semibold text-slate-600 hover:bg-slate-100 transition-colors text-sm"
+              className="flex-1 px-4 py-2.5 rounded-xl font-semibold text-slate-600 hover:bg-slate-100 transition-colors text-sm disabled:opacity-50"
             >
               Cancelar
             </button>
             <button 
               type="submit"
-              className="flex-1 px-4 py-2.5 rounded-xl font-semibold bg-blue-600 text-white hover:bg-blue-700 transition-colors text-sm"
+              disabled={isSaving}
+              className="flex-1 px-4 py-2.5 rounded-xl font-semibold bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white transition-colors text-sm flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
             >
-              Salvar Alerta
+              {isSaving ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin text-white" />
+                  <span>Gravando no banco...</span>
+                </>
+              ) : (
+                <span>Salvar Alerta</span>
+              )}
             </button>
           </div>
         </form>
@@ -720,17 +746,28 @@ export default function Maintenance({ data, onUpdate }: MaintenanceProps) {
             <div className="flex gap-3 pt-4 border-t border-slate-100">
               <button 
                 type="button" 
+                disabled={isSaving}
                 onClick={() => setIsCompleteModalOpen(false)}
-                className="flex-1 px-4 py-2.5 rounded-xl font-semibold text-slate-600 hover:bg-slate-100 transition-colors text-sm"
+                className="flex-1 px-4 py-2.5 rounded-xl font-semibold text-slate-600 hover:bg-slate-100 transition-colors text-sm disabled:opacity-50"
               >
                 Voltar
               </button>
               <button 
                 type="submit"
-                className="flex-1 px-4 py-2.5 rounded-xl font-semibold bg-emerald-600 text-white hover:bg-emerald-700 transition-colors text-sm flex items-center justify-center gap-1.5"
+                disabled={isSaving}
+                className="flex-1 px-4 py-2.5 rounded-xl font-semibold bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white transition-colors text-sm flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
               >
-                <CheckCircle2 size={16} />
-                Confirmar e Lançar
+                {isSaving ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin text-white" />
+                    <span>Gravando no banco...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 size={16} />
+                    <span>Confirmar e Lançar</span>
+                  </>
+                )}
               </button>
             </div>
           </form>

@@ -25,10 +25,12 @@ import {
   Layers,
   Settings,
   Navigation,
-  Map as MapIcon
+  Map as MapIcon,
+  Loader2
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import Modal from './ui/Modal';
+import { showToast } from './ui/Toast';
 import L from 'leaflet';
 
 // Static fallback routes representing heavy-duty trucking routes in Brazil if DB happens to be completely empty
@@ -194,6 +196,7 @@ export default function Simulator({ data, onUpdate }: SimulatorProps) {
         throw new Error(errData.error || "Falha ao despachar frete.");
       }
 
+      showToast("✓ Viagem despachada e gravada no banco com sucesso!", 'success');
       setIsLaunchModalOpen(false);
       setLaunchSuccessAlert(true);
       setTimeout(() => setLaunchSuccessAlert(false), 4000);
@@ -203,7 +206,7 @@ export default function Simulator({ data, onUpdate }: SimulatorProps) {
       }
     } catch (err: any) {
       console.error(err);
-      alert(err.message || "Erro ao efetuar o lançamento de frete real.");
+      showToast(err.message || "Erro ao efetuar o lançamento de frete real.", 'error');
     } finally {
       setIsLaunching(false);
     }
@@ -219,6 +222,7 @@ export default function Simulator({ data, onUpdate }: SimulatorProps) {
   const [formValorFrete, setFormValorFrete] = useState(3500);
   const [formOutrosCustos, setFormOutrosCustos] = useState(100);
   const [formDescricao, setFormDescricao] = useState('');
+  const [isSavingRoute, setIsSavingRoute] = useState(false);
 
   // UI state feedback
   const [copied, setCopied] = useState(false);
@@ -552,9 +556,12 @@ export default function Simulator({ data, onUpdate }: SimulatorProps) {
   const handleSaveRoute = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formOrigem || !formDestino) {
-      alert("Por favor, preencha origem e destino!");
+      showToast("Por favor, preencha origem e destino!", 'error');
       return;
     }
+
+    if (isSavingRoute) return;
+    setIsSavingRoute(true);
 
     const companyId = data?.company?.id || "comp_1";
 
@@ -586,6 +593,7 @@ export default function Simulator({ data, onUpdate }: SimulatorProps) {
         });
       }
 
+      showToast(`✓ Modelo de rota "${payload.nome}" gravado no banco com sucesso!`, 'success');
       setIsModalOpen(false);
       setEditingRoute(null);
       setSavedSuccessAlert(true);
@@ -593,7 +601,9 @@ export default function Simulator({ data, onUpdate }: SimulatorProps) {
       if (onUpdate) onUpdate();
     } catch (err) {
       console.error(err);
-      alert("Falha de comunicação ao persistir modelo de rota.");
+      showToast("Falha de comunicação ao persistir modelo de rota.", 'error');
+    } finally {
+      setIsSavingRoute(false);
     }
   };
 
@@ -640,10 +650,11 @@ export default function Simulator({ data, onUpdate }: SimulatorProps) {
     if (window.confirm(`Tem certeza que deseja apagar o modelo de rota: "${name}"?`)) {
       try {
         await fetch(`/api/routes/${id}`, { method: 'DELETE' });
+        showToast(`Modelo de rota "${name}" excluído!`, 'success');
         if (onUpdate) onUpdate();
       } catch (err) {
         console.error(err);
-        alert("Erro ao excluir modelo de rota.");
+        showToast("Erro ao excluir modelo de rota.", 'error');
       }
     }
   };
@@ -1575,12 +1586,12 @@ Consumido Estimado: ${consumption} km/l | Óleo Diesel: R$ ${dieselPrice.toFixed
             <button
               type="submit"
               disabled={isLaunching || !launchTruckPlaca || !launchDriverId}
-              className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-xl text-xs flex items-center gap-1.5 transition-colors shadow-md shadow-emerald-100 cursor-pointer"
+              className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-xl text-xs flex items-center gap-2 transition-colors shadow-md shadow-emerald-100 cursor-pointer"
             >
               {isLaunching ? (
                 <>
-                  <RefreshCw className="animate-spin text-emerald-100" size={14} />
-                  <span>Despachando viagem...</span>
+                  <Loader2 className="animate-spin text-white w-4 h-4" />
+                  <span>Gravando no banco...</span>
                 </>
               ) : (
                 <>
@@ -1804,19 +1815,28 @@ Consumido Estimado: ${consumption} km/l | Óleo Diesel: R$ ${dieselPrice.toFixed
           <div className="pt-4 border-t border-slate-100 flex justify-end gap-3 font-semibold">
             <button
               type="button"
+              disabled={isSavingRoute}
               onClick={() => {
                 setIsModalOpen(false);
                 setEditingRoute(null);
               }}
-              className="px-5 py-2.5 border border-slate-200 text-slate-600 rounded-xl text-xs hover:bg-slate-50 cursor-pointer"
+              className="px-5 py-2.5 border border-slate-200 text-slate-600 rounded-xl text-xs hover:bg-slate-50 cursor-pointer disabled:opacity-50"
             >
               Cancelar
             </button>
             <button
               type="submit"
-              className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs shadow-md shadow-blue-100 cursor-pointer"
+              disabled={isSavingRoute}
+              className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded-xl text-xs shadow-md shadow-blue-100 flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
             >
-              {editingRoute ? "Salvar Alterações" : "Gravar Nova Rota"}
+              {isSavingRoute ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin text-white" />
+                  <span>Gravando no banco...</span>
+                </>
+              ) : (
+                <span>{editingRoute ? "Salvar Alterações" : "Gravar Nova Rota"}</span>
+              )}
             </button>
           </div>
         </form>

@@ -25,10 +25,12 @@ import {
   X,
   FileSpreadsheet,
   Check,
-  Percent
+  Percent,
+  Loader2
 } from 'lucide-react';
 import { cn, maskBRL, unmaskBRL, formatDateBR } from '../lib/utils';
 import Modal from './ui/Modal';
+import { showToast } from './ui/Toast';
 
 // Category options for Trucking industry
 const CATEGORIES_ENTRADA = [
@@ -94,6 +96,7 @@ export default function CashFlow({ data, onUpdate }: { data: any, onUpdate: () =
   // UI feedback triggers
   const [copied, setCopied] = useState(false);
   const [csvNotice, setCsvNotice] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   // Quick reset logic for form
   const resetForm = () => {
@@ -126,14 +129,17 @@ export default function CashFlow({ data, onUpdate }: { data: any, onUpdate: () =
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formValor || isNaN(Number(formValor)) || Number(formValor) <= 0) {
-      alert("Por favor, insira um valor numérico válido e maior que zero.");
+      showToast("Por favor, insira um valor numérico válido e maior que zero.", 'error');
       return;
     }
     if (!formDescricao.trim()) {
-      alert("Insira uma descrição válida.");
+      showToast("Insira uma descrição válida para a movimentação.", 'error');
       return;
     }
 
+    if (isSaving) return;
+
+    setIsSaving(true);
     const companyId = data?.company?.id || 'comp_1';
 
     const payload = {
@@ -156,6 +162,7 @@ export default function CashFlow({ data, onUpdate }: { data: any, onUpdate: () =
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
+        showToast("✓ Lançamento do caixa atualizado com sucesso!", 'success');
       } else {
         // POST create
         await fetch('/api/cash_flow', {
@@ -163,13 +170,16 @@ export default function CashFlow({ data, onUpdate }: { data: any, onUpdate: () =
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
+        showToast("✓ Lançamento gravado no caixa com sucesso!", 'success');
       }
       setIsModalOpen(false);
       resetForm();
       onUpdate();
     } catch (err) {
       console.error(err);
-      alert("Ocorreu um erro ao gravar a transação.");
+      showToast("Ocorreu um erro ao gravar a transação.", 'error');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -180,17 +190,21 @@ export default function CashFlow({ data, onUpdate }: { data: any, onUpdate: () =
         await fetch(`/api/cash_flow/${id}`, {
           method: 'DELETE'
         });
+        showToast("Lançamento excluído com sucesso do caixa!", 'success');
         onUpdate();
       } catch (err) {
         console.error(err);
-        alert("Erro ao excluir transação do caixa.");
+        showToast("Erro ao excluir transação do caixa.", 'error');
       }
     }
   };
 
   // --- Category Management Handlers ---
   const handleAddCategory = async (tipo: 'entrada' | 'saida', nome: string) => {
-    if (!nome.trim()) return;
+    if (!nome.trim()) {
+      showToast("Digite o nome da categoria.", 'error');
+      return;
+    }
     try {
       const res = await fetch('/api/categories', {
         method: 'POST',
@@ -200,11 +214,12 @@ export default function CashFlow({ data, onUpdate }: { data: any, onUpdate: () =
       if (!res.ok) {
         throw new Error("Erro ao adicionar");
       }
+      showToast("✓ Categoria adicionada com sucesso!", 'success');
       setNewCatNome('');
       onUpdate();
     } catch (err) {
       console.error(err);
-      alert("Erro ao adicionar categoria.");
+      showToast("Erro ao adicionar categoria.", 'error');
     }
   };
 
@@ -219,12 +234,13 @@ export default function CashFlow({ data, onUpdate }: { data: any, onUpdate: () =
       if (!res.ok) {
         throw new Error("Erro ao editar");
       }
+      showToast("✓ Categoria renomeada com sucesso!", 'success');
       setEditingCat(null);
       setEditingCatNewName('');
       onUpdate();
     } catch (err) {
       console.error(err);
-      alert("Erro ao editar categoria.");
+      showToast("Erro ao editar categoria.", 'error');
     }
   };
 
@@ -241,10 +257,11 @@ export default function CashFlow({ data, onUpdate }: { data: any, onUpdate: () =
       if (!res.ok) {
         throw new Error("Erro ao excluir");
       }
+      showToast("Categoria excluída com sucesso!", 'success');
       onUpdate();
     } catch (err) {
       console.error(err);
-      alert("Erro ao excluir categoria.");
+      showToast("Erro ao excluir categoria.", 'error');
     }
   };
 
@@ -1138,16 +1155,25 @@ export default function CashFlow({ data, onUpdate }: { data: any, onUpdate: () =
           <div className="pt-4 border-t border-slate-100 flex justify-end gap-3">
             <button
               type="button"
+              disabled={isSaving}
               onClick={() => setIsModalOpen(false)}
-              className="px-5 py-2.5 border border-slate-200 hover:border-slate-300 rounded-xl text-slate-600 font-bold text-xs"
+              className="px-5 py-2.5 border border-slate-200 hover:border-slate-300 rounded-xl text-slate-600 font-bold text-xs disabled:opacity-50"
             >
               Cancelar
             </button>
             <button
               type="submit"
-              className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs shadow-md shadow-blue-100"
+              disabled={isSaving}
+              className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded-xl font-bold text-xs shadow-md shadow-blue-100 flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
             >
-              {editingItem ? "Salvar Lançamento" : "Efetuar Lançamento"}
+              {isSaving ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin text-white" />
+                  <span>Gravando no banco...</span>
+                </>
+              ) : (
+                <span>{editingItem ? "Salvar Lançamento" : "Efetuar Lançamento"}</span>
+              )}
             </button>
           </div>
         </form>

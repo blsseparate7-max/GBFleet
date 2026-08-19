@@ -28,6 +28,7 @@ import {
 import Modal from './ui/Modal';
 import { cn, maskBRL, unmaskBRL, formatDateBR } from '../lib/utils';
 import { compressAndSetFile, AttachmentPreview } from '../lib/fileCompressor';
+import { showToast } from './ui/Toast';
 
 export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () => void }) {
   const categoriesSaida = data?.categories_saida || [
@@ -166,14 +167,19 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
     if (!confirm("Tem certeza de que deseja remover esta empresa de despesa?")) return;
     try {
       await fetch(`/api/expense_companies/${id}`, { method: 'DELETE' });
+      showToast("Empresa fornecedora removida com sucesso!", 'success');
       onUpdate();
     } catch (err) {
       console.error(err);
+      showToast("Erro ao remover empresa de despesa.", 'error');
     }
   };
 
   const handleSaveCompany = async () => {
-    if (!companyForm.nome) return;
+    if (!companyForm.nome) {
+      showToast("Por favor, preencha o nome da empresa fornecedora.", 'error');
+      return;
+    }
     setIsSavingCompany(true);
     try {
       const url = selectedCompany 
@@ -186,10 +192,12 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(companyForm)
       });
+      showToast(selectedCompany ? "✓ Fornecedor atualizado com sucesso!" : "✓ Fornecedor cadastrado com sucesso!", 'success');
       setIsCompanyModalOpen(false);
       onUpdate();
     } catch (err) {
       console.error(err);
+      showToast("Erro ao gravar empresa fornecedora.", 'error');
     } finally {
       setIsSavingCompany(false);
     }
@@ -200,23 +208,25 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
     try {
       await fetch(`/api/expenses/${id}`, { method: 'DELETE' });
       setDeleteConfirmId(null);
+      showToast("Despesa excluída com sucesso do banco de dados!", 'success');
       onUpdate();
     } catch (err) {
       console.error(err);
+      showToast("Erro ao excluir despesa.", 'error');
     }
   };
 
   const handleSave = async () => {
     if (!newExpense.truckId) {
-      alert("Por favor, selecione um veículo (Caminhão).");
+      showToast("Por favor, selecione um veículo (Caminhão).", 'error');
       return;
     }
     if (!newExpense.tipo) {
-      alert("Por favor, selecione o tipo de despesa.");
+      showToast("Por favor, selecione o tipo de despesa.", 'error');
       return;
     }
     if (!newExpense.valor || isNaN(Number(newExpense.valor)) || Number(newExpense.valor) <= 0) {
-      alert("Por favor, insira um valor numérico válido maior que zero.");
+      showToast("Por favor, insira um valor numérico válido maior que zero.", 'error');
       return;
     }
     if (isSaving) return;
@@ -251,11 +261,13 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
         })
       });
 
+      showToast("✓ Despesa gravada com sucesso no banco de dados!", 'success');
       setIsModalOpen(false);
       setNewExpense({ truckId: '', tipo: '', data: new Date().toISOString().split('T')[0], valor: '', km: '', obs: '', comprovante: '', empresaDespesa: '', expenseCompanyId: '' });
       onUpdate();
     } catch (err) {
       console.error(err);
+      showToast("Erro ao registrar despesa.", 'error');
     } finally {
       setIsSaving(false);
     }
@@ -281,15 +293,15 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
   const handleUpdateExpense = async () => {
     if (!selectedExpenseDetail) return;
     if (!editExpenseForm.truckId) {
-      alert("Por favor, selecione um veículo (Caminhão).");
+      showToast("Por favor, selecione um veículo (Caminhão).", 'error');
       return;
     }
     if (!editExpenseForm.tipo) {
-      alert("Por favor, selecione o tipo de despesa.");
+      showToast("Por favor, selecione o tipo de despesa.", 'error');
       return;
     }
     if (!editExpenseForm.valor || isNaN(Number(editExpenseForm.valor)) || Number(editExpenseForm.valor) <= 0) {
-      alert("Por favor, insira um valor numérico válido maior que zero.");
+      showToast("Por favor, insira um valor numérico válido maior que zero.", 'error');
       return;
     }
 
@@ -308,16 +320,17 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
       });
 
       if (response.ok) {
+        showToast("✓ Despesa atualizada com sucesso no banco de dados!", 'success');
         setIsDetailModalOpen(false);
         setSelectedExpenseDetail(null);
         setIsEditingExpense(false);
         onUpdate();
       } else {
-        alert("Erro ao atualizar despesa.");
+        showToast("Erro ao atualizar despesa.", 'error');
       }
     } catch (err) {
       console.error(err);
-      alert("Erro de conexão ao atualizar despesa.");
+      showToast("Erro de conexão ao atualizar despesa.", 'error');
     } finally {
       setIsUpdatingExpense(false);
     }
@@ -325,7 +338,10 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
 
   // Categories Handlers
   const handleAddCategory = async (nome: string) => {
-    if (!nome.trim()) return;
+    if (!nome.trim()) {
+      showToast("Digite o nome da categoria.", 'error');
+      return;
+    }
     try {
       const res = await fetch('/api/categories', {
         method: 'POST',
@@ -333,10 +349,11 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
         body: JSON.stringify({ tipo: 'saida', nome: nome.trim() })
       });
       if (!res.ok) throw new Error();
+      showToast("✓ Categoria de despesa adicionada com sucesso!", 'success');
       onUpdate();
     } catch (err) {
       console.error(err);
-      alert("Erro ao adicionar categoria.");
+      showToast("Erro ao adicionar categoria.", 'error');
     }
   };
 
@@ -349,10 +366,11 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
         body: JSON.stringify({ tipo: 'saida', oldNome, newNome: newNome.trim() })
       });
       if (!res.ok) throw new Error();
+      showToast("✓ Categoria atualizada com sucesso!", 'success');
       onUpdate();
     } catch (err) {
       console.error(err);
-      alert("Erro ao editar categoria.");
+      showToast("Erro ao editar categoria.", 'error');
     }
   };
 
@@ -365,20 +383,21 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
         body: JSON.stringify({ tipo: 'saida', nome })
       });
       if (!res.ok) throw new Error();
+      showToast("Categoria de despesa excluída!", 'success');
       onUpdate();
     } catch (err) {
       console.error(err);
-      alert("Erro ao excluir categoria.");
+      showToast("Erro ao excluir categoria.", 'error');
     }
   };
 
   // Bills Handlers
   const handleAddBillSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newBill.descricao.trim()) return alert("A descrição é obrigatória.");
-    if (!newBill.categoria) return alert("A categoria é obrigatória.");
-    if (!newBill.valorTotal && newBill.recorrencia === 'unico') return alert("O valor total é obrigatório.");
-    if (!newBill.valorParcela && newBill.recorrencia !== 'unico') return alert("O valor da parcela é obrigatório.");
+    if (!newBill.descricao.trim()) return showToast("A descrição da conta é obrigatória.", 'error');
+    if (!newBill.categoria) return showToast("A categoria é obrigatória.", 'error');
+    if (!newBill.valorTotal && newBill.recorrencia === 'unico') return showToast("O valor total é obrigatório.", 'error');
+    if (!newBill.valorParcela && newBill.recorrencia !== 'unico') return showToast("O valor da parcela é obrigatório.", 'error');
 
     setIsSavingBill(true);
     try {
@@ -404,6 +423,7 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
 
       if (!res.ok) throw new Error();
       
+      showToast("✓ Conta a pagar programada com sucesso no banco de dados!", 'success');
       onUpdate();
       setIsBillModalOpen(false);
       // Reset form
@@ -420,7 +440,7 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
       });
     } catch (err) {
       console.error(err);
-      alert("Erro ao cadastrar conta a pagar.");
+      showToast("Erro ao cadastrar conta a pagar.", 'error');
     } finally {
       setIsSavingBill(false);
     }
@@ -445,12 +465,13 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
         })
       });
       if (!res.ok) throw new Error();
+      showToast("✓ Pagamento registrado e lançado no caixa com sucesso!", 'success');
       onUpdate();
       setIsPayingBillModalOpen(false);
       setSelectedBillForPayment(null);
     } catch (err) {
       console.error(err);
-      alert("Erro ao registrar pagamento.");
+      showToast("Erro ao registrar pagamento.", 'error');
     } finally {
       setIsSavingBill(false);
     }
@@ -467,10 +488,11 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
         })
       });
       if (!res.ok) throw new Error();
+      showToast("Pagamento revertido para pendente!", 'info');
       onUpdate();
     } catch (err) {
       console.error(err);
-      alert("Erro ao reverter pagamento.");
+      showToast("Erro ao reverter pagamento.", 'error');
     }
   };
 
@@ -481,10 +503,11 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
         method: 'DELETE'
       });
       if (!res.ok) throw new Error();
+      showToast("Conta a pagar excluída com sucesso!", 'success');
       onUpdate();
     } catch (err) {
       console.error(err);
-      alert("Erro ao excluir conta a pagar.");
+      showToast("Erro ao excluir conta a pagar.", 'error');
     }
   };
 
@@ -2043,9 +2066,16 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
             <button 
               onClick={handleSave}
               disabled={isSaving}
-              className="flex-1 px-4 py-2.5 rounded-xl bg-blue-600 text-white hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200 disabled:opacity-75 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
+              className="flex-1 px-4 py-2.5 rounded-xl bg-blue-600 text-white hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200 disabled:opacity-75 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer"
             >
-              {isSaving ? 'Lançando...' : 'Lançar Despesa'}
+              {isSaving ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin text-white" />
+                  <span>Gravando no banco...</span>
+                </>
+              ) : (
+                <span>Lançar Despesa</span>
+              )}
             </button>
           </div>
         </div>
@@ -2397,9 +2427,16 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
             <button 
               onClick={handleSaveCompany}
               disabled={!companyForm.nome || isSavingCompany}
-              className="px-4 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-bold disabled:opacity-50 transition-all cursor-pointer shadow-lg shadow-blue-100"
+              className="px-4 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-bold disabled:opacity-50 transition-all cursor-pointer shadow-lg shadow-blue-100 flex items-center justify-center gap-2"
             >
-              {isSavingCompany ? "Salvando..." : "Salvar Empresa"}
+              {isSavingCompany ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin text-white" />
+                  <span>Gravando no banco...</span>
+                </>
+              ) : (
+                <span>Salvar Empresa</span>
+              )}
             </button>
           </div>
         </div>
@@ -2571,9 +2608,16 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
               <button 
                 type="submit"
                 disabled={isSavingBill}
-                className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl transition font-bold shadow-lg shadow-blue-100 flex items-center justify-center gap-1.5 cursor-pointer"
+                className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded-xl transition font-bold shadow-lg shadow-blue-100 flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
               >
-                {isSavingBill ? "Salvando..." : "Cadastrar Conta"}
+                {isSavingBill ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin text-white" />
+                    <span>Gravando no banco...</span>
+                  </>
+                ) : (
+                  <span>Cadastrar Conta</span>
+                )}
               </button>
             </div>
           </form>
@@ -2608,17 +2652,25 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
             <div className="flex gap-2.5 pt-2 font-bold">
               <button 
                 type="button"
+                disabled={isSavingBill}
                 onClick={() => setIsPayingBillModalOpen(false)}
-                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition cursor-pointer"
+                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition cursor-pointer disabled:opacity-50"
               >
                 Cancelar
               </button>
               <button 
                 onClick={handleConfirmPayment}
                 disabled={isSavingBill}
-                className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl transition shadow-lg shadow-emerald-100 flex items-center justify-center gap-1.5 cursor-pointer"
+                className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white rounded-xl transition shadow-lg shadow-emerald-100 flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
               >
-                {isSavingBill ? "Processando..." : "Quitar Lançamento"}
+                {isSavingBill ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin text-white" />
+                    <span>Gravando no banco...</span>
+                  </>
+                ) : (
+                  <span>Quitar Lançamento</span>
+                )}
               </button>
             </div>
           </div>

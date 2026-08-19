@@ -23,10 +23,12 @@ import {
   Trash2,
   RefreshCw,
   Navigation,
-  Map
+  Map,
+  Loader2
 } from 'lucide-react';
 import { cn, maskBRL, unmaskBRL, formatDateBR } from '../lib/utils';
 import Modal from './ui/Modal';
+import { showToast } from './ui/Toast';
 import { generateFreightPDF } from '../lib/pdfGenerator';
 import { compressAndSetFile, AttachmentPreview } from '../lib/fileCompressor';
 
@@ -329,13 +331,14 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
         body: JSON.stringify({ status: newStatus })
       });
       if (response.ok) {
+        showToast(`Status do frete alterado para "${newStatus}" com sucesso!`, 'success');
         onUpdate();
       } else {
-        alert("Erro ao atualizar o status do frete.");
+        showToast("Erro ao atualizar o status do frete.", 'error');
       }
     } catch (err) {
       console.error(err);
-      alert("Erro ao conectar com o servidor.");
+      showToast("Erro ao conectar com o servidor.", 'error');
     }
   };
 
@@ -393,14 +396,15 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
         method: 'DELETE'
       });
       if (response.ok) {
+        showToast("Frete excluído com sucesso do banco de dados!", 'success');
         onUpdate();
         setExpandedFreightId(null);
       } else {
-        alert("Erro ao remover o frete.");
+        showToast("Erro ao remover o frete.", 'error');
       }
     } catch (err) {
       console.error(err);
-      alert("Erro de conexão ao remover o frete.");
+      showToast("Erro de conexão ao remover o frete.", 'error');
     }
   };
 
@@ -408,7 +412,7 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
     e.preventDefault();
     if (isSaving) return;
     if (!truckId || !origem || !destino || !valorBruto) {
-      alert("Por favor, preencha todos os campos obrigatórios (*)");
+      showToast("Por favor, preencha todos os campos obrigatórios (*)", 'error');
       return;
     }
 
@@ -494,14 +498,15 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
         setValorPorKg('');
         setQuantidadeCabecas('');
         setValorPorCabeca('');
+        showToast(selectedFreight ? "✓ Frete atualizado com sucesso no banco de dados!" : "✓ Frete gravado com sucesso no banco de dados!", 'success');
         onUpdate();
       } else {
         const errorText = await response.text();
-        alert("Erro ao salvar o frete: " + errorText);
+        showToast("Erro ao salvar o frete: " + errorText, 'error');
       }
     } catch (err) {
       console.error(err);
-      alert("Erro de conexão ao salvar o frete.");
+      showToast("Erro de conexão ao salvar o frete.", 'error');
     } finally {
       setIsSaving(false);
     }
@@ -1782,16 +1787,25 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
           <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
             <button
               type="button"
+              disabled={isSaving}
               onClick={() => setIsModalOpen(false)}
-              className="px-5 py-3 rounded-2xl text-slate-500 hover:text-slate-700 bg-slate-50 hover:bg-slate-100 font-bold transition-all text-sm"
+              className="px-5 py-3 rounded-2xl text-slate-500 hover:text-slate-700 bg-slate-50 hover:bg-slate-100 font-bold transition-all text-sm disabled:opacity-50"
             >
               Cancelar
             </button>
             <button
               type="submit"
-              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-2xl text-sm font-bold shadow-lg shadow-blue-500/10 transition-all"
+              disabled={isSaving}
+              className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white px-6 py-3 rounded-2xl text-sm font-bold shadow-lg shadow-blue-500/10 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
             >
-              Confirmar Cadastro
+              {isSaving ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin text-white" />
+                  <span>Gravando no banco...</span>
+                </>
+              ) : (
+                <span>{selectedFreight ? 'Salvar Alterações' : 'Confirmar Cadastro'}</span>
+              )}
             </button>
           </div>
         </form>

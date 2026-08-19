@@ -18,13 +18,16 @@ import {
   Activity,
   Trash2,
   AlertCircle,
-  TrendingDown
+  TrendingDown,
+  Loader2
 } from 'lucide-react';
 import Modal from './ui/Modal';
+import { showToast } from './ui/Toast';
 import { cn, formatDateBR } from '../lib/utils';
 
 export default function Trucks({ data, onUpdate }: { data: any, onUpdate: () => void }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [newTruck, setNewTruck] = useState({ placa: '', modelo: '', usaArla: false });
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -35,31 +38,42 @@ export default function Trucks({ data, onUpdate }: { data: any, onUpdate: () => 
 
   const handleAdd = async () => {
     if (!newTruck.placa) {
-      alert("Por favor, preencha a placa do caminhão.");
+      showToast("Por favor, preencha a placa do caminhão.", 'error');
       return;
     }
     if (!newTruck.modelo) {
-      alert("Por favor, preencha o modelo do caminhão.");
-      return;
-    }
-    
-    const companyId = data?.company?.id || 'comp_1';
-    
-    const res = await fetch('/api/trucks', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...newTruck, companyId, ativo: true })
-    });
-    
-    if (!res.ok) {
-      const err = await res.json();
-      alert(err.error || "Erro ao cadastrar veículo.");
+      showToast("Por favor, preencha o modelo do caminhão.", 'error');
       return;
     }
 
-    setNewTruck({ placa: '', modelo: '', usaArla: false });
-    setIsModalOpen(false);
-    onUpdate();
+    if (isSaving) return;
+    setIsSaving(true);
+    
+    try {
+      const companyId = data?.company?.id || 'comp_1';
+      
+      const res = await fetch('/api/trucks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...newTruck, companyId, ativo: true })
+      });
+      
+      if (!res.ok) {
+        const err = await res.json();
+        showToast(err.error || "Erro ao cadastrar veículo.", 'error');
+        return;
+      }
+
+      showToast("✓ Veículo cadastrado com sucesso no banco de dados!", 'success');
+      setNewTruck({ placa: '', modelo: '', usaArla: false });
+      setIsModalOpen(false);
+      onUpdate();
+    } catch (err) {
+      console.error(err);
+      showToast("Erro ao cadastrar veículo.", 'error');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleDeleteTruck = async (id: string, placa: string) => {
@@ -69,14 +83,16 @@ export default function Trucks({ data, onUpdate }: { data: any, onUpdate: () => 
         method: 'DELETE'
       });
       if (response.ok) {
+        showToast(`Caminhão ${placa} removido com sucesso!`, 'success');
         setIsDetailsOpen(false);
         setSelectedTruck(null);
         onUpdate();
       } else {
-        alert("Erro ao remover veículo.");
+        showToast("Erro ao remover veículo.", 'error');
       }
     } catch (err) {
       console.error(err);
+      showToast("Erro de conexão ao remover veículo.", 'error');
     }
   };
 
@@ -297,16 +313,25 @@ export default function Trucks({ data, onUpdate }: { data: any, onUpdate: () => 
             </div>
             <div className="flex gap-3 mt-8">
               <button 
+                disabled={isSaving}
                 onClick={() => setIsModalOpen(false)}
-                className="flex-1 px-4 py-2.5 rounded-xl font-semibold text-slate-600 hover:bg-slate-100 transition-colors"
+                className="flex-1 px-4 py-2.5 rounded-xl font-semibold text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50"
               >
                 Cancelar
               </button>
               <button 
                 onClick={handleAdd}
-                className="flex-1 px-4 py-2.5 rounded-xl font-semibold bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+                disabled={isSaving}
+                className="flex-1 px-4 py-2.5 rounded-xl font-semibold bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white transition-colors flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
               >
-                Salvar
+                {isSaving ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin text-white" />
+                    <span>Gravando no banco...</span>
+                  </>
+                ) : (
+                  <span>Salvar Caminhão</span>
+                )}
               </button>
             </div>
           </div>

@@ -13,9 +13,11 @@ import {
   X,
   CreditCard,
   CircleCheck,
-  TrendingUp
+  TrendingUp,
+  Loader2
 } from "lucide-react";
 import { cn } from "../lib/utils";
+import { showToast } from "./ui/Toast";
 
 interface CompanyMeta {
   id: string;
@@ -55,6 +57,7 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
   const [error, setError] = useState<string | null>(null);
 
   // Form State
+  const [isSaving, setIsSaving] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [nome, setNome] = useState("");
   const [plano, setPlano] = useState("Pro");
@@ -110,9 +113,12 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
   const handleCreateCompany = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!nome || !adminNome || !adminEmail || !adminPassword) {
-      alert("Preencha todos os campos obrigatórios");
+      showToast("Preencha todos os campos obrigatórios da nova empresa.", 'error');
       return;
     }
+
+    if (isSaving) return;
+    setIsSaving(true);
 
     try {
       const res = await fetch("/api/superadmin/companies", {
@@ -129,6 +135,7 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
         throw new Error(data.error || "Erro ao cadastrar empresa.");
       }
 
+      showToast("✓ Empresa e administrador criados com sucesso no banco!", 'success');
       setSuccessMsg("Empresa e administrador criados com absoluto sucesso!");
       setNome("");
       setAdminNome("");
@@ -140,7 +147,9 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
       setIsModalOpen(false);
     } catch (err: any) {
       console.error(err);
-      alert(err.message || "Erro ao criar empresa.");
+      showToast(err.message || "Erro ao criar empresa.", 'error');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -163,10 +172,11 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
         throw new Error("Erro ao mudar plano");
       }
 
+      showToast(`✓ Plano alterado para ${nextPlan} com sucesso!`, 'success');
       fetchCompanies();
     } catch (err) {
       console.error(err);
-      alert("Erro ao alterar o plano.");
+      showToast("Erro ao alterar o plano.", 'error');
     }
   };
 
@@ -188,6 +198,7 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
         throw new Error(data.error || "Erro ao excluir");
       }
 
+      showToast(`Empresa "${name}" excluída com sucesso!`, 'success');
       // If active impersonated was deleted, deactivate context
       if (activeImpersonatedId === companyId) {
         onImpersonate("");
@@ -196,7 +207,7 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
       fetchCompanies();
     } catch (err: any) {
       console.error(err);
-      alert(err.message || "Erro ao excluir.");
+      showToast(err.message || "Erro ao excluir empresa.", 'error');
     }
   };
 
@@ -234,6 +245,9 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
     e.preventDefault();
     if (!selectedCompany) return;
 
+    if (isSaving) return;
+    setIsSaving(true);
+
     try {
       let isoCreatedAt = selectedCompany.createdAt;
       if (editCreatedAt) {
@@ -268,6 +282,7 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
         throw new Error(data.error || "Erro ao atualizar assinatura.");
       }
 
+      showToast(`✓ Assinatura e limites de "${editNome}" gravados no banco com sucesso!`, 'success');
       setSuccessMsg(`Sucesso: Cadastro e assinatura de "${editNome}" atualizados!`);
       setIsEditModalOpen(false);
       setSelectedCompany(null);
@@ -275,7 +290,9 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
       setTimeout(() => setSuccessMsg(null), 4000);
     } catch (err: any) {
       console.error(err);
-      alert(err.message || "Não foi possível atualizar os limites comerciais.");
+      showToast(err.message || "Não foi possível atualizar os limites comerciais.", 'error');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -612,16 +629,25 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
               <div className="pt-4 border-t border-slate-100 flex justify-end gap-3">
                 <button
                   type="button"
+                  disabled={isSaving}
                   onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2 border border-slate-200 rounded-xl text-slate-600 text-xs font-bold hover:bg-slate-50 cursor-pointer"
+                  className="px-4 py-2 border border-slate-200 rounded-xl text-slate-600 text-xs font-bold hover:bg-slate-50 cursor-pointer disabled:opacity-50"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-blue-100 cursor-pointer"
+                  disabled={isSaving}
+                  className="px-6 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-blue-100 flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
                 >
-                  Ativar Cliente
+                  {isSaving ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin text-white" />
+                      <span>Gravando no banco...</span>
+                    </>
+                  ) : (
+                    <span>Ativar Cliente</span>
+                  )}
                 </button>
               </div>
             </form>
@@ -894,19 +920,28 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
               <div className="pt-4 border-t border-slate-100 flex justify-end gap-3">
                 <button
                   type="button"
+                  disabled={isSaving}
                   onClick={() => {
                     setIsEditModalOpen(false);
                     setSelectedCompany(null);
                   }}
-                  className="px-4 py-2 border border-slate-200 rounded-xl text-slate-600 text-xs font-bold hover:bg-slate-50 cursor-pointer"
+                  className="px-4 py-2 border border-slate-200 rounded-xl text-slate-600 text-xs font-bold hover:bg-slate-50 cursor-pointer disabled:opacity-50"
                 >
                   Fechar
                 </button>
                 <button
                   type="submit"
-                  className="px-6 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-emerald-100 cursor-pointer"
+                  disabled={isSaving}
+                  className="px-6 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-emerald-100 flex items-center justify-center gap-2 cursor-pointer disabled:cursor-not-allowed"
                 >
-                  Salvar Alterações
+                  {isSaving ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin text-white" />
+                      <span>Gravando no banco...</span>
+                    </>
+                  ) : (
+                    <span>Salvar Alterações</span>
+                  )}
                 </button>
               </div>
             </form>

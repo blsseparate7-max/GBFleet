@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
-import { Fuel, Plus, Calendar, MapPin, DollarSign, Camera, FileText, CheckCircle, Edit, Trash2, Filter, AlertCircle, Building } from 'lucide-react';
+import { Fuel, Plus, Calendar, MapPin, DollarSign, Camera, FileText, CheckCircle, Edit, Trash2, Filter, AlertCircle, Building, Loader2 } from 'lucide-react';
 import Modal from './ui/Modal';
+import { showToast } from './ui/Toast';
 import { compressAndSetFile, AttachmentPreview } from '../lib/fileCompressor';
 import { maskBRL, unmaskBRL, formatDateBR } from '../lib/utils';
 
@@ -45,20 +46,21 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
   });
 
   const [isSaving, setIsSaving] = useState(false);
+  const [isSavingStation, setIsSavingStation] = useState(false);
 
   const handleSave = async () => {
     if (!newLog.truckId) {
-      alert("Por favor, selecione um veículo (Caminhão).");
+      showToast("Por favor, selecione um veículo (Caminhão).", 'error');
       return;
     }
     if (!newLog.driverId) {
-      alert("Por favor, selecione um motorista.");
+      showToast("Por favor, selecione um motorista.", 'error');
       return;
     }
 
     const kmVal = String(newLog.km).replace(',', '.');
     if (!newLog.km || isNaN(Number(kmVal)) || Number(kmVal) <= 0) {
-      alert("Por favor, insira uma quilometragem (KM) válida.");
+      showToast("Por favor, insira uma quilometragem (KM) válida.", 'error');
       return;
     }
 
@@ -66,11 +68,11 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
       const litrosVal = String(newLog.litros).replace(',', '.');
       const valorVal = String(newLog.valor).replace(',', '.');
       if (!newLog.litros || isNaN(Number(litrosVal)) || Number(litrosVal) <= 0) {
-        alert("Por favor, insira uma quantidade de litros de Diesel válida.");
+        showToast("Por favor, insira uma quantidade de litros de Diesel válida.", 'error');
         return;
       }
       if (!newLog.valor || isNaN(Number(valorVal)) || Number(valorVal) <= 0) {
-        alert("Por favor, insira um valor de Diesel numérico válido maior que zero.");
+        showToast("Por favor, insira um valor de Diesel numérico válido maior que zero.", 'error');
         return;
       }
     }
@@ -79,11 +81,11 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
       const litrosArlaVal = String(newLog.litrosArla).replace(',', '.');
       const valorArlaVal = String(newLog.valorArla).replace(',', '.');
       if (!newLog.litrosArla || isNaN(Number(litrosArlaVal)) || Number(litrosArlaVal) <= 0) {
-        alert("Por favor, insira uma quantidade de litros de Arla 32 válida.");
+        showToast("Por favor, insira uma quantidade de litros de Arla 32 válida.", 'error');
         return;
       }
       if (!newLog.valorArla || isNaN(Number(valorArlaVal)) || Number(valorArlaVal) <= 0) {
-        alert("Por favor, insira um valor de Arla 32 numérico válido maior que zero.");
+        showToast("Por favor, insira um valor de Arla 32 numérico válido maior que zero.", 'error');
         return;
       }
     }
@@ -132,6 +134,7 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
+        showToast("✓ Abastecimento atualizado com sucesso no banco de dados!", 'success');
       } else {
         // New
         await fetch('/api/fuel_logs', {
@@ -139,6 +142,7 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
+        showToast("✓ Abastecimento gravado com sucesso no banco de dados!", 'success');
 
         // Notify chat (simulated for demo)
         const displayValue = tipoRegistro === 'arla' 
@@ -165,6 +169,7 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
       onUpdate();
     } catch (err) {
       console.error(err);
+      showToast("Erro ao gravar abastecimento.", 'error');
     } finally {
       setIsSaving(false);
     }
@@ -177,9 +182,11 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
       await fetch(`/api/fuel_logs/${id}`, {
         method: 'DELETE'
       });
+      showToast("Abastecimento removido com sucesso do banco de dados!", 'success');
       onUpdate();
     } catch (err) {
       console.error(err);
+      showToast("Erro ao excluir abastecimento.", 'error');
     }
   };
 
@@ -214,42 +221,63 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
   };
 
   const handleSaveStation = async () => {
-    if (!stationForm.nome) return;
-
-    const companyId = data?.company?.id || 'comp_1';
-
-    if (selectedStation) {
-      // Edit
-      await fetch(`/api/gas_stations/${selectedStation.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(stationForm)
-      });
-    } else {
-      // New
-      await fetch('/api/gas_stations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...stationForm,
-          companyId
-        })
-      });
+    if (!stationForm.nome) {
+      showToast("Por favor, preencha o nome do posto parceiro.", 'error');
+      return;
     }
 
-    setIsStationModalOpen(false);
-    setSelectedStation(null);
-    setStationForm({ nome: '', cnpj: '', cidade: '', uf: '', precoDiesel: '', status: 'Ativo' });
-    onUpdate();
+    if (isSavingStation) return;
+
+    setIsSavingStation(true);
+    try {
+      const companyId = data?.company?.id || 'comp_1';
+
+      if (selectedStation) {
+        // Edit
+        await fetch(`/api/gas_stations/${selectedStation.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(stationForm)
+        });
+        showToast("✓ Posto atualizado com sucesso no banco de dados!", 'success');
+      } else {
+        // New
+        await fetch('/api/gas_stations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...stationForm,
+            companyId
+          })
+        });
+        showToast("✓ Posto cadastrado com sucesso no banco de dados!", 'success');
+      }
+
+      setIsStationModalOpen(false);
+      setSelectedStation(null);
+      setStationForm({ nome: '', cnpj: '', cidade: '', uf: '', precoDiesel: '', status: 'Ativo' });
+      onUpdate();
+    } catch (err) {
+      console.error(err);
+      showToast("Erro ao gravar posto parceiro.", 'error');
+    } finally {
+      setIsSavingStation(false);
+    }
   };
 
   const handleDeleteStation = async (id: string) => {
     if (!confirm('Deseja realmente excluir este posto?')) return;
 
-    await fetch(`/api/gas_stations/${id}`, {
-      method: 'DELETE'
-    });
-    onUpdate();
+    try {
+      await fetch(`/api/gas_stations/${id}`, {
+        method: 'DELETE'
+      });
+      showToast("Posto excluído com sucesso do banco de dados!", 'success');
+      onUpdate();
+    } catch (err) {
+      console.error(err);
+      showToast("Erro ao excluir posto.", 'error');
+    }
   };
 
   const openEditStation = (station: any) => {
@@ -981,9 +1009,16 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
               id="btn-submit-fuel-log"
               onClick={handleSave}
               disabled={isSaving}
-              className={`flex-1 px-4 py-3 rounded-xl font-semibold text-white transition-colors shadow-lg shadow-blue-200 ${isSaving ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
+              className={`flex-1 px-4 py-3 rounded-xl font-semibold text-white transition-all shadow-lg shadow-blue-200 flex items-center justify-center gap-2 cursor-pointer ${isSaving ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'}`}
             >
-              {isSaving ? "Salvando..." : (selectedLog ? "Salvar Alterações" : "Salvar Registro")}
+              {isSaving ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin text-white" />
+                  <span>Gravando no banco...</span>
+                </>
+              ) : (
+                <span>{selectedLog ? "Salvar Alterações" : "Salvar Registro"}</span>
+              )}
             </button>
           </div>
         </div>
@@ -1076,17 +1111,26 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
           <div className="flex gap-3 pt-4">
             <button 
               id="btn-cancel-gas-station"
+              disabled={isSavingStation}
               onClick={() => setIsStationModalOpen(false)}
-              className="flex-1 px-4 py-3 rounded-xl font-semibold text-slate-600 hover:bg-slate-100 transition-colors"
+              className="flex-1 px-4 py-3 rounded-xl font-semibold text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50"
             >
               Cancelar
             </button>
             <button 
               id="btn-submit-gas-station"
               onClick={handleSaveStation}
-              className="flex-1 px-4 py-3 rounded-xl font-semibold bg-emerald-600 text-white hover:bg-emerald-700 transition-colors shadow-lg shadow-emerald-200"
+              disabled={isSavingStation}
+              className={`flex-1 px-4 py-3 rounded-xl font-semibold text-white transition-all shadow-lg shadow-emerald-200 flex items-center justify-center gap-2 cursor-pointer ${isSavingStation ? 'bg-emerald-400 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700'}`}
             >
-              {selectedStation ? "Salvar Alterações" : "Cadastrar Posto"}
+              {isSavingStation ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin text-white" />
+                  <span>Gravando no banco...</span>
+                </>
+              ) : (
+                <span>{selectedStation ? "Salvar Alterações" : "Cadastrar Posto"}</span>
+              )}
             </button>
           </div>
         </div>
