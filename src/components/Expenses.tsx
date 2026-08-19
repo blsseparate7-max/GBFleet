@@ -123,6 +123,10 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
   const [isEditingExpense, setIsEditingExpense] = useState(false);
   const [isUpdatingExpense, setIsUpdatingExpense] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [isDeletingExpense, setIsDeletingExpense] = useState(false);
+  const [deletingBillId, setDeletingBillId] = useState<string | null>(null);
+  const [deletingCategory, setDeletingCategory] = useState<string | null>(null);
+  const [deletingCompanyId, setDeletingCompanyId] = useState<string | null>(null);
   const [editExpenseForm, setEditExpenseForm] = useState({
     truckId: '',
     tipo: '',
@@ -165,13 +169,18 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
 
   const handleDeleteCompany = async (id: string) => {
     if (!confirm("Tem certeza de que deseja remover esta empresa de despesa?")) return;
+    if (deletingCompanyId) return;
+    setDeletingCompanyId(id);
     try {
-      await fetch(`/api/expense_companies/${id}`, { method: 'DELETE' });
-      showToast("Empresa fornecedora removida com sucesso!", 'success');
+      const res = await fetch(`/api/expense_companies/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error("Falha ao remover empresa.");
+      showToast("✓ Empresa fornecedora removida com sucesso do banco!", 'success');
       onUpdate();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      showToast("Erro ao remover empresa de despesa.", 'error');
+      showToast(err.message || "Erro ao remover empresa de despesa.", 'error');
+    } finally {
+      setDeletingCompanyId(null);
     }
   };
 
@@ -205,14 +214,19 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
 
   // Delete manual expense handler
   const handleDeleteExpense = async (id: string) => {
+    if (isDeletingExpense) return;
+    setIsDeletingExpense(true);
     try {
-      await fetch(`/api/expenses/${id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/expenses/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error("Falha ao excluir despesa.");
       setDeleteConfirmId(null);
-      showToast("Despesa excluída com sucesso do banco de dados!", 'success');
+      showToast("✓ Despesa excluída com sucesso do banco de dados!", 'success');
       onUpdate();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      showToast("Erro ao excluir despesa.", 'error');
+      showToast(err.message || "Erro ao excluir despesa.", 'error');
+    } finally {
+      setIsDeletingExpense(false);
     }
   };
 
@@ -376,18 +390,22 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
 
   const handleDeleteCategory = async (nome: string) => {
     if (!window.confirm(`Deseja realmente excluir a categoria "${nome}"?`)) return;
+    if (deletingCategory) return;
+    setDeletingCategory(nome);
     try {
       const res = await fetch('/api/categories', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tipo: 'saida', nome })
       });
-      if (!res.ok) throw new Error();
-      showToast("Categoria de despesa excluída!", 'success');
+      if (!res.ok) throw new Error("Falha ao excluir categoria.");
+      showToast("✓ Categoria de despesa excluída com sucesso!", 'success');
       onUpdate();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      showToast("Erro ao excluir categoria.", 'error');
+      showToast(err.message || "Erro ao excluir categoria.", 'error');
+    } finally {
+      setDeletingCategory(null);
     }
   };
 
@@ -498,16 +516,20 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
 
   const handleDeleteBill = async (billId: string) => {
     if (!window.confirm("Deseja realmente excluir esta conta a pagar? Os lançamentos de despesa e fluxo de caixa associados também serão excluídos.")) return;
+    if (deletingBillId) return;
+    setDeletingBillId(billId);
     try {
       const res = await fetch(`/api/bills/${billId}`, {
         method: 'DELETE'
       });
-      if (!res.ok) throw new Error();
-      showToast("Conta a pagar excluída com sucesso!", 'success');
+      if (!res.ok) throw new Error("Falha ao excluir conta a pagar.");
+      showToast("✓ Conta a pagar excluída com sucesso do banco!", 'success');
       onUpdate();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      showToast("Erro ao excluir conta a pagar.", 'error');
+      showToast(err.message || "Erro ao excluir conta a pagar.", 'error');
+    } finally {
+      setDeletingBillId(null);
     }
   };
 
@@ -1518,10 +1540,15 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
                             )}
                             <button
                               onClick={() => handleDeleteBill(bill.id)}
-                              className="p-1 text-rose-600 hover:bg-rose-50 rounded-lg border border-transparent hover:border-rose-100 transition cursor-pointer"
+                              disabled={deletingBillId === bill.id}
+                              className="p-1 text-rose-600 hover:bg-rose-50 rounded-lg border border-transparent hover:border-rose-100 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                               title="Excluir Conta"
                             >
-                              <Trash2 size={14} />
+                              {deletingBillId === bill.id ? (
+                                <Loader2 size={14} className="animate-spin text-rose-600" />
+                              ) : (
+                                <Trash2 size={14} />
+                              )}
                             </button>
                           </div>
                         </td>
@@ -1594,9 +1621,14 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
                       )}
                       <button
                         onClick={() => handleDeleteBill(bill.id)}
-                        className="p-1.5 text-rose-600 bg-rose-50 hover:bg-rose-100 rounded-xl border border-rose-150 cursor-pointer"
+                        disabled={deletingBillId === bill.id}
+                        className="p-1.5 text-rose-600 bg-rose-50 hover:bg-rose-100 rounded-xl border border-rose-150 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                       >
-                        <Trash2 size={13} />
+                        {deletingBillId === bill.id ? (
+                          <Loader2 size={13} className="animate-spin text-rose-600" />
+                        ) : (
+                          <Trash2 size={13} />
+                        )}
                       </button>
                     </div>
                   </div>
@@ -1703,10 +1735,15 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
                           </button>
                           <button 
                             onClick={() => handleDeleteCategory(cat)}
-                            className="p-1 text-rose-600 hover:bg-rose-50 rounded-lg border border-transparent hover:border-rose-100 transition cursor-pointer"
+                            disabled={deletingCategory === cat}
+                            className="p-1 text-rose-600 hover:bg-rose-50 rounded-lg border border-transparent hover:border-rose-100 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                             title="Excluir Categoria"
                           >
-                            <Trash2 size={14} />
+                            {deletingCategory === cat ? (
+                              <Loader2 size={14} className="animate-spin text-rose-600" />
+                            ) : (
+                              <Trash2 size={14} />
+                            )}
                           </button>
                         </>
                       )}
@@ -1883,10 +1920,15 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
                             </button>
                             <button
                               onClick={() => handleDeleteCompany(comp.id)}
-                              className="p-2 text-slate-400 hover:text-red-600 hover:bg-slate-50 rounded-lg transition-colors cursor-pointer"
+                              disabled={deletingCompanyId === comp.id}
+                              className="p-2 text-slate-400 hover:text-red-600 hover:bg-slate-50 rounded-lg transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                               title="Excluir Empresa"
                             >
-                              <Trash2 size={16} />
+                              {deletingCompanyId === comp.id ? (
+                                <Loader2 size={16} className="animate-spin text-rose-600" />
+                              ) : (
+                                <Trash2 size={16} />
+                              )}
                             </button>
                           </div>
                         </td>
@@ -2464,9 +2506,17 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
             </button>
             <button
               onClick={() => deleteConfirmId && handleDeleteExpense(deleteConfirmId)}
-              className="flex-1 px-4 py-2.5 rounded-xl bg-red-600 text-white hover:bg-red-700 transition-colors shadow-lg shadow-red-200"
+              disabled={isDeletingExpense}
+              className="flex-1 px-4 py-2.5 rounded-xl bg-red-600 text-white hover:bg-red-700 transition-colors shadow-lg shadow-red-200 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Excluir Definitivamente
+              {isDeletingExpense ? (
+                <>
+                  <Loader2 size={16} className="animate-spin" />
+                  <span>Excluindo...</span>
+                </>
+              ) : (
+                <span>Excluir Definitivamente</span>
+              )}
             </button>
           </div>
         </div>

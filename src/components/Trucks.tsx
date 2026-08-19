@@ -28,6 +28,7 @@ import { cn, formatDateBR } from '../lib/utils';
 export default function Trucks({ data, onUpdate }: { data: any, onUpdate: () => void }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isDeletingTruck, setIsDeletingTruck] = useState(false);
   const [newTruck, setNewTruck] = useState({ placa: '', modelo: '', usaArla: false });
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -78,21 +79,26 @@ export default function Trucks({ data, onUpdate }: { data: any, onUpdate: () => 
 
   const handleDeleteTruck = async (id: string, placa: string) => {
     if (!confirm(`Deseja realmente remover o caminhão ${placa}?`)) return;
+    if (isDeletingTruck) return;
+    setIsDeletingTruck(true);
     try {
       const response = await fetch(`/api/trucks/${id}`, {
         method: 'DELETE'
       });
       if (response.ok) {
-        showToast(`Caminhão ${placa} removido com sucesso!`, 'success');
+        showToast(`✓ Caminhão ${placa} removido com sucesso do banco!`, 'success');
         setIsDetailsOpen(false);
         setSelectedTruck(null);
         onUpdate();
       } else {
-        showToast("Erro ao remover veículo.", 'error');
+        const err = await response.json();
+        showToast(err.error || "Erro ao remover veículo.", 'error');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      showToast("Erro de conexão ao remover veículo.", 'error');
+      showToast(err.message || "Erro de conexão ao remover veículo.", 'error');
+    } finally {
+      setIsDeletingTruck(false);
     }
   };
 
@@ -375,10 +381,15 @@ export default function Trucks({ data, onUpdate }: { data: any, onUpdate: () => 
                   
                   <button
                     onClick={() => handleDeleteTruck(selectedTruck.id, selectedTruck.placa)}
-                    className="p-2 text-rose-500 hover:bg-rose-50 border border-slate-200 hover:border-rose-100 rounded-xl transition-all"
+                    disabled={isDeletingTruck}
+                    className="p-2 text-rose-500 hover:bg-rose-50 border border-slate-200 hover:border-rose-100 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                     title="Excluir Caminhão"
                   >
-                    <Trash2 size={16} />
+                    {isDeletingTruck ? (
+                      <Loader2 size={16} className="animate-spin text-rose-500" />
+                    ) : (
+                      <Trash2 size={16} />
+                    )}
                   </button>
                 </div>
               </div>

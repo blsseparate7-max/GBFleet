@@ -28,6 +28,7 @@ export default function Maintenance({ data, onUpdate }: MaintenanceProps) {
   const [isNewAlertModalOpen, setIsNewAlertModalOpen] = useState(false);
   const [isCompleteModalOpen, setIsCompleteModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [deletingAlertId, setDeletingAlertId] = useState<string | null>(null);
   const [selectedAlert, setSelectedAlert] = useState<any>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterTruck, setFilterTruck] = useState('');
@@ -250,19 +251,24 @@ export default function Maintenance({ data, onUpdate }: MaintenanceProps) {
       return;
     }
 
+    if (deletingAlertId) return;
+    setDeletingAlertId(alertId);
     try {
       const response = await fetch(`/api/maintenance_alerts/${alertId}`, {
         method: 'DELETE'
       });
       if (response.ok) {
-        showToast("Alerta de manutenção excluído!", 'success');
+        showToast("✓ Alerta de manutenção excluído com sucesso!", 'success');
         onUpdate();
       } else {
-        showToast("Erro ao excluir alerta.", 'error');
+        const err = await response.json().catch(() => ({}));
+        showToast(err.error || "Erro ao excluir alerta.", 'error');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      showToast("Erro de conexão ao excluir alerta.", 'error');
+      showToast(err.message || "Erro de conexão ao excluir alerta.", 'error');
+    } finally {
+      setDeletingAlertId(null);
     }
   };
 
@@ -508,10 +514,15 @@ export default function Maintenance({ data, onUpdate }: MaintenanceProps) {
                     )}
                     <button 
                       onClick={() => handleDeleteAlert(alert.id)}
-                      className="bg-slate-50 hover:bg-red-50 hover:text-red-600 border border-slate-200 hover:border-red-200 p-2 rounded-xl text-slate-400 transition-all flex items-center justify-center"
+                      disabled={deletingAlertId === alert.id}
+                      className="bg-slate-50 hover:bg-red-50 hover:text-red-600 border border-slate-200 hover:border-red-200 p-2 rounded-xl text-slate-400 transition-all flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                       title="Excluir Alerta"
                     >
-                      <Trash2 size={15} />
+                      {deletingAlertId === alert.id ? (
+                        <Loader2 size={15} className="animate-spin text-rose-600" />
+                      ) : (
+                        <Trash2 size={15} />
+                      )}
                     </button>
                   </div>
                 </div>

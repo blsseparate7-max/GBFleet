@@ -226,6 +226,7 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
   const [litrosArla, setLitrosArla] = useState('');
   const [showArla, setShowArla] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [deletingFreightId, setDeletingFreightId] = useState<string | null>(null);
   const [fotoAbastecimento, setFotoAbastecimento] = useState('');
   const [localPedagio, setLocalPedagio] = useState('');
   const [localMotorista, setLocalMotorista] = useState('');
@@ -391,20 +392,24 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
 
   const handleDeleteFreight = async (id: string) => {
     if (!confirm("Deseja realmente excluir este frete? Isso também removerá todos os lançamentos financeiros vinculados (entrada de receita e saídas de custos).")) return;
+    if (deletingFreightId) return;
+    setDeletingFreightId(id);
     try {
       const response = await fetch(`/api/freights/${id}`, {
         method: 'DELETE'
       });
       if (response.ok) {
-        showToast("Frete excluído com sucesso do banco de dados!", 'success');
+        showToast("✓ Frete excluído com sucesso do banco de dados!", 'success');
         onUpdate();
         setExpandedFreightId(null);
       } else {
         showToast("Erro ao remover o frete.", 'error');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      showToast("Erro de conexão ao remover o frete.", 'error');
+      showToast(err.message || "Erro de conexão ao remover o frete.", 'error');
+    } finally {
+      setDeletingFreightId(null);
     }
   };
 
@@ -858,10 +863,20 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
                           <button
                             type="button"
                             onClick={() => handleDeleteFreight(freight.id)}
-                            className="flex items-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-[10px] sm:text-xs uppercase tracking-wider px-3.5 py-2.5 rounded-xl transition-all shadow-sm cursor-pointer hover:scale-[1.02] active:scale-[0.98]"
+                            disabled={deletingFreightId === freight.id}
+                            className="flex items-center gap-1.5 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-[10px] sm:text-xs uppercase tracking-wider px-3.5 py-2.5 rounded-xl transition-all shadow-sm cursor-pointer hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            <Trash2 size={14} />
-                            Excluir
+                            {deletingFreightId === freight.id ? (
+                              <>
+                                <Loader2 size={14} className="animate-spin" />
+                                <span>Excluindo...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Trash2 size={14} />
+                                <span>Excluir</span>
+                              </>
+                            )}
                           </button>
                           <button
                             type="button"

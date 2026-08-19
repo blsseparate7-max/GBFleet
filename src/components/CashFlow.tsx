@@ -97,6 +97,8 @@ export default function CashFlow({ data, onUpdate }: { data: any, onUpdate: () =
   const [copied, setCopied] = useState(false);
   const [csvNotice, setCsvNotice] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deletingCatKey, setDeletingCatKey] = useState<string | null>(null);
 
   // Quick reset logic for form
   const resetForm = () => {
@@ -186,15 +188,20 @@ export default function CashFlow({ data, onUpdate }: { data: any, onUpdate: () =
   // Delete handler
   const handleDelete = async (id: string, description: string) => {
     if (window.confirm(`Tem certeza que deseja excluir a transação: "${description}"?`)) {
+      if (deletingId) return;
+      setDeletingId(id);
       try {
-        await fetch(`/api/cash_flow/${id}`, {
+        const res = await fetch(`/api/cash_flow/${id}`, {
           method: 'DELETE'
         });
-        showToast("Lançamento excluído com sucesso do caixa!", 'success');
+        if (!res.ok) throw new Error("Falha ao excluir transação.");
+        showToast("✓ Lançamento excluído com sucesso do caixa!", 'success');
         onUpdate();
-      } catch (err) {
+      } catch (err: any) {
         console.error(err);
-        showToast("Erro ao excluir transação do caixa.", 'error');
+        showToast(err.message || "Erro ao excluir transação do caixa.", 'error');
+      } finally {
+        setDeletingId(null);
       }
     }
   };
@@ -248,6 +255,9 @@ export default function CashFlow({ data, onUpdate }: { data: any, onUpdate: () =
     if (!window.confirm(`Tem certeza que deseja excluir permanentemente a categoria "${nome}"? Ela deixará de aparecer nos relatórios e nos formulários de lançamento.`)) {
       return;
     }
+    const catKey = `${tipo}-${nome}`;
+    if (deletingCatKey) return;
+    setDeletingCatKey(catKey);
     try {
       const res = await fetch('/api/categories', {
         method: 'DELETE',
@@ -255,13 +265,15 @@ export default function CashFlow({ data, onUpdate }: { data: any, onUpdate: () =
         body: JSON.stringify({ tipo, nome })
       });
       if (!res.ok) {
-        throw new Error("Erro ao excluir");
+        throw new Error("Erro ao excluir categoria.");
       }
-      showToast("Categoria excluída com sucesso!", 'success');
+      showToast("✓ Categoria excluída com sucesso!", 'success');
       onUpdate();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      showToast("Erro ao excluir categoria.", 'error');
+      showToast(err.message || "Erro ao excluir categoria.", 'error');
+    } finally {
+      setDeletingCatKey(null);
     }
   };
 
@@ -959,10 +971,15 @@ export default function CashFlow({ data, onUpdate }: { data: any, onUpdate: () =
                           {/* Disable deleting system synced records directly to prevent inconsistencies, unless confirmed */}
                           <button
                             onClick={() => handleDelete(item.id, item.descricao)}
-                            className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-rose-50 rounded-xl transition-all"
+                            disabled={deletingId === item.id}
+                            className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-rose-50 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                             title="Excluir"
                           >
-                            <Trash2 size={14} />
+                            {deletingId === item.id ? (
+                              <Loader2 size={14} className="animate-spin text-rose-600" />
+                            ) : (
+                              <Trash2 size={14} />
+                            )}
                           </button>
                         </div>
                       </td>
@@ -1265,10 +1282,15 @@ export default function CashFlow({ data, onUpdate }: { data: any, onUpdate: () =
                           <button
                             type="button"
                             onClick={() => handleDeleteCategory('entrada', cat)}
-                            className="p-1 hover:bg-slate-200 rounded text-rose-500 hover:text-rose-700"
+                            disabled={deletingCatKey === `entrada-${cat}`}
+                            className="p-1 hover:bg-slate-200 rounded text-rose-500 hover:text-rose-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                             title="Excluir"
                           >
-                            <Trash2 size={13} />
+                            {deletingCatKey === `entrada-${cat}` ? (
+                              <Loader2 size={13} className="animate-spin text-rose-600" />
+                            ) : (
+                              <Trash2 size={13} />
+                            )}
                           </button>
                         </div>
                       </>
@@ -1351,10 +1373,15 @@ export default function CashFlow({ data, onUpdate }: { data: any, onUpdate: () =
                           <button
                             type="button"
                             onClick={() => handleDeleteCategory('saida', cat)}
-                            className="p-1 hover:bg-slate-200 rounded text-rose-500 hover:text-rose-700"
+                            disabled={deletingCatKey === `saida-${cat}`}
+                            className="p-1 hover:bg-slate-200 rounded text-rose-500 hover:text-rose-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                             title="Excluir"
                           >
-                            <Trash2 size={13} />
+                            {deletingCatKey === `saida-${cat}` ? (
+                              <Loader2 size={13} className="animate-spin text-rose-600" />
+                            ) : (
+                              <Trash2 size={13} />
+                            )}
                           </button>
                         </div>
                       </>

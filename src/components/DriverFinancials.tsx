@@ -41,6 +41,8 @@ export default function DriverFinancials({ data, onUpdate }: DriverFinancialsPro
   const [paymentObservacao, setPaymentObservacao] = useState<string>('');
   const [isSubmittingPay, setIsSubmittingPay] = useState<boolean>(false);
   const [isSubmittingAdj, setIsSubmittingAdj] = useState<boolean>(false);
+  const [deletingAdjId, setDeletingAdjId] = useState<string | null>(null);
+  const [deletingPaymentId, setDeletingPaymentId] = useState<string | null>(null);
 
   // Active Selected Driver Object
   const selectedDriver = useMemo(() => {
@@ -166,19 +168,23 @@ export default function DriverFinancials({ data, onUpdate }: DriverFinancialsPro
   // Handle removing adjustment
   const handleDeleteAdjustment = async (id: string) => {
     if (!confirm('Deseja realmente excluir este lançamento de ajuste?')) return;
+    if (deletingAdjId) return;
+    setDeletingAdjId(id);
     try {
       const response = await fetch(`/api/driver_adjustments/${id}`, {
         method: 'DELETE'
       });
       if (response.ok) {
-        showToast('Ajuste excluído com sucesso!', 'success');
+        showToast('✓ Ajuste excluído com sucesso do banco!', 'success');
         onUpdate();
       } else {
         showToast('Erro ao excluir ajuste.', 'error');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      showToast('Erro de conexão ao excluir ajuste.', 'error');
+      showToast(err.message || 'Erro de conexão ao excluir ajuste.', 'error');
+    } finally {
+      setDeletingAdjId(null);
     }
   };
 
@@ -240,19 +246,23 @@ export default function DriverFinancials({ data, onUpdate }: DriverFinancialsPro
     if (!confirm('Atenção: Excluir este registro de pagamento NÃO removerá a despesa correspondente do fluxo de caixa central por motivos de segurança contábil. Deseja prosseguir com a exclusão do recibo do motorista?')) {
       return;
     }
+    if (deletingPaymentId) return;
+    setDeletingPaymentId(id);
     try {
       const response = await fetch(`/api/driver_payments/${id}`, {
         method: 'DELETE'
       });
       if (response.ok) {
-        showToast('Recibo de pagamento excluído!', 'success');
+        showToast('✓ Recibo de pagamento excluído com sucesso!', 'success');
         onUpdate();
       } else {
         showToast('Erro ao excluir registro de pagamento.', 'error');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      showToast('Erro de conexão ao excluir recibo.', 'error');
+      showToast(err.message || 'Erro de conexão ao excluir recibo.', 'error');
+    } finally {
+      setDeletingPaymentId(null);
     }
   };
 
@@ -536,10 +546,15 @@ export default function DriverFinancials({ data, onUpdate }: DriverFinancialsPro
                             </span>
                             <button
                               onClick={() => handleDeleteAdjustment(a.id)}
-                              className="text-slate-400 hover:text-rose-600 p-1.5 hover:bg-rose-50 rounded-lg transition-colors"
+                              disabled={deletingAdjId === a.id}
+                              className="text-slate-400 hover:text-rose-600 p-1.5 hover:bg-rose-50 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                               title="Excluir Lançamento"
                             >
-                              <Trash2 size={14} />
+                              {deletingAdjId === a.id ? (
+                                <Loader2 size={14} className="animate-spin text-rose-600" />
+                              ) : (
+                                <Trash2 size={14} />
+                              )}
                             </button>
                           </div>
                         </div>
@@ -816,10 +831,15 @@ export default function DriverFinancials({ data, onUpdate }: DriverFinancialsPro
                           </button>
                           <button
                             onClick={() => handleDeletePayment(p.id)}
-                            className="text-slate-400 hover:text-rose-600 p-1.5 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                            disabled={deletingPaymentId === p.id}
+                            className="text-slate-400 hover:text-rose-600 p-1.5 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                             title="Remover Registro de Recibo"
                           >
-                            <Trash2 size={13} />
+                            {deletingPaymentId === p.id ? (
+                              <Loader2 size={13} className="animate-spin text-rose-600" />
+                            ) : (
+                              <Trash2 size={13} />
+                            )}
                           </button>
                         </div>
                       </td>

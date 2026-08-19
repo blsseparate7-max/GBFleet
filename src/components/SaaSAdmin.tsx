@@ -58,6 +58,7 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
 
   // Form State
   const [isSaving, setIsSaving] = useState(false);
+  const [deletingCompanyId, setDeletingCompanyId] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [nome, setNome] = useState("");
   const [plano, setPlano] = useState("Pro");
@@ -185,6 +186,8 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
       return;
     }
 
+    if (deletingCompanyId) return;
+    setDeletingCompanyId(companyId);
     try {
       const res = await fetch(`/api/superadmin/companies/${companyId}`, {
         method: "DELETE",
@@ -198,7 +201,7 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
         throw new Error(data.error || "Erro ao excluir");
       }
 
-      showToast(`Empresa "${name}" excluída com sucesso!`, 'success');
+      showToast(`✓ Empresa "${name}" excluída com sucesso do banco!`, 'success');
       // If active impersonated was deleted, deactivate context
       if (activeImpersonatedId === companyId) {
         onImpersonate("");
@@ -208,6 +211,8 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
     } catch (err: any) {
       console.error(err);
       showToast(err.message || "Erro ao excluir empresa.", 'error');
+    } finally {
+      setDeletingCompanyId(null);
     }
   };
 
@@ -514,10 +519,15 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
                           <button
                             type="button"
                             onClick={() => handleDeleteCompany(company.id, company.nome)}
-                            className="p-2 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded-lg transition-all"
+                            disabled={deletingCompanyId === company.id}
+                            className="p-2 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                             title="Desativar Empresa"
                           >
-                            <Trash2 size={15} />
+                            {deletingCompanyId === company.id ? (
+                              <Loader2 size={15} className="animate-spin text-rose-600" />
+                            ) : (
+                              <Trash2 size={15} />
+                            )}
                           </button>
                         </div>
                       </td>

@@ -47,6 +47,8 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
 
   const [isSaving, setIsSaving] = useState(false);
   const [isSavingStation, setIsSavingStation] = useState(false);
+  const [deletingLogId, setDeletingLogId] = useState<string | null>(null);
+  const [deletingStationId, setDeletingStationId] = useState<string | null>(null);
 
   const handleSave = async () => {
     if (!newLog.truckId) {
@@ -178,15 +180,22 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
   const handleDeleteLog = async (id: string) => {
     if (!confirm('Deseja realmente excluir este abastecimento? Isso também removerá os registros financeiros de despesa e fluxo de caixa associados.')) return;
 
+    if (deletingLogId) return;
+    setDeletingLogId(id);
     try {
-      await fetch(`/api/fuel_logs/${id}`, {
+      const res = await fetch(`/api/fuel_logs/${id}`, {
         method: 'DELETE'
       });
-      showToast("Abastecimento removido com sucesso do banco de dados!", 'success');
+      if (!res.ok) {
+        throw new Error("Falha ao excluir abastecimento.");
+      }
+      showToast("✓ Abastecimento removido com sucesso do banco de dados!", 'success');
       onUpdate();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      showToast("Erro ao excluir abastecimento.", 'error');
+      showToast(err.message || "Erro ao excluir abastecimento.", 'error');
+    } finally {
+      setDeletingLogId(null);
     }
   };
 
@@ -268,15 +277,22 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
   const handleDeleteStation = async (id: string) => {
     if (!confirm('Deseja realmente excluir este posto?')) return;
 
+    if (deletingStationId) return;
+    setDeletingStationId(id);
     try {
-      await fetch(`/api/gas_stations/${id}`, {
+      const res = await fetch(`/api/gas_stations/${id}`, {
         method: 'DELETE'
       });
-      showToast("Posto excluído com sucesso do banco de dados!", 'success');
+      if (!res.ok) {
+        throw new Error("Falha ao excluir posto.");
+      }
+      showToast("✓ Posto parceiro excluído com sucesso do banco de dados!", 'success');
       onUpdate();
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      showToast("Erro ao excluir posto.", 'error');
+      showToast(err.message || "Erro ao excluir posto.", 'error');
+    } finally {
+      setDeletingStationId(null);
     }
   };
 
@@ -607,10 +623,15 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
                               </button>
                               <button
                                 onClick={() => handleDeleteLog(log.id)}
-                                className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-slate-50 rounded-lg transition-colors"
+                                disabled={deletingLogId === log.id}
+                                className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-slate-50 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                                 title="Excluir Abastecimento"
                               >
-                                <Trash2 size={14} />
+                                {deletingLogId === log.id ? (
+                                  <Loader2 size={14} className="animate-spin text-rose-500" />
+                                ) : (
+                                  <Trash2 size={14} />
+                                )}
                               </button>
                             </div>
                           </td>
@@ -683,10 +704,15 @@ export default function FuelLogs({ data, onUpdate }: { data: any, onUpdate: () =
                           </button>
                           <button
                             onClick={() => handleDeleteStation(station.id)}
-                            className="p-2 text-slate-400 hover:text-red-600 hover:bg-slate-50 rounded-lg transition-colors"
+                            disabled={deletingStationId === station.id}
+                            className="p-2 text-slate-400 hover:text-red-600 hover:bg-slate-50 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                             title="Excluir Posto"
                           >
-                            <Trash2 size={16} />
+                            {deletingStationId === station.id ? (
+                              <Loader2 size={16} className="animate-spin text-rose-500" />
+                            ) : (
+                              <Trash2 size={16} />
+                            )}
                           </button>
                         </div>
                       </td>

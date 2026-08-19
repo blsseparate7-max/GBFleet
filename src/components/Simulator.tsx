@@ -144,6 +144,7 @@ export default function Simulator({ data, onUpdate }: SimulatorProps) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isManageRoutesOpen, setIsManageRoutesOpen] = useState(false);
   const [editingRoute, setEditingRoute] = useState<any | null>(null);
+  const [deletingRouteId, setDeletingRouteId] = useState<string | null>(null);
 
   // States for logging simulated freights directly into operational tracker
   const [isLaunchModalOpen, setIsLaunchModalOpen] = useState(false);
@@ -648,13 +649,21 @@ export default function Simulator({ data, onUpdate }: SimulatorProps) {
   // Delete dynamic route from DB
   const handleDeleteRoute = async (id: string, name: string) => {
     if (window.confirm(`Tem certeza que deseja apagar o modelo de rota: "${name}"?`)) {
+      if (deletingRouteId) return;
+      setDeletingRouteId(id);
       try {
-        await fetch(`/api/routes/${id}`, { method: 'DELETE' });
-        showToast(`Modelo de rota "${name}" excluído!`, 'success');
-        if (onUpdate) onUpdate();
-      } catch (err) {
+        const res = await fetch(`/api/routes/${id}`, { method: 'DELETE' });
+        if (res.ok) {
+          showToast(`✓ Modelo de rota "${name}" excluído com sucesso!`, 'success');
+          if (onUpdate) onUpdate();
+        } else {
+          showToast("Erro ao excluir modelo de rota.", 'error');
+        }
+      } catch (err: any) {
         console.error(err);
-        showToast("Erro ao excluir modelo de rota.", 'error');
+        showToast(err.message || "Erro ao excluir modelo de rota.", 'error');
+      } finally {
+        setDeletingRouteId(null);
       }
     }
   };
@@ -780,10 +789,15 @@ Consumido Estimado: ${consumption} km/l | Óleo Diesel: R$ ${dieselPrice.toFixed
                       </button>
                       <button 
                         onClick={() => handleDeleteRoute(p.id, p.nome)}
-                        className="text-slate-400 hover:text-rose-600 bg-white p-1 rounded-md border border-slate-100 shadow-xs" 
+                        disabled={deletingRouteId === p.id}
+                        className="text-slate-400 hover:text-rose-600 bg-white p-1 rounded-md border border-slate-100 shadow-xs disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer" 
                         title="Remover modelo de rota"
                       >
-                        <Trash2 size={10} />
+                        {deletingRouteId === p.id ? (
+                          <Loader2 size={10} className="animate-spin text-rose-600" />
+                        ) : (
+                          <Trash2 size={10} />
+                        )}
                       </button>
                     </div>
                   </div>
@@ -1877,9 +1891,17 @@ Consumido Estimado: ${consumption} km/l | Óleo Diesel: R$ ${dieselPrice.toFixed
                   </button>
                   <button
                     onClick={() => handleDeleteRoute(item.id, item.nome)}
-                    className="p-1 px-3 border border-slate-250 hover:border-rose-400 hover:bg-rose-50 text-rose-700 rounded-lg text-[10px] transition-all cursor-pointer"
+                    disabled={deletingRouteId === item.id}
+                    className="p-1 px-3 border border-slate-250 hover:border-rose-400 hover:bg-rose-50 text-rose-700 rounded-lg text-[10px] transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
                   >
-                    Excluir
+                    {deletingRouteId === item.id ? (
+                      <>
+                        <Loader2 size={11} className="animate-spin text-rose-600" />
+                        <span>Excluindo...</span>
+                      </>
+                    ) : (
+                      <span>Excluir</span>
+                    )}
                   </button>
                 </div>
               </div>

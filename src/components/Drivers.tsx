@@ -38,6 +38,7 @@ export default function Drivers({ data, onUpdate }: DriversProps) {
   const [isNewDriverModalOpen, setIsNewDriverModalOpen] = useState(false);
   const [isEditDriverModalOpen, setIsEditDriverModalOpen] = useState(false);
   const [selectedDriver, setSelectedDriver] = useState<any>(null);
+  const [deletingDriverId, setDeletingDriverId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [filterCategory, setFilterCategory] = useState('');
@@ -205,19 +206,24 @@ export default function Drivers({ data, onUpdate }: DriversProps) {
       return;
     }
 
+    if (deletingDriverId) return;
+    setDeletingDriverId(id);
     try {
       const response = await fetch(`/api/drivers/${id}`, {
         method: 'DELETE'
       });
       if (response.ok) {
-        showToast("Motorista removido com sucesso!", 'success');
+        showToast("✓ Motorista removido com sucesso do banco!", 'success');
         onUpdate();
       } else {
-        showToast("Erro ao excluir motorista.", 'error');
+        const err = await response.json().catch(() => ({}));
+        showToast(err.error || "Erro ao excluir motorista.", 'error');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      showToast("Erro de conexão ao excluir motorista.", 'error');
+      showToast(err.message || "Erro de conexão ao excluir motorista.", 'error');
+    } finally {
+      setDeletingDriverId(null);
     }
   };
 
@@ -564,10 +570,15 @@ export default function Drivers({ data, onUpdate }: DriversProps) {
                     </button>
                     <button
                       onClick={() => handleDeleteDriver(driver.id)}
-                      className="p-2 border border-slate-200 hover:border-rose-200 hover:bg-rose-50/50 hover:text-rose-600 rounded-xl text-slate-400 transition-all flex items-center justify-center"
+                      disabled={deletingDriverId === driver.id}
+                      className="p-2 border border-slate-200 hover:border-rose-200 hover:bg-rose-50/50 hover:text-rose-600 rounded-xl text-slate-400 transition-all flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                       title="Excluir Motorista"
                     >
-                      <Trash2 size={14} />
+                      {deletingDriverId === driver.id ? (
+                        <Loader2 size={14} className="animate-spin text-rose-600" />
+                      ) : (
+                        <Trash2 size={14} />
+                      )}
                     </button>
                   </div>
                 </div>
