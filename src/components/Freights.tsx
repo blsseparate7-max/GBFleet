@@ -317,7 +317,7 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
   const totalTolls = filteredFreights.reduce((acc: number, f: any) => acc + (f.pedagio || 0), 0);
   const totalFuel = filteredFreights.reduce((acc: number, f: any) => acc + (f.combustivel || 0), 0);
   const totalArla = filteredFreights.reduce((acc: number, f: any) => acc + (f.valorArla || 0), 0);
-  const totalDriver = filteredFreights.reduce((acc: number, f: any) => acc + (f.motorista || 0), 0);
+  const totalDriver = filteredFreights.reduce((acc: number, f: any) => acc + (f.motorista || 0) + (f.valorDiaria || 0) + (f.valorAlmoco || 0), 0);
   const totalOthers = filteredFreights.reduce((acc: number, f: any) => acc + (f.outrasDespesas || 0), 0);
 
   const totalCosts = totalTolls + totalFuel + totalArla + totalDriver + totalOthers;
