@@ -24,7 +24,8 @@ import {
   RefreshCw,
   Navigation,
   Map,
-  Loader2
+  Loader2,
+  Scale
 } from 'lucide-react';
 import { cn, maskBRL, unmaskBRL, formatDateBR } from '../lib/utils';
 import Modal from './ui/Modal';
@@ -236,6 +237,8 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
   // Freight calculation base: 'fixo' | 'quilo' | 'cabeca'
   const [tipoCalculo, setTipoCalculo] = useState('fixo');
   const [valorPorKmFixo, setValorPorKmFixo] = useState('');
+  const [valorPorKmQuilo, setValorPorKmQuilo] = useState('');
+  const [valorPorKmCabeca, setValorPorKmCabeca] = useState('');
   const [valorDiaria, setValorDiaria] = useState('');
   const [valorAlmoco, setValorAlmoco] = useState('');
   const [pesoTotalKg, setPesoTotalKg] = useState('');
@@ -382,10 +385,20 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
     if (freight.distanciaKm && freight.valorBruto) {
       const d = parseFloat(freight.distanciaKm);
       const v = parseFloat(freight.valorBruto);
-      if (d > 0 && v > 0) setValorPorKmFixo((v / d).toFixed(2));
-      else setValorPorKmFixo('');
+      if (d > 0 && v > 0) {
+        const calculatedPerKm = (v / d).toFixed(2);
+        setValorPorKmFixo(calculatedPerKm);
+        setValorPorKmQuilo(calculatedPerKm);
+        setValorPorKmCabeca(calculatedPerKm);
+      } else {
+        setValorPorKmFixo('');
+        setValorPorKmQuilo('');
+        setValorPorKmCabeca('');
+      }
     } else {
       setValorPorKmFixo('');
+      setValorPorKmQuilo('');
+      setValorPorKmCabeca('');
     }
     setIsModalOpen(true);
   };
@@ -503,6 +516,9 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
         setValorPorKg('');
         setQuantidadeCabecas('');
         setValorPorCabeca('');
+        setValorPorKmFixo('');
+        setValorPorKmQuilo('');
+        setValorPorKmCabeca('');
         showToast(selectedFreight ? "✓ Frete atualizado com sucesso no banco de dados!" : "✓ Frete gravado com sucesso no banco de dados!", 'success');
         onUpdate();
       } else {
@@ -563,6 +579,8 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
             setQuantidadeCabecas('');
             setValorPorCabeca('');
             setValorPorKmFixo('');
+            setValorPorKmQuilo('');
+            setValorPorKmCabeca('');
             setIsModalOpen(true);
           }}
           className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-3 rounded-2xl text-sm font-bold flex items-center gap-2 shadow-lg shadow-blue-100 transition-all self-stretch sm:self-auto justify-center"
@@ -1282,7 +1300,18 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
                     type="number"
                     placeholder="Ex: 15000"
                     value={pesoTotalKg}
-                    onChange={(e) => handlePesoChange(e.target.value, valorPorKg)}
+                    onChange={(e) => {
+                      const newWeight = e.target.value;
+                      handlePesoChange(newWeight, valorPorKg);
+                      // Auto-recalcula a sugestão se o simulador tiver uma meta preenchida
+                      const dist = parseFloat(distanciaKm || '0');
+                      const peso = parseFloat(newWeight || '0');
+                      const numVal = parseFloat(valorPorKmQuilo || '0');
+                      if (dist > 0 && peso > 0 && numVal > 0) {
+                        const suggestedKgRate = (dist * numVal) / peso;
+                        handlePesoChange(newWeight, suggestedKgRate.toFixed(4));
+                      }
+                    }}
                     className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:border-blue-500 transition-colors text-sm"
                   />
                 </div>
@@ -1302,6 +1331,95 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
                     />
                   </div>
                 </div>
+
+                {pesoTotalKg && parseFloat(pesoTotalKg) > 0 && valorBruto && parseFloat(valorBruto) > 0 && (
+                  <div className="col-span-2 bg-emerald-50/70 border border-emerald-100 p-3.5 rounded-2xl flex items-center justify-between gap-3 text-emerald-950 mt-1">
+                    <div className="flex items-center gap-2.5">
+                      <span className="p-2.5 bg-emerald-100 text-emerald-700 rounded-xl flex items-center justify-center">
+                        <Scale size={18} />
+                      </span>
+                      <div>
+                        <span className="block text-[10px] font-bold text-emerald-800 uppercase tracking-wider">Auditoria de Custo da Carga</span>
+                        <span className="text-sm font-extrabold text-emerald-950 font-mono">
+                          R$ {parseFloat(valorBruto).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ÷ {parseFloat(pesoTotalKg).toLocaleString('pt-BR')} Kg = <span className="text-emerald-700 font-bold bg-emerald-100/60 px-2 py-0.5 rounded-md border border-emerald-200 ml-1">R$ {(parseFloat(valorBruto) / parseFloat(pesoTotalKg)).toLocaleString('pt-BR', { minimumFractionDigits: 3, maximumFractionDigits: 4 })} / kg</span>
+                        </span>
+                      </div>
+                    </div>
+                    <span className="hidden sm:inline-block text-[10px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-100/80 px-2.5 py-1 rounded-full border border-emerald-200">
+                      Custo Efetivo por Kg
+                    </span>
+                  </div>
+                )}
+
+                {/* Simulador por Peso */}
+                <div className="col-span-2 bg-blue-50/60 border border-blue-150 p-4 rounded-2xl space-y-3 mt-1">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-xs font-bold text-blue-900 uppercase tracking-wider flex items-center gap-1.5">
+                      <Calculator size={15} className="text-blue-600" />
+                      Simulador Inteligente: Descobrir preço por Kg com base no rendimento por KM
+                    </span>
+                    <span className="text-[10px] font-bold text-blue-800 bg-blue-100/80 px-2.5 py-1 rounded-full border border-blue-200">
+                      Distância Total: {distanciaKm || 0} km ({tipoViagem === 'ida_volta' ? 'Ida e Volta' : 'Somente Ida'})
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                        Valor por KM Desejado (R$/km)
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-3 top-2.5 text-slate-400 font-bold text-xs">R$</span>
+                        <input
+                          type="text"
+                          placeholder="Ex: 8,50"
+                          value={valorPorKmQuilo ? maskBRL(valorPorKmQuilo) : ""}
+                          onChange={(e) => {
+                            const masked = maskBRL(e.target.value);
+                            const val = masked ? String(unmaskBRL(masked)) : "";
+                            setValorPorKmQuilo(val);
+                            const dist = parseFloat(distanciaKm || '0');
+                            const peso = parseFloat(pesoTotalKg || '0');
+                            const numVal = parseFloat(val || '0');
+                            if (dist > 0 && peso > 0 && numVal > 0) {
+                              const suggestedKgRate = (dist * numVal) / peso;
+                              handlePesoChange(pesoTotalKg, suggestedKgRate.toFixed(4));
+                            }
+                          }}
+                          className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-blue-500 text-xs font-bold font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="bg-white p-2.5 border border-slate-200 rounded-xl flex items-center justify-between gap-2">
+                      <div>
+                        <span className="block text-[10px] font-bold text-slate-400 uppercase">Preço por Kg Sugerido</span>
+                        <span className="text-xs font-extrabold text-blue-900 font-mono">
+                          {distanciaKm && parseFloat(distanciaKm) > 0 && pesoTotalKg && parseFloat(pesoTotalKg) > 0 && valorPorKmQuilo && parseFloat(valorPorKmQuilo) > 0
+                            ? `R$ ${((parseFloat(distanciaKm) * parseFloat(valorPorKmQuilo)) / parseFloat(pesoTotalKg)).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })} / kg`
+                            : 'R$ 0,00 / kg'}
+                        </span>
+                      </div>
+                      {distanciaKm && parseFloat(distanciaKm) > 0 && pesoTotalKg && parseFloat(pesoTotalKg) > 0 && valorPorKmQuilo && parseFloat(valorPorKmQuilo) > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const dist = parseFloat(distanciaKm);
+                            const peso = parseFloat(pesoTotalKg);
+                            const val = parseFloat(valorPorKmQuilo);
+                            if (dist > 0 && peso > 0 && val > 0) {
+                              const suggestedKgRate = (dist * val) / peso;
+                              handlePesoChange(pesoTotalKg, suggestedKgRate.toFixed(4));
+                            }
+                          }}
+                          className="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[10px] font-bold transition-colors shadow-sm"
+                        >
+                          Aplicar Taxa
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
               </>
             )}
 
@@ -1313,7 +1431,18 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
                     type="number"
                     placeholder="Ex: 80"
                     value={quantidadeCabecas}
-                    onChange={(e) => handleCabecasChange(e.target.value, valorPorCabeca)}
+                    onChange={(e) => {
+                      const newCabecas = e.target.value;
+                      handleCabecasChange(newCabecas, valorPorCabeca);
+                      // Auto-recalcula a sugestão se o simulador tiver uma meta preenchida
+                      const dist = parseFloat(distanciaKm || '0');
+                      const cabecas = parseFloat(newCabecas || '0');
+                      const numVal = parseFloat(valorPorKmCabeca || '0');
+                      if (dist > 0 && cabecas > 0 && numVal > 0) {
+                        const suggestedCabecaRate = (dist * numVal) / cabecas;
+                        handleCabecasChange(newCabecas, suggestedCabecaRate.toFixed(2));
+                      }
+                    }}
                     className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:border-blue-500 transition-colors text-sm"
                   />
                 </div>
@@ -1331,6 +1460,76 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
                       }}
                       className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:border-blue-500 transition-colors text-sm font-bold font-mono"
                     />
+                  </div>
+                </div>
+
+                {/* Simulador por Cabeça */}
+                <div className="col-span-2 bg-blue-50/60 border border-blue-150 p-4 rounded-2xl space-y-3 mt-1">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-xs font-bold text-blue-900 uppercase tracking-wider flex items-center gap-1.5">
+                      <Calculator size={15} className="text-blue-600" />
+                      Simulador Inteligente: Descobrir preço por Cabeça com base no rendimento por KM
+                    </span>
+                    <span className="text-[10px] font-bold text-blue-800 bg-blue-100/80 px-2.5 py-1 rounded-full border border-blue-200">
+                      Distância Total: {distanciaKm || 0} km ({tipoViagem === 'ida_volta' ? 'Ida e Volta' : 'Somente Ida'})
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                        Valor por KM Desejado (R$/km)
+                      </label>
+                      <div className="relative">
+                        <span className="absolute left-3 top-2.5 text-slate-400 font-bold text-xs">R$</span>
+                        <input
+                          type="text"
+                          placeholder="Ex: 8,50"
+                          value={valorPorKmCabeca ? maskBRL(valorPorKmCabeca) : ""}
+                          onChange={(e) => {
+                            const masked = maskBRL(e.target.value);
+                            const val = masked ? String(unmaskBRL(masked)) : "";
+                            setValorPorKmCabeca(val);
+                            const dist = parseFloat(distanciaKm || '0');
+                            const cabecas = parseFloat(quantidadeCabecas || '0');
+                            const numVal = parseFloat(val || '0');
+                            if (dist > 0 && cabecas > 0 && numVal > 0) {
+                              const suggestedCabecaRate = (dist * numVal) / cabecas;
+                              handleCabecasChange(quantidadeCabecas, suggestedCabecaRate.toFixed(2));
+                            }
+                          }}
+                          className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-blue-500 text-xs font-bold font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="bg-white p-2.5 border border-slate-200 rounded-xl flex items-center justify-between gap-2">
+                      <div>
+                        <span className="block text-[10px] font-bold text-slate-400 uppercase">Preço por Cabeça Sugerido</span>
+                        <span className="text-xs font-extrabold text-blue-900 font-mono">
+                          {distanciaKm && parseFloat(distanciaKm) > 0 && quantidadeCabecas && parseFloat(quantidadeCabecas) > 0 && valorPorKmCabeca && parseFloat(valorPorKmCabeca) > 0
+                            ? `R$ ${((parseFloat(distanciaKm) * parseFloat(valorPorKmCabeca)) / parseFloat(quantidadeCabecas)).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} / cabeça`
+                            : 'R$ 0,00 / cabeça'}
+                        </span>
+                      </div>
+                      {distanciaKm && parseFloat(distanciaKm) > 0 && quantidadeCabecas && parseFloat(quantidadeCabecas) > 0 && valorPorKmCabeca && parseFloat(valorPorKmCabeca) > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const dist = parseFloat(distanciaKm);
+                            const cabecas = parseFloat(quantidadeCabecas);
+                            const val = parseFloat(valorPorKmCabeca);
+                            if (dist > 0 && cabecas > 0 && val > 0) {
+                              const suggestedCabecaRate = (dist * val) / cabecas;
+                              handleCabecasChange(quantidadeCabecas, suggestedCabecaRate.toFixed(2));
+                            }
+                          }}
+                          className="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[10px] font-bold transition-colors shadow-sm"
+                        >
+                          Aplicar Taxa
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               </>
@@ -1445,7 +1644,10 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
                     const dist = parseFloat(distanciaKm || '0');
                     const numVal = parseFloat(val || '0');
                     if (dist > 0 && numVal > 0) {
-                      setValorPorKmFixo((numVal / dist).toFixed(2));
+                      const calculatedKm = (numVal / dist).toFixed(2);
+                      setValorPorKmFixo(calculatedKm);
+                      setValorPorKmQuilo(calculatedKm);
+                      setValorPorKmCabeca(calculatedKm);
                     }
                   }}
                   className={`w-full pl-10 pr-4 py-3 border border-slate-200 rounded-2xl focus:outline-none focus:border-blue-500 transition-colors text-sm font-bold font-mono ${
