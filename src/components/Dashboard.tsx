@@ -156,12 +156,35 @@ export default function Dashboard({ data, onNavigate }: { data: any, onNavigate?
     });
   }, [data?.maintenance_alerts, dashboardView, filterMonth, filterYear]);
 
-  // 1. Basic Stats Calculation
-  const totalFuel = filteredFuelLogs.reduce((acc: number, curr: any) => acc + curr.valor + (curr.valorArla || 0), 0);
-  const totalExpenses = filteredExpenses
-    .filter((e: any) => e.documento !== "Auto-Abastecimento" && e.documento !== "Auto-Abastecimento-Arla")
-    .reduce((acc: number, curr: any) => acc + curr.valor, 0);
-  const totalSpent = totalFuel + totalExpenses;
+  // 1. Cost Category Breakdown & Basic Stats Calculation
+  const realFuelS10 = filteredFuelLogs.filter((l: any) => !l.tipoDiesel || l.tipoDiesel === 'S10').reduce((acc: number, curr: any) => acc + curr.valor, 0);
+  const manualDieselS10 = filteredExpenses.filter((e: any) => isCombustivelByTipo(e.tipo) && e.documento !== "Auto-Abastecimento" && !e.tipo?.toLowerCase().includes("s500")).reduce((acc: number, curr: any) => acc + curr.valor, 0);
+  const totalDieselS10 = realFuelS10 + manualDieselS10;
+
+  const realFuelS500 = filteredFuelLogs.filter((l: any) => l.tipoDiesel === 'S500').reduce((acc: number, curr: any) => acc + curr.valor, 0);
+  const manualDieselS500 = filteredExpenses.filter((e: any) => isCombustivelByTipo(e.tipo) && e.documento !== "Auto-Abastecimento" && e.tipo?.toLowerCase().includes("s500")).reduce((acc: number, curr: any) => acc + curr.valor, 0);
+  const totalDieselS500 = realFuelS500 + manualDieselS500;
+
+  const realFuelArla = filteredFuelLogs.reduce((acc: number, curr: any) => acc + (curr.valorArla || 0), 0);
+  const manualArla = filteredExpenses.filter((e: any) => isArlaByTipo(e.tipo) && e.documento !== "Auto-Abastecimento-Arla").reduce((acc: number, curr: any) => acc + curr.valor, 0);
+  const totalArla = realFuelArla + manualArla;
+
+  const pedagiosValue = filteredExpenses.filter((e: any) => isPedagioByTipo(e.tipo)).reduce((acc: number, curr: any) => acc + curr.valor, 0);
+
+  const realMaint = filteredMaintenanceAlerts.filter((m: any) => m.status === 'Realizado' || m.status === 'Realizada').reduce((acc: number, m: any) => acc + Number(m.custo || 0), 0);
+  const manualMaint = filteredExpenses.filter((e: any) => isMaintenanceByTipo(e.tipo) && !e.documento?.startsWith("Auto-Manutenção")).reduce((acc: number, curr: any) => acc + curr.valor, 0);
+  const manutencoesValue = realMaint + manualMaint;
+
+  const outrosValue = filteredExpenses.filter((e: any) => 
+    !isPedagioByTipo(e.tipo) && 
+    !isMaintenanceByTipo(e.tipo) && 
+    !isCombustivelByTipo(e.tipo) &&
+    !isArlaByTipo(e.tipo) &&
+    e.documento !== "Auto-Abastecimento" &&
+    e.documento !== "Auto-Abastecimento-Arla"
+  ).reduce((acc: number, curr: any) => acc + curr.valor, 0);
+
+  const totalSpent = totalDieselS10 + totalDieselS500 + totalArla + pedagiosValue + outrosValue;
 
   const totalIncome = filteredCashFlow
     .filter((f: any) => f.tipo === 'entrada')
@@ -180,32 +203,6 @@ export default function Dashboard({ data, onNavigate }: { data: any, onNavigate?
   // Driver summary count
   const totalDriversCount = data.drivers.length;
   const travelingDriversCount = data.drivers.filter((d: any) => d.status === 'Em Viagem').length;
-
-  // 2. Cost Category Breakdown for Pie Chart
-  const realFuelS10 = filteredFuelLogs.filter((l: any) => !l.tipoDiesel || l.tipoDiesel === 'S10').reduce((acc: number, curr: any) => acc + curr.valor, 0);
-  const manualDieselS10 = filteredExpenses.filter((e: any) => isCombustivelByTipo(e.tipo) && e.documento !== "Auto-Abastecimento" && !e.tipo?.toLowerCase().includes("s500")).reduce((acc: number, curr: any) => acc + curr.valor, 0);
-  const totalDieselS10 = realFuelS10 + manualDieselS10;
-
-  const realFuelS500 = filteredFuelLogs.filter((l: any) => l.tipoDiesel === 'S500').reduce((acc: number, curr: any) => acc + curr.valor, 0);
-  const manualDieselS500 = filteredExpenses.filter((e: any) => isCombustivelByTipo(e.tipo) && e.documento !== "Auto-Abastecimento" && e.tipo?.toLowerCase().includes("s500")).reduce((acc: number, curr: any) => acc + curr.valor, 0);
-  const totalDieselS500 = realFuelS500 + manualDieselS500;
-
-  const realFuelArla = filteredFuelLogs.reduce((acc: number, curr: any) => acc + (curr.valorArla || 0), 0);
-  const manualArla = filteredExpenses.filter((e: any) => isArlaByTipo(e.tipo) && e.documento !== "Auto-Abastecimento-Arla").reduce((acc: number, curr: any) => acc + curr.valor, 0);
-  const totalArla = realFuelArla + manualArla;
-
-  const pedagiosValue = filteredExpenses.filter((e: any) => isPedagioByTipo(e.tipo)).reduce((acc: number, curr: any) => acc + curr.valor, 0);
-  const realMaint = filteredMaintenanceAlerts.filter((m: any) => m.status === 'Realizado' || m.status === 'Realizada').reduce((acc: number, m: any) => acc + Number(m.custo || 0), 0);
-  const manualMaint = filteredExpenses.filter((e: any) => isMaintenanceByTipo(e.tipo) && !e.documento?.startsWith("Auto-Manutenção")).reduce((acc: number, curr: any) => acc + curr.valor, 0);
-  const manutencoesValue = realMaint + manualMaint;
-  const outrosValue = filteredExpenses.filter((e: any) => 
-    !isPedagioByTipo(e.tipo) && 
-    !isMaintenanceByTipo(e.tipo) && 
-    !isCombustivelByTipo(e.tipo) &&
-    !isArlaByTipo(e.tipo) &&
-    e.documento !== "Auto-Abastecimento" &&
-    e.documento !== "Auto-Abastecimento-Arla"
-  ).reduce((acc: number, curr: any) => acc + curr.valor, 0);
 
   const costBreakdownData = [
     { name: 'Diesel S10', value: totalDieselS10, color: '#f59e0b' },
@@ -549,7 +546,7 @@ export default function Dashboard({ data, onNavigate }: { data: any, onNavigate?
           trendUp={totalSpent < totalIncome * 0.7}
           icon={Fuel}
           color="rose"
-          subtitle={`Diesel: R$ ${(totalDieselS10 + totalDieselS500).toLocaleString('pt-BR', { maximumFractionDigits: 0 })} | Pedágios: R$ ${pedagiosValue.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} | Outros: R$ ${(manutencoesValue + outrosValue).toLocaleString('pt-BR', { maximumFractionDigits: 0 })}`}
+          subtitle={`Diesel: R$ ${(totalDieselS10 + totalDieselS500).toLocaleString('pt-BR', { maximumFractionDigits: 0 })} | Arla: R$ ${totalArla.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} | Pedágios: R$ ${pedagiosValue.toLocaleString('pt-BR', { maximumFractionDigits: 0 })} | Outros: R$ ${outrosValue.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}`}
         />
         <StatCard 
           title="Investimento em Manutenção" 

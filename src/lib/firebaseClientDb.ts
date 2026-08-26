@@ -131,10 +131,16 @@ export async function persistDB() {
       // Notify reactive listeners across the app so all UI views update immediately
       notifyListeners();
 
-      // 4) Persist clean, tiny database document to Firestore
+      // 4) Persist clean, tiny database document to Firestore with a 3.5s timeout race
       const docRef = doc(firestore, "system_state", "gbfleet_db");
-      await setDoc(docRef, liveDb);
-      console.log("[Firebase Client SDK] Direct write to Firestore successfully completed.");
+      const writePromise = setDoc(docRef, liveDb);
+      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Firestore write timeout")), 3500));
+      try {
+        await Promise.race([writePromise, timeoutPromise]);
+        console.log("[Firebase Client SDK] Direct write to Firestore successfully completed.");
+      } catch (timeoutErr) {
+        console.warn("[Firebase Client SDK] Firestore write took too long or offline, saved locally.", timeoutErr);
+      }
     } catch (err: any) {
       console.error("[Firebase Client SDK] Error: Failed to persist directly to Firestore.", err.message);
     }
