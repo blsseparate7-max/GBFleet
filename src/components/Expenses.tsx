@@ -23,7 +23,8 @@ import {
   Building,
   Edit,
   Eye,
-  Loader2
+  Loader2,
+  Printer
 } from 'lucide-react';
 import Modal from './ui/Modal';
 import { cn, maskBRL, unmaskBRL, formatDateBR } from '../lib/utils';
@@ -138,6 +139,20 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
     empresaDespesa: '',
     expenseCompanyId: ''
   });
+
+  // Print & Reports States for Administrative Entries
+  const [isPrintBatchModalOpen, setIsPrintBatchModalOpen] = useState(false);
+  const [selectedExpenseForPrint, setSelectedExpenseForPrint] = useState<any | null>(null);
+  const [isPrintIndividualModalOpen, setIsPrintIndividualModalOpen] = useState(false);
+
+  const openPrintIndividualReceipt = (exp: any) => {
+    setSelectedExpenseForPrint(exp);
+    setIsPrintIndividualModalOpen(true);
+  };
+
+  const handlePrintDocument = () => {
+    window.print();
+  };
 
   // Registered Companies states
   const [isCompanyModalOpen, setIsCompanyModalOpen] = useState(false);
@@ -788,6 +803,16 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
     manualExpensesFiltered: []
   };
 
+  // Derived metrics for Administrative Entries (Lançamentos Administrativos)
+  const manualExpensesList = currentDRE.manualExpensesFiltered || [];
+  const totalManualExpenses = useMemo(() => {
+    return manualExpensesList.reduce((acc: number, item: any) => acc + (Number(item.valor) || 0), 0);
+  }, [manualExpensesList]);
+  const manualExpensesCount = manualExpensesList.length;
+  const trucksWithManualCount = useMemo(() => {
+    return new Set(manualExpensesList.map((item: any) => item.truckId).filter(Boolean)).size;
+  }, [manualExpensesList]);
+
   return (
     <div className="space-y-6">
       {/* Dynamic Header Block with Filtering controls */}
@@ -1249,19 +1274,75 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
 
       {/* Manual support and administrative expenditures table tab */}
       {activeSubTab === 'manual' && (
-        <div className="space-y-6">
-          <div className="flex justify-between items-center">
+        <div className="space-y-5">
+          {/* Header com Ações */}
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
             <div>
               <h3 className="text-lg font-bold text-slate-800">Lançamentos de Controles Administrativos</h3>
-              <p className="text-xs text-slate-500">Lançamento de outras e despesas diversas gerais administrativas da frota.</p>
+              <p className="text-xs text-slate-500">Lançamento de outras despesas operacionais e custos gerais administrativos da frota.</p>
             </div>
-            <button 
-              onClick={() => setIsModalOpen(true)}
-              className="bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200"
-            >
-              <Plus size={16} />
-              Nova Despesa
-            </button>
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              <button 
+                onClick={() => setIsPrintBatchModalOpen(true)}
+                disabled={manualExpensesList.length === 0}
+                className="flex-1 sm:flex-initial px-3.5 py-2 rounded-xl text-xs font-bold border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 flex items-center justify-center gap-1.5 transition-all shadow-xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                title={manualExpensesList.length === 0 ? "Nenhum lançamento no filtro atual para imprimir" : "Imprimir Extrato Completo de Lançamentos"}
+              >
+                <Printer size={15} className="text-slate-600" />
+                <span>Imprimir Extrato ({manualExpensesCount})</span>
+              </button>
+              <button 
+                onClick={() => setIsModalOpen(true)}
+                className="flex-1 sm:flex-initial bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 hover:bg-blue-700 transition-colors shadow-md shadow-blue-200 cursor-pointer"
+              >
+                <Plus size={16} />
+                <span>Nova Despesa</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Mini-Card Resumo dos Lançamentos Administrativos */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 sm:gap-4 bg-gradient-to-br from-slate-900 via-slate-850 to-slate-900 text-white p-3.5 sm:p-4 rounded-2xl border border-slate-800 shadow-sm">
+            {/* Card 1: Total Lançado */}
+            <div className="flex items-center gap-2.5 sm:gap-3.5">
+              <div className="w-10 h-10 rounded-xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center text-rose-400 shrink-0">
+                <DollarSign size={20} />
+              </div>
+              <div className="min-w-0">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block truncate">Total Lançado</span>
+                <span className="text-sm sm:text-base font-black font-mono text-rose-300 block truncate">
+                  R$ {totalManualExpenses.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              </div>
+            </div>
+
+            {/* Card 2: Quantidade de Registros */}
+            <div className="flex items-center gap-2.5 sm:gap-3.5 border-t sm:border-t-0 sm:border-l border-slate-800/80 pt-2.5 sm:pt-0 sm:pl-4">
+              <div className="w-10 h-10 rounded-xl bg-blue-500/15 border border-blue-500/30 flex items-center justify-center text-blue-400 shrink-0">
+                <Receipt size={18} />
+              </div>
+              <div className="min-w-0">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block truncate">Lançamentos</span>
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-sm sm:text-base font-black text-white font-mono">{manualExpensesCount}</span>
+                  <span className="text-[11px] text-slate-400 truncate">itens registrados</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Card 3: Veículos Impactados */}
+            <div className="flex items-center gap-2.5 sm:gap-3.5 border-t sm:border-t-0 sm:border-l border-slate-800/80 pt-2.5 sm:pt-0 sm:pl-4">
+              <div className="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
+                <Truck size={18} />
+              </div>
+              <div className="min-w-0">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block truncate">Caminhões</span>
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-sm sm:text-base font-black text-white font-mono">{trucksWithManualCount}</span>
+                  <span className="text-[11px] text-slate-400 truncate">veículos atendidos</span>
+                </div>
+              </div>
+            </div>
           </div>
 
           {/* Tabela de Lançamentos - Modo Desktop */}
@@ -1327,6 +1408,13 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
                         </td>
                         <td className="px-6 py-4 text-center">
                           <div className="flex items-center justify-center gap-1.5">
+                            <button
+                              onClick={() => openPrintIndividualReceipt(exp)}
+                              className="p-1 px-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-lg transition-colors border border-slate-200 cursor-pointer"
+                              title="Imprimir Recibo / Comprovante Individual"
+                            >
+                              <Printer size={13} />
+                            </button>
                             <button
                               onClick={() => openExpenseDetail(exp)}
                               className="p-1 px-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors border border-blue-100 cursor-pointer"
@@ -1398,6 +1486,14 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
                   )}
 
                   <div className="flex gap-2 pt-1 font-bold">
+                    <button
+                      onClick={() => openPrintIndividualReceipt(exp)}
+                      className="py-2 px-3 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-xl transition-all border border-slate-200 text-center text-[11px] flex items-center justify-center gap-1 cursor-pointer shadow-2xs"
+                      title="Imprimir Recibo Individual"
+                    >
+                      <Printer size={13} />
+                      <span>Recibo</span>
+                    </button>
                     <button
                       onClick={() => openExpenseDetail(exp)}
                       className="flex-1 py-2 px-3 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-xl transition-all border border-blue-150 text-center text-[11px] flex items-center justify-center gap-1 cursor-pointer shadow-2xs"
@@ -2203,16 +2299,24 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
                   </div>
                 )}
 
-                <div className="flex gap-3 pt-4 font-bold">
+                <div className="flex flex-wrap sm:flex-nowrap gap-2 sm:gap-3 pt-4 font-bold">
                   <button 
                     onClick={() => { setIsDetailModalOpen(false); setSelectedExpenseDetail(null); }}
-                    className="flex-1 px-4 py-2.5 rounded-xl text-slate-600 hover:bg-slate-100 border border-slate-200 transition-colors"
+                    className="flex-1 px-4 py-2.5 rounded-xl text-slate-600 hover:bg-slate-100 border border-slate-200 transition-colors text-xs"
                   >
                     Fechar Detalhes
                   </button>
                   <button 
+                    onClick={() => openPrintIndividualReceipt(selectedExpenseDetail)}
+                    className="px-4 py-2.5 rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-250 transition-colors flex items-center justify-center gap-1.5 text-xs cursor-pointer shadow-2xs"
+                    title="Imprimir Comprovante / Recibo Individual"
+                  >
+                    <Printer size={14} />
+                    <span>Imprimir Recibo</span>
+                  </button>
+                  <button 
                     onClick={() => setIsEditingExpense(true)}
-                    className="flex-1 px-4 py-2.5 rounded-xl bg-blue-600 text-white hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200 flex items-center justify-center gap-1.5"
+                    className="flex-1 px-4 py-2.5 rounded-xl bg-blue-600 text-white hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200 flex items-center justify-center gap-1.5 text-xs"
                   >
                     <Edit size={14} />
                     Editar Lançamento
@@ -2725,6 +2829,360 @@ export default function Expenses({ data, onUpdate }: { data: any, onUpdate: () =
             </div>
           </div>
         </Modal>
+      )}
+
+      {/* Modal de Pré-Visualização e Impressão - Extrato de Todos os Lançamentos */}
+      {isPrintBatchModalOpen && (
+        <div className="fixed inset-0 z-[120] bg-slate-900/75 backdrop-blur-xs flex flex-col justify-start items-center p-2 sm:p-6 overflow-y-auto">
+          {/* Barra de Ações Superior (Não sai na impressão) */}
+          <div className="w-full max-w-4xl bg-white border border-slate-200 rounded-2xl shadow-xl p-3.5 mb-4 flex items-center justify-between no-print shrink-0">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold">
+                <Printer size={16} />
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-slate-800 leading-tight">Extrato de Lançamentos Administrativos</h4>
+                <p className="text-[10px] text-slate-500">Documento formatado para folha A4 com totalizadores contábeis</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setIsPrintBatchModalOpen(false)}
+                className="px-3 py-1.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 text-xs font-bold transition cursor-pointer"
+              >
+                Fechar
+              </button>
+              <button
+                onClick={handlePrintDocument}
+                className="px-4 py-1.5 rounded-xl bg-blue-600 text-white hover:bg-blue-700 text-xs font-bold flex items-center gap-1.5 transition shadow-sm cursor-pointer"
+              >
+                <Printer size={14} />
+                <span>Imprimir Agora (Ctrl+P)</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Folha de Impressão A4 */}
+          <div className="w-full max-w-4xl bg-white text-slate-900 rounded-2xl shadow-2xl border border-slate-200 p-6 sm:p-10 printable-area font-sans">
+            {/* Cabeçalho Oficial */}
+            <div className="border-b-2 border-slate-800 pb-4 mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-end gap-3">
+              <div className="flex items-center gap-4">
+                {data?.company?.logoUrl && (
+                  <div 
+                    className="shrink-0 flex items-center justify-center overflow-hidden" 
+                    style={{ height: `${data?.company?.logoSize || 56}px`, maxWidth: '140px' }}
+                  >
+                    <img 
+                      src={data.company.logoUrl} 
+                      alt="Logo" 
+                      className="max-h-full max-w-full object-contain"
+                    />
+                  </div>
+                )}
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-widest text-blue-600 bg-blue-50 px-2 py-0.5 rounded">
+                    GBFleet AI • Gestão de Frotas
+                  </span>
+                  <h1 className="text-xl sm:text-2xl font-black text-slate-900 mt-1">
+                    {data?.company?.nome || "GBFleet Transportes"}
+                  </h1>
+                  {data?.company?.cnpj && (
+                    <p className="text-xs text-slate-500 font-medium">CNPJ: {data?.company?.cnpj}</p>
+                  )}
+                </div>
+              </div>
+              <div className="text-left sm:text-right text-xs space-y-0.5 text-slate-600">
+                <p className="font-bold text-slate-800 uppercase tracking-wider text-[11px]">Extrato de Despesas Administrativas</p>
+                <p className="text-[11px]">
+                  <strong>Competência:</strong> {filterMonth === 'all' ? 'Todos os Períodos' : filterMonth}
+                </p>
+                <p className="text-[11px]">
+                  <strong>Filtro Veículo:</strong> {filterPlaca === 'all' ? 'Toda a Frota' : filterPlaca}
+                </p>
+                <p className="text-[10px] text-slate-400">
+                  Emitido em: {new Date().toLocaleDateString('pt-BR')} às {new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                </p>
+              </div>
+            </div>
+
+            {/* Resumo Consolidado */}
+            <div className="grid grid-cols-3 gap-3 p-3.5 bg-slate-50 rounded-xl border border-slate-200 mb-6 avoid-break">
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-500 block">Total de Despesas</span>
+                <span className="text-base sm:text-lg font-black font-mono text-red-650">
+                  R$ {totalManualExpenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-500 block">Lançamentos</span>
+                <span className="text-base sm:text-lg font-bold font-mono text-slate-800">
+                  {manualExpensesCount} itens
+                </span>
+              </div>
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-500 block">Caminhões Atendidos</span>
+                <span className="text-base sm:text-lg font-bold font-mono text-slate-800">
+                  {trucksWithManualCount} veículos
+                </span>
+              </div>
+            </div>
+
+            {/* Tabela de Lançamentos Formatada para Impressão */}
+            <table className="w-full text-left border-collapse text-xs mb-6">
+              <thead>
+                <tr className="border-b-2 border-slate-300 bg-slate-100/70 text-[10px] uppercase font-black text-slate-600">
+                  <th className="py-2.5 px-3">Data</th>
+                  <th className="py-2.5 px-3">Veículo</th>
+                  <th className="py-2.5 px-3">Categoria</th>
+                  <th className="py-2.5 px-3">Favorecido / Fornecedor</th>
+                  <th className="py-2.5 px-3">Observações / Detalhes</th>
+                  <th className="py-2.5 px-3 text-right">KM</th>
+                  <th className="py-2.5 px-3 text-right">Valor (R$)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200">
+                {manualExpensesList.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="py-8 text-center text-slate-400 italic">
+                      Nenhuma despesa para os filtros selecionados.
+                    </td>
+                  </tr>
+                ) : (
+                  [...manualExpensesList].reverse().map((exp: any, idx: number) => (
+                    <tr key={exp.id || idx} className="avoid-break text-[11px]">
+                      <td className="py-2 px-3 font-mono text-slate-700 whitespace-nowrap">
+                        {formatDateBR(exp.data)}
+                      </td>
+                      <td className="py-2 px-3 font-bold font-mono text-slate-900 whitespace-nowrap">
+                        {exp.truckId}
+                      </td>
+                      <td className="py-2 px-3 font-semibold text-slate-800">
+                        {exp.tipo}
+                      </td>
+                      <td className="py-2 px-3 text-slate-700">
+                        {exp.empresaDespesa || "-"}
+                      </td>
+                      <td className="py-2 px-3 text-slate-600 max-w-xs">
+                        {exp.obs || "-"}
+                      </td>
+                      <td className="py-2 px-3 text-right font-mono text-slate-600 whitespace-nowrap">
+                        {exp.km ? Number(exp.km).toLocaleString('pt-BR') : "-"}
+                      </td>
+                      <td className="py-2 px-3 text-right font-bold font-mono text-red-650 whitespace-nowrap">
+                        R$ {Number(exp.valor || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+              <tfoot>
+                <tr className="border-t-2 border-slate-800 bg-slate-50 font-black text-xs">
+                  <td colSpan={6} className="py-3 px-3 text-right uppercase tracking-wider text-slate-800">
+                    Total Geral dos Lançamentos:
+                  </td>
+                  <td className="py-3 px-3 text-right font-mono text-red-650 text-sm">
+                    R$ {totalManualExpenses.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+
+            {/* Rodapé e Assinatura */}
+            <div className="pt-8 border-t border-slate-200 avoid-break">
+              <div className="flex justify-between items-end text-xs text-slate-500 mb-8">
+                <div>
+                  <p>Relatório gerado pelo módulo contábil GBFleet AI.</p>
+                  <p className="text-[10px]">Autenticação de conferência: ID-{Date.now().toString(36).toUpperCase()}</p>
+                </div>
+                <div className="text-right">
+                  <p>Operador: {data?.currentUser?.nome || "Responsável Operacional"}</p>
+                </div>
+              </div>
+
+              <div className="flex justify-around items-center pt-8 border-t border-slate-200">
+                <div className="text-center w-64">
+                  <div className="border-t border-slate-400 pt-1.5">
+                    <p className="font-bold text-xs text-slate-800">Responsável Financeiro</p>
+                    <p className="text-[10px] text-slate-500">Conferência e Fechamento</p>
+                  </div>
+                </div>
+                <div className="text-center w-64">
+                  <div className="border-t border-slate-400 pt-1.5">
+                    <p className="font-bold text-xs text-slate-800">Diretoria / Gestão de Frota</p>
+                    <p className="text-[10px] text-slate-500">Aprovação Final</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Recibo Individual - Comprovante Avulso de Lançamento */}
+      {isPrintIndividualModalOpen && selectedExpenseForPrint && (
+        <div className="fixed inset-0 z-[120] bg-slate-900/75 backdrop-blur-xs flex flex-col justify-start items-center p-2 sm:p-6 overflow-y-auto">
+          {/* Barra de Ações Superior (Não sai na impressão) */}
+          <div className="w-full max-w-2xl bg-white border border-slate-200 rounded-2xl shadow-xl p-3.5 mb-4 flex items-center justify-between no-print shrink-0">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold">
+                <Receipt size={16} />
+              </div>
+              <div>
+                <h4 className="text-xs font-bold text-slate-800 leading-tight">Recibo / Comprovante Individual</h4>
+                <p className="text-[10px] text-slate-500">Recibo contábil formal com campo para assinaturas</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => { setIsPrintIndividualModalOpen(false); setSelectedExpenseForPrint(null); }}
+                className="px-3 py-1.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 text-xs font-bold transition cursor-pointer"
+              >
+                Fechar
+              </button>
+              <button
+                onClick={handlePrintDocument}
+                className="px-4 py-1.5 rounded-xl bg-blue-600 text-white hover:bg-blue-700 text-xs font-bold flex items-center gap-1.5 transition shadow-sm cursor-pointer"
+              >
+                <Printer size={14} />
+                <span>Imprimir Recibo (Ctrl+P)</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Folha de Recibo A4 / Meia Folha */}
+          <div className="w-full max-w-2xl bg-white text-slate-900 rounded-2xl shadow-2xl border border-slate-200 p-6 sm:p-10 printable-area font-sans">
+            {/* Cabeçalho */}
+            <div className="border-b-2 border-slate-800 pb-4 mb-6 flex justify-between items-start gap-4">
+              <div className="flex items-center gap-4">
+                {data?.company?.logoUrl && (
+                  <div 
+                    className="shrink-0 flex items-center justify-center overflow-hidden" 
+                    style={{ height: `${data?.company?.logoSize || 56}px`, maxWidth: '140px' }}
+                  >
+                    <img 
+                      src={data.company.logoUrl} 
+                      alt="Logo" 
+                      className="max-h-full max-w-full object-contain"
+                    />
+                  </div>
+                )}
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-widest text-blue-600 bg-blue-50 px-2 py-0.5 rounded">
+                    GBFleet AI • Comprovante de Despesa
+                  </span>
+                  <h1 className="text-xl font-black text-slate-900 mt-1">
+                    {data?.company?.nome || "GBFleet Transportes"}
+                  </h1>
+                  {data?.company?.cnpj && (
+                    <p className="text-xs text-slate-500 font-medium">CNPJ: {data?.company?.cnpj}</p>
+                  )}
+                </div>
+              </div>
+              <div className="text-right text-xs shrink-0">
+                <span className="inline-block bg-slate-100 border border-slate-300 px-2.5 py-1 rounded font-mono font-bold text-slate-800 text-[11px]">
+                  RECIBO #{selectedExpenseForPrint.id?.slice(-6)?.toUpperCase() || '000000'}
+                </span>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Data: <strong>{formatDateBR(selectedExpenseForPrint.data)}</strong>
+                </p>
+              </div>
+            </div>
+
+            {/* Destaque do Valor */}
+            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-2xl p-4 sm:p-5 mb-6 text-center">
+              <span className="text-[10px] font-black uppercase tracking-wider text-blue-600 block mb-1">
+                Valor Total da Despesa
+              </span>
+              <span className="text-2xl sm:text-3xl font-black font-mono text-slate-900 block">
+                R$ {Number(selectedExpenseForPrint.valor || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            </div>
+
+            {/* Detalhes do Lançamento */}
+            <div className="space-y-3 mb-6 text-xs">
+              <div className="grid grid-cols-2 gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100">
+                <div>
+                  <span className="text-[10px] font-bold uppercase text-slate-400 block">Caminhão / Veículo</span>
+                  <span className="font-bold text-slate-800 font-mono text-sm">
+                    {selectedExpenseForPrint.truckId}
+                    {(() => {
+                      const t = (data?.trucks || []).find((tr: any) => tr.placa === selectedExpenseForPrint.truckId);
+                      return t ? ` (${t.modelo})` : '';
+                    })()}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold uppercase text-slate-400 block">Tipo / Categoria</span>
+                  <span className="font-bold text-slate-800 text-sm">
+                    {selectedExpenseForPrint.tipo}
+                  </span>
+                </div>
+              </div>
+
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                <span className="text-[10px] font-bold uppercase text-slate-400 block">Favorecido / Fornecedor da Despesa</span>
+                <span className="font-bold text-slate-800 block text-xs mt-0.5">
+                  {selectedExpenseForPrint.empresaDespesa || "Não especificado"}
+                </span>
+                {(() => {
+                  const comp = (data?.expense_companies || []).find((ec: any) => ec.id === selectedExpenseForPrint.expenseCompanyId || ec.nome === selectedExpenseForPrint.empresaDespesa);
+                  if (comp && (comp.cnpj || comp.cidade)) {
+                    return (
+                      <span className="text-[11px] text-slate-500 block mt-0.5">
+                        {comp.cnpj ? `CNPJ: ${comp.cnpj}` : ''} {comp.cidade ? ` • ${comp.cidade}/${comp.uf}` : ''}
+                      </span>
+                    );
+                  }
+                  return null;
+                })()}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100">
+                <div>
+                  <span className="text-[10px] font-bold uppercase text-slate-400 block">Odômetro Registrado</span>
+                  <span className="font-mono text-slate-700">
+                    {selectedExpenseForPrint.km ? `${Number(selectedExpenseForPrint.km).toLocaleString('pt-BR')} km` : 'Não informado'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold uppercase text-slate-400 block">Data de Registro</span>
+                  <span className="font-mono text-slate-700">
+                    {formatDateBR(selectedExpenseForPrint.data)}
+                  </span>
+                </div>
+              </div>
+
+              <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-100">
+                <span className="text-[10px] font-bold uppercase text-slate-400 block mb-1">Detalhamento / Justificativa</span>
+                <p className="text-slate-700 leading-relaxed font-medium">
+                  {selectedExpenseForPrint.obs || "Despesa operacional administrativa lançada no controle de custos de frota."}
+                </p>
+              </div>
+            </div>
+
+            {/* Termo e Assinaturas */}
+            <div className="border-t border-slate-200 pt-6 avoid-break">
+              <p className="text-[10px] text-slate-500 text-center mb-8 italic">
+                Declaro para os devidos fins contábeis e fiscais que o valor acima foi devidamente apurado e destinado às atividades operacionais da empresa.
+              </p>
+
+              <div className="grid grid-cols-2 gap-8 pt-4">
+                <div className="text-center">
+                  <div className="border-t border-slate-400 pt-1.5">
+                    <p className="font-bold text-xs text-slate-800">Assinatura do Favorecido</p>
+                    <p className="text-[10px] text-slate-500">Credor / Motorista</p>
+                  </div>
+                </div>
+                <div className="text-center">
+                  <div className="border-t border-slate-400 pt-1.5">
+                    <p className="font-bold text-xs text-slate-800">Responsável Financeiro</p>
+                    <p className="text-[10px] text-slate-500">Gestão de Frotas / Caixa</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

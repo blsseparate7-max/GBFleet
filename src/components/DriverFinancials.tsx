@@ -271,6 +271,9 @@ export default function DriverFinancials({ data, onUpdate }: DriverFinancialsPro
     const drvName = selectedDriver ? selectedDriver.nome : 'Motorista';
     const drvCpf = selectedDriver ? selectedDriver.cpf : '';
     const dateFormatted = formatDateBR(payment.data);
+    const companyLogo = data?.company?.logoUrl || '';
+    const companyName = data?.company?.nome || 'GBFleet Transportes';
+    const companyLogoSize = data?.company?.logoSize || 56;
     
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
@@ -278,7 +281,7 @@ export default function DriverFinancials({ data, onUpdate }: DriverFinancialsPro
     printWindow.document.write(`
       <html>
         <head>
-          <title>Recibo GBFleet - ${drvName}</title>
+          <title>Recibo ${companyName} - ${drvName}</title>
           <style>
             body { font-family: sans-serif; padding: 40px; color: #333; }
             .header { text-align: center; border-bottom: 2px solid #3b82f6; padding-bottom: 20px; margin-bottom: 30px; }
@@ -294,8 +297,9 @@ export default function DriverFinancials({ data, onUpdate }: DriverFinancialsPro
         </head>
         <body>
           <div class="header">
+            ${companyLogo ? `<img src="${companyLogo}" style="max-height: ${companyLogoSize}px; max-width: 180px; object-fit: contain; margin-bottom: 12px;" /><br/>` : ''}
             <div class="title">RECIBO DE FECHAMENTO FINANCEIRO - MOTORISTA</div>
-            <p>GBFleet AI - Sistema Integrado de Gestão de Transportes</p>
+            <p>${companyName} - Sistema Integrado de Gestão de Transportes</p>
           </div>
           <div class="meta">
             <div>

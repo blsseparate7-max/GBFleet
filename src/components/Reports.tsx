@@ -557,10 +557,26 @@ export default function Reports({ data }: ReportsProps) {
       {/* PRINT-ONLY HEADER */}
       <div className="hidden print:block mb-8 border-b border-slate-900 pb-6">
         <div className="flex justify-between items-center">
-          <div>
-            <h1 className="text-2xl font-black tracking-tight text-slate-900">GBFLEET AI GESTÃO</h1>
-            <p className="text-xs text-slate-500 uppercase tracking-widest font-bold mt-1">SISTEMA INTEGRADO DE AUDITORIA OPERACIONAL E FROTAS</p>
-            <p className="text-[10px] text-slate-400 font-mono mt-1">Período Selecionado: {startDate} até {endDate}</p>
+          <div className="flex items-center gap-4">
+            {data?.company?.logoUrl && (
+              <div 
+                className="shrink-0 flex items-center justify-center overflow-hidden"
+                style={{ height: `${data?.company?.logoSize || 56}px`, maxWidth: '160px' }}
+              >
+                <img 
+                  src={data.company.logoUrl} 
+                  alt="Logo" 
+                  className="max-h-full max-w-full object-contain"
+                />
+              </div>
+            )}
+            <div>
+              <h1 className="text-2xl font-black tracking-tight text-slate-900">
+                {data?.company?.nome || "GBFLEET AI GESTÃO"}
+              </h1>
+              <p className="text-xs text-slate-500 uppercase tracking-widest font-bold mt-1">SISTEMA INTEGRADO DE AUDITORIA OPERACIONAL E FROTAS</p>
+              <p className="text-[10px] text-slate-400 font-mono mt-1">Período Selecionado: {startDate} até {endDate}</p>
+            </div>
           </div>
           <div className="text-right">
             <span className="text-xs font-black border border-slate-900 p-2 uppercase tracking-wider rounded-md">RELATÓRIO RESUMIDO DE GESTÃO</span>

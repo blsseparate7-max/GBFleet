@@ -23,7 +23,7 @@ export interface FreightData {
   kmAbastecimento?: number;
 }
 
-export function generateFreightPDF(freight: FreightData) {
+export function generateFreightPDF(freight: FreightData, company?: any) {
   const doc = new jsPDF({
     orientation: 'portrait',
     unit: 'mm',
@@ -52,21 +52,32 @@ export function generateFreightPDF(freight: FreightData) {
     // Title text
     docInstance.setTextColor(255, 255, 255);
     docInstance.setFont('helvetica', 'bold');
-    docInstance.setFontSize(20);
+    docInstance.setFontSize(18);
     docInstance.text('DOSSIÊ DE VIAGEM & RECIBO', 15, 18);
 
     docInstance.setFont('helvetica', 'normal');
     docInstance.setFontSize(9);
     docInstance.setTextColor(191, 219, 254); // Light blue
-    docInstance.text('SISTEMA DE GESTÃO DE FROTAS PREMIUM', 15, 25);
+    docInstance.text(company?.nome ? company.nome.toUpperCase() : 'SISTEMA DE GESTÃO DE FROTAS', 15, 26);
+
+    // Optional company logo in PDF header
+    if (company?.logoUrl && typeof company.logoUrl === 'string' && company.logoUrl.startsWith('data:image')) {
+      try {
+        const format = company.logoUrl.includes('png') ? 'PNG' : 'JPEG';
+        docInstance.addImage(company.logoUrl, format, pageWidth - 32, 8, 24, 24, undefined, 'FAST');
+      } catch (err) {
+        // Fallback gracefully
+      }
+    }
 
     // Date & Document control
     docInstance.setTextColor(255, 255, 255);
     docInstance.setFont('helvetica', 'bold');
     docInstance.setFontSize(9);
-    docInstance.text(`VIAGEM ID: #${freight.id.toUpperCase().substring(0, 8)}`, pageWidth - 80, 18);
+    const rightMargin = company?.logoUrl ? 115 : 80;
+    docInstance.text(`VIAGEM ID: #${freight.id.toUpperCase().substring(0, 8)}`, pageWidth - rightMargin, 18);
     docInstance.setFont('helvetica', 'normal');
-    docInstance.text(`Gerado em: ${new Date().toLocaleDateString('pt-BR')} ${new Date().toLocaleTimeString('pt-BR')}`, pageWidth - 80, 25);
+    docInstance.text(`Gerado em: ${new Date().toLocaleDateString('pt-BR')} ${new Date().toLocaleTimeString('pt-BR')}`, pageWidth - rightMargin, 26);
   };
 
   // --- PAGE 1: DOSSIER AND FINANCIAL SUMMARY ---

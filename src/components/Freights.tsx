@@ -900,7 +900,7 @@ export default function Freights({ data, onUpdate }: { data: any, onUpdate: () =
                             type="button"
                             onClick={() => {
                               try {
-                                generateFreightPDF(freight);
+                                generateFreightPDF(freight, data?.company);
                               } catch (error) {
                                 console.error("Erro ao gerar PDF:", error);
                                 alert("Não foi possível gerar o PDF. Verifique se as imagens anexas estão no formato correto.");

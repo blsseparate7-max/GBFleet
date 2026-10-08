@@ -963,7 +963,7 @@ app.use(ensureDBSynced);
       return res.status(401).json({ error: "Sessão expirada." });
     }
 
-    const { nome, email, password } = req.body;
+    const { nome, email, password, logoUrl, logoSize } = req.body;
     const dbUser = db.users.find((u: any) => u.id === userContext.id);
     if (!dbUser) {
       return res.status(404).json({ error: "Usuário não encontrado." });
@@ -982,8 +982,24 @@ app.use(ensureDBSynced);
       dbUser.password = password.trim();
     }
 
+    // Persist company logo and sizing if provided
+    let dbCompany = db.companies.find((c: any) => c.id === dbUser.companyId);
+    if (!dbCompany && db.companies.length > 0) {
+      dbCompany = db.companies[0];
+    }
+
+    if (dbCompany) {
+      if (logoUrl !== undefined) {
+        dbCompany.logoUrl = logoUrl;
+      }
+      if (logoSize !== undefined) {
+        const parsedSize = Number(logoSize);
+        dbCompany.logoSize = !isNaN(parsedSize) && parsedSize >= 24 && parsedSize <= 160 ? parsedSize : 56;
+      }
+    }
+
     writeDB(db);
-    res.json({ success: true, user: dbUser });
+    res.json({ success: true, user: dbUser, company: dbCompany });
   });
 
   // Dynamic tenant-isolated layout data fetch

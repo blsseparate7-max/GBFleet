@@ -25,7 +25,11 @@ import {
   Mail,
   FileText,
   DollarSign,
-  CreditCard
+  CreditCard,
+  Image as ImageIcon,
+  Upload,
+  Trash2,
+  Sliders
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { onDBSync } from '../lib/firebaseClientDb';
@@ -94,6 +98,8 @@ export default function Layout() {
   const [profileName, setProfileName] = useState('');
   const [profileEmail, setProfileEmail] = useState('');
   const [profilePassword, setProfilePassword] = useState('');
+  const [profileLogo, setProfileLogo] = useState<string>('');
+  const [profileLogoSize, setProfileLogoSize] = useState<number>(56);
   const [profileError, setProfileError] = useState('');
   const [profileSuccess, setProfileSuccess] = useState('');
   const [isSavingProfile, setIsSavingProfile] = useState(false);
@@ -111,7 +117,11 @@ export default function Layout() {
       setProfileEmail(currentUser.email || '');
       setProfilePassword(currentUser.password || 'demo');
     }
-  }, [currentUser, isProfileOpen]);
+    if (currentCompany) {
+      setProfileLogo(currentCompany.logoUrl || '');
+      setProfileLogoSize(Number(currentCompany.logoSize) || 56);
+    }
+  }, [currentUser, currentCompany, isProfileOpen]);
 
   // Handle dynamic notifications calculated from state
   const computedNotifications = useMemo(() => {
@@ -240,6 +250,47 @@ export default function Layout() {
     saveUpdatedReadIds(allIds);
   };
 
+  // Handle client-side canvas compression for logo upload
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      setProfileError('Por favor selecione um arquivo de imagem válido (JPEG, PNG ou WebP).');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const maxWidth = 420;
+        const maxHeight = 220;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > maxWidth || height > maxHeight) {
+          const ratio = Math.min(maxWidth / width, maxHeight / height);
+          width = Math.round(width * ratio);
+          height = Math.round(height * ratio);
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.88);
+          setProfileLogo(compressedDataUrl);
+          setProfileError('');
+        }
+      };
+      img.src = event.target?.result as string;
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleUpdateProfile = async () => {
     if (!profileName || !profileEmail) {
       setProfileError("Nome e e-mail são obrigatórios.");
@@ -256,7 +307,9 @@ export default function Layout() {
         body: JSON.stringify({
           nome: profileName,
           email: profileEmail,
-          password: profilePassword
+          password: profilePassword,
+          logoUrl: profileLogo,
+          logoSize: profileLogoSize
         })
       });
 
@@ -264,9 +317,13 @@ export default function Layout() {
       if (!res.ok) {
         setProfileError(json.error || "Erro ao atualizar perfil.");
       } else {
-        setProfileSuccess("Perfil atualizado com sucesso!");
+        setProfileSuccess("Perfil e dados da transportadora atualizados com sucesso!");
         setCurrentUser(json.user);
         localStorage.setItem('gbfleet_user', JSON.stringify(json.user));
+        if (json.company) {
+          setCurrentCompany(json.company);
+          localStorage.setItem('gbfleet_company', JSON.stringify(json.company));
+        }
         fetchData(); // pull fresh data state
         setTimeout(() => {
           setIsProfileOpen(false);
@@ -536,11 +593,29 @@ export default function Layout() {
         <div className="flex flex-col h-full">
           <div className="p-6 flex items-center justify-between">
             <div className={cn("flex items-center gap-3", !isDesktopSidebarOpen && "lg:hidden")}>
-              <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shrink-0">
-                <TruckIcon className="text-white w-5 h-5" />
-              </div>
-              <div className="flex flex-col">
-                <span className="font-bold text-lg tracking-tight leading-none">GBFleet <span className="text-blue-600">AI</span></span>
+              {currentCompany?.logoUrl ? (
+                <div 
+                  className="shrink-0 bg-white border border-slate-200 rounded-xl p-1 shadow-xs flex items-center justify-center overflow-hidden"
+                  style={{ 
+                    height: `${Math.min(currentCompany.logoSize || 56, 52)}px`,
+                    maxWidth: '85px',
+                    minWidth: '40px'
+                  }}
+                  title={currentCompany.nome || "Logo da Empresa"}
+                >
+                  <img 
+                    src={currentCompany.logoUrl} 
+                    alt={currentCompany.nome || "Logo"} 
+                    className="max-h-full max-w-full object-contain"
+                  />
+                </div>
+              ) : (
+                <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shrink-0">
+                  <TruckIcon className="text-white w-5 h-5" />
+                </div>
+              )}
+              <div className="flex flex-col min-w-0">
+                <span className="font-bold text-lg tracking-tight leading-none truncate">GBFleet <span className="text-blue-600">AI</span></span>
                 {currentCompany?.nome && (
                   <span className="text-[10px] text-slate-500 font-bold truncate max-w-[130px] mt-1" title={currentCompany.nome}>
                     {currentCompany.nome}
@@ -548,6 +623,19 @@ export default function Layout() {
                 )}
               </div>
             </div>
+            {!isDesktopSidebarOpen && (
+              <div className="hidden lg:flex items-center justify-center w-full py-1">
+                {currentCompany?.logoUrl ? (
+                  <div className="w-9 h-9 rounded-lg bg-white border border-slate-200 flex items-center justify-center p-1 shadow-xs overflow-hidden">
+                    <img src={currentCompany.logoUrl} alt="Logo" className="max-h-full max-w-full object-contain" />
+                  </div>
+                ) : (
+                  <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
+                    <TruckIcon className="text-white w-5 h-5" />
+                  </div>
+                )}
+              </div>
+            )}
             <button onClick={() => setIsDesktopSidebarOpen(!isDesktopSidebarOpen)} className="p-2 hover:bg-slate-100 rounded-lg lg:block hidden">
               {isDesktopSidebarOpen ? <X size={20} /> : <Menu size={20} />}
             </button>
@@ -914,6 +1002,108 @@ export default function Layout() {
                     />
                   </div>
                 </div>
+              </div>
+
+              {/* Identidade Visual da Transportadora / Upload da Logo */}
+              <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-3.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <ImageIcon size={16} className="text-blue-600" />
+                    <div>
+                      <h4 className="text-xs font-black uppercase tracking-wider text-slate-800">Logo da Empresa / Transportadora</h4>
+                      <p className="text-[10px] text-slate-400">Reflete no menu, página inicial, recibos e relatórios em PDF</p>
+                    </div>
+                  </div>
+                  {profileLogo && (
+                    <button
+                      type="button"
+                      onClick={() => setProfileLogo('')}
+                      className="text-[10px] font-bold text-rose-600 hover:text-rose-700 hover:underline flex items-center gap-1 cursor-pointer"
+                      title="Remover logo e voltar ao padrão GBFleet"
+                    >
+                      <Trash2 size={12} />
+                      <span>Remover</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* Área de Visualização e Upload */}
+                <div className="flex flex-col sm:flex-row items-center gap-4 bg-white p-3 rounded-xl border border-slate-200">
+                  <div className="w-full sm:w-44 h-24 bg-slate-100/80 rounded-xl border-2 border-dashed border-slate-300 flex items-center justify-center p-2 overflow-hidden relative group shrink-0">
+                    {profileLogo ? (
+                      <img 
+                        src={profileLogo} 
+                        alt="Logo Preview" 
+                        className="object-contain transition-transform"
+                        style={{ maxHeight: `${Math.min(profileLogoSize, 80)}px`, maxWidth: '100%' }}
+                      />
+                    ) : (
+                      <div className="text-center p-2">
+                        <ImageIcon className="w-8 h-8 text-slate-300 mx-auto mb-1" />
+                        <span className="text-[10px] text-slate-400 font-bold block">Sem logo (Padrão)</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex-1 space-y-2 w-full">
+                    <label className="block">
+                      <span className="sr-only">Escolher logo</span>
+                      <input 
+                        type="file" 
+                        accept="image/jpeg,image/png,image/webp,image/jpg" 
+                        onChange={handleLogoUpload}
+                        className="block w-full text-xs text-slate-500 file:mr-2.5 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-[11px] file:font-bold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer"
+                      />
+                    </label>
+                    <p className="text-[10px] text-slate-400 leading-tight">
+                      Formatos aceitos: <strong>JPEG, PNG ou WebP</strong>. Imagens são compactadas automaticamente para máxima velocidade.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Controle de Tamanho e Escala */}
+                {profileLogo && (
+                  <div className="pt-2 border-t border-slate-200/80 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider flex items-center gap-1.5">
+                        <Sliders size={12} className="text-slate-400" />
+                        Tamanho da Logo: <strong className="text-blue-600 font-mono">{profileLogoSize}px</strong>
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setProfileLogoSize(40)}
+                          className={cn("px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer", profileLogoSize <= 44 ? "bg-blue-600 text-white" : "bg-slate-200 text-slate-600 hover:bg-slate-300")}
+                        >
+                          Pequeno
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setProfileLogoSize(56)}
+                          className={cn("px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer", profileLogoSize > 44 && profileLogoSize <= 64 ? "bg-blue-600 text-white" : "bg-slate-200 text-slate-600 hover:bg-slate-300")}
+                        >
+                          Médio
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setProfileLogoSize(76)}
+                          className={cn("px-2 py-0.5 rounded text-[10px] font-bold transition cursor-pointer", profileLogoSize > 64 ? "bg-blue-600 text-white" : "bg-slate-200 text-slate-600 hover:bg-slate-300")}
+                        >
+                          Grande
+                        </button>
+                      </div>
+                    </div>
+                    <input 
+                      type="range"
+                      min={36}
+                      max={96}
+                      step={2}
+                      value={profileLogoSize}
+                      onChange={(e) => setProfileLogoSize(Number(e.target.value))}
+                      className="w-full accent-blue-600 h-1.5 bg-slate-200 rounded-lg cursor-pointer"
+                    />
+                  </div>
+                )}
               </div>
 
               {/* Detalhes da Assinatura do SaaS no Perfil do Usuário */}

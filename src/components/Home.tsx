@@ -222,16 +222,35 @@ export default function Home({ data, onNavigate, currentUser }: HomeProps) {
         <div className="absolute inset-0 opacity-[0.03] bg-[linear-gradient(to_right,#808080_1px,transparent_1px),linear-gradient(to_bottom,#808080_1px,transparent_1px)] bg-[size:24px_24px]"></div>
         
         <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="space-y-2">
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-500/20 border border-blue-400/30 text-[11px] font-bold tracking-wider text-blue-300 uppercase">
-              <Activity size={12} className="animate-pulse" /> Painel de Controle Operacional
-            </span>
-            <h2 className="text-2xl md:text-3xl font-extrabold tracking-tight">
-              Olá, {currentUser?.nome || 'Operador'}!
-            </h2>
-            <p className="text-indigo-200 text-sm max-w-xl leading-relaxed">
-              Inicie conexões e registros imediatos a partir desta central. Selecione um atalho para ir direto ao formulário em cada aba.
-            </p>
+          <div className="flex items-start gap-4 sm:gap-5">
+            {data?.company?.logoUrl && (
+              <div 
+                className="bg-white rounded-2xl p-2 shadow-xl border border-white/20 shrink-0 flex items-center justify-center overflow-hidden self-start mt-1"
+                style={{ 
+                  height: `${Math.max(48, Math.min(Number(data.company.logoSize || 56) + 8, 76))}px`,
+                  maxWidth: '120px',
+                  minWidth: '56px'
+                }}
+                title={data.company.nome || "Logo"}
+              >
+                <img 
+                  src={data.company.logoUrl} 
+                  alt={data.company.nome || "Logo"} 
+                  className="max-h-full max-w-full object-contain"
+                />
+              </div>
+            )}
+            <div className="space-y-2">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-500/20 border border-blue-400/30 text-[11px] font-bold tracking-wider text-blue-300 uppercase">
+                <Activity size={12} className="animate-pulse" /> Painel de Controle Operacional
+              </span>
+              <h2 className="text-2xl md:text-3xl font-extrabold tracking-tight">
+                Olá, {currentUser?.nome || 'Operador'}!
+              </h2>
+              <p className="text-indigo-200 text-sm max-w-xl leading-relaxed">
+                Inicie conexões e registros imediatos a partir desta central. Selecione um atalho para ir direto ao formulário em cada aba.
+              </p>
+            </div>
           </div>
           
           <div className="flex flex-wrap items-center gap-4 bg-white/5 backdrop-blur-md p-4 rounded-2xl border border-white/10 shrink-0">
