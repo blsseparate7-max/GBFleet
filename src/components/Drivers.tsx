@@ -66,9 +66,9 @@ export default function Drivers({ data, onUpdate }: DriversProps) {
     telefone: '',
     email: '',
     status: 'Ativo',
-    salarioFixo: '0',
-    diariaPadrao: '0',
-    almocoPadrao: '0',
+    salarioFixo: '',
+    diariaPadrao: '',
+    almocoPadrao: '',
     tipoRemuneracao: 'Fixo + Variável'
   });
 
@@ -527,19 +527,19 @@ export default function Drivers({ data, onUpdate }: DriversProps) {
                       <div className="bg-white p-1 rounded-lg border border-slate-100">
                         <span className="text-[9px] text-slate-400 font-bold block uppercase">Fixo</span>
                         <span className="font-mono text-[10px] font-black text-slate-700 block">
-                          {maskBRL(driver.salarioFixo || 0)}
+                          {maskBRL(driver.salarioFixo || 0, true)}
                         </span>
                       </div>
                       <div className="bg-white p-1 rounded-lg border border-slate-100">
                         <span className="text-[9px] text-slate-400 font-bold block uppercase">Diária</span>
                         <span className="font-mono text-[10px] font-black text-slate-700 block">
-                          {maskBRL(driver.diariaPadrao || 0)}
+                          {maskBRL(driver.diariaPadrao || 0, true)}
                         </span>
                       </div>
                       <div className="bg-white p-1 rounded-lg border border-slate-100">
                         <span className="text-[9px] text-slate-400 font-bold block uppercase">Almoço</span>
                         <span className="font-mono text-[10px] font-black text-slate-700 block">
-                          {maskBRL(driver.almocoPadrao || 0)}
+                          {maskBRL(driver.almocoPadrao || 0, true)}
                         </span>
                       </div>
                     </div>
@@ -722,7 +722,7 @@ export default function Drivers({ data, onUpdate }: DriversProps) {
                     value={driverForm.salarioFixo ? maskBRL(driverForm.salarioFixo) : ""}
                     onChange={e => {
                       const masked = maskBRL(e.target.value);
-                      setDriverForm({...driverForm, salarioFixo: masked ? String(unmaskBRL(masked)) : "0"});
+                      setDriverForm({...driverForm, salarioFixo: masked ? String(unmaskBRL(masked)) : ""});
                     }}
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-bold font-mono text-slate-700"
                   />
@@ -739,7 +739,7 @@ export default function Drivers({ data, onUpdate }: DriversProps) {
                     value={driverForm.diariaPadrao ? maskBRL(driverForm.diariaPadrao) : ""}
                     onChange={e => {
                       const masked = maskBRL(e.target.value);
-                      setDriverForm({...driverForm, diariaPadrao: masked ? String(unmaskBRL(masked)) : "0"});
+                      setDriverForm({...driverForm, diariaPadrao: masked ? String(unmaskBRL(masked)) : ""});
                     }}
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-bold font-mono text-slate-700"
                   />
@@ -756,7 +756,7 @@ export default function Drivers({ data, onUpdate }: DriversProps) {
                     value={driverForm.almocoPadrao ? maskBRL(driverForm.almocoPadrao) : ""}
                     onChange={e => {
                       const masked = maskBRL(e.target.value);
-                      setDriverForm({...driverForm, almocoPadrao: masked ? String(unmaskBRL(masked)) : "0"});
+                      setDriverForm({...driverForm, almocoPadrao: masked ? String(unmaskBRL(masked)) : ""});
                     }}
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-bold font-mono text-slate-700"
                   />
@@ -927,7 +927,7 @@ export default function Drivers({ data, onUpdate }: DriversProps) {
                       value={driverForm.salarioFixo ? maskBRL(driverForm.salarioFixo) : ""}
                       onChange={e => {
                         const masked = maskBRL(e.target.value);
-                        setDriverForm({...driverForm, salarioFixo: masked ? String(unmaskBRL(masked)) : "0"});
+                        setDriverForm({...driverForm, salarioFixo: masked ? String(unmaskBRL(masked)) : ""});
                       }}
                       className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-bold font-mono text-slate-700"
                     />
@@ -944,7 +944,7 @@ export default function Drivers({ data, onUpdate }: DriversProps) {
                       value={driverForm.diariaPadrao ? maskBRL(driverForm.diariaPadrao) : ""}
                       onChange={e => {
                         const masked = maskBRL(e.target.value);
-                        setDriverForm({...driverForm, diariaPadrao: masked ? String(unmaskBRL(masked)) : "0"});
+                        setDriverForm({...driverForm, diariaPadrao: masked ? String(unmaskBRL(masked)) : ""});
                       }}
                       className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-bold font-mono text-slate-700"
                     />
@@ -961,7 +961,7 @@ export default function Drivers({ data, onUpdate }: DriversProps) {
                       value={driverForm.almocoPadrao ? maskBRL(driverForm.almocoPadrao) : ""}
                       onChange={e => {
                         const masked = maskBRL(e.target.value);
-                        setDriverForm({...driverForm, almocoPadrao: masked ? String(unmaskBRL(masked)) : "0"});
+                        setDriverForm({...driverForm, almocoPadrao: masked ? String(unmaskBRL(masked)) : ""});
                       }}
                       className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-bold font-mono text-slate-700"
                     />

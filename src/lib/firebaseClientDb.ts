@@ -2,6 +2,7 @@ import { initializeApp } from "firebase/app";
 import { getFirestore, doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
 import { configJson } from "./configJson";
 import { dbTemplate } from "./dbTemplate";
+import { cacheAttachment } from "./fileCompressor";
 
 // Initialize Firebase Web SDK Client
 const firebaseConfig = {
@@ -55,9 +56,12 @@ let liveDb: any = (() => {
   return JSON.parse(JSON.stringify(dbTemplate));
 })();
 
+// Tracks the local write identifier to completely eliminate self-echo cycles and duplicate reads
+let lastLocalWriteId: string = liveDb?._writeId || "";
+
 // Helper to recursively extract base64 attachment files and save them to separate documents in Firestore,
 // replacing the base64 content with lightweight references like "attachment_ref:attach_xxx".
-// This completely bypasses the 1MB Firestore document limit for the main database state doc.
+// Also immediately caches the attachment locally so the current user never incurs a Firestore read to view it.
 async function extractAndSaveAttachments(obj: any): Promise<void> {
   if (!obj || typeof obj !== "object") return;
 
@@ -66,11 +70,14 @@ async function extractAndSaveAttachments(obj: any): Promise<void> {
     const val = obj[key];
     if (typeof val === "string" && val.startsWith("data:") && val.includes(";base64,")) {
       const attachId = "attach_" + Math.random().toString(36).substr(2, 9) + "_" + Date.now();
+      const refKey = `attachment_ref:${attachId}`;
+      // Immediately cache locally in memory and sessionStorage
+      cacheAttachment(refKey, val);
       try {
         const docRef = doc(firestore, "system_state", attachId);
         await setDoc(docRef, { base64: val });
         console.log(`[Attachment Sync] Extracted and saved attachment to separate doc: ${attachId}`);
-        obj[key] = `attachment_ref:${attachId}`;
+        obj[key] = refKey;
       } catch (err: any) {
         console.error(`[Attachment Sync] Failed to save separate attachment ${attachId}:`, err.message);
         // Fallback: keep original so we don't lose the data
@@ -106,109 +113,109 @@ function sanitizeForFirestore(obj: any): void {
   }
 }
 
-// Save in-memory DB back to localStorage and Firestore
-// Promise Chaining Queue for sequential, direct, and reliable blocking writes to Firestore
-let lastWritePromise: Promise<void> = Promise.resolve();
+// Debounced, coalesced writer for Firestore
+// Merges rapid sequential writes into a single Firestore network operation while keeping UI 100% instant
+let debounceWriteTimer: any = null;
+let pendingWriteResolvers: Array<() => void> = [];
+let isWritingToFirestore = false;
 
-export async function persistDB() {
-  // Chain the Firestore write sequentially to guarantee order and that the absolute latest data is saved.
-  // Awaiting this promise blocks until the Firestore write has fully succeeded.
-  lastWritePromise = lastWritePromise.then(async () => {
-    try {
-      // 1) Extract and save massive attachments to separate Firestore documents first
-      await extractAndSaveAttachments(liveDb);
+async function executeRemoteWrite(): Promise<void> {
+  if (isWritingToFirestore) return;
+  isWritingToFirestore = true;
 
-      // 2) Sanitize the database of any 'undefined' properties that Firestore rejects
-      sanitizeForFirestore(liveDb);
+  const currentResolvers = [...pendingWriteResolvers];
+  pendingWriteResolvers = [];
 
-      // 3) Save clean, tiny database locally immediately for 100% responsiveness
-      try {
-        localStorage.setItem("gbfleet_db_local", JSON.stringify(liveDb));
-      } catch (e) {
-        console.error("Failed to write DB to localStorage:", e);
-      }
-
-      // Notify reactive listeners across the app so all UI views update immediately
-      notifyListeners();
-
-      // 4) Persist clean, tiny database document to Firestore with a 3.5s timeout race
-      const docRef = doc(firestore, "system_state", "gbfleet_db");
-      const writePromise = setDoc(docRef, liveDb);
-      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Firestore write timeout")), 3500));
-      try {
-        await Promise.race([writePromise, timeoutPromise]);
-        console.log("[Firebase Client SDK] Direct write to Firestore successfully completed.");
-      } catch (timeoutErr) {
-        console.warn("[Firebase Client SDK] Firestore write took too long or offline, saved locally.", timeoutErr);
-      }
-    } catch (err: any) {
-      console.error("[Firebase Client SDK] Error: Failed to persist directly to Firestore.", err.message);
-    }
-  });
-
-  return lastWritePromise;
-}
-
-// Pull / fetch database from Firestore (triggers in background on boot and on demand)
-export async function pullDB(forceFresh: boolean = false) {
   try {
+    // 1) Extract and save massive attachments to separate Firestore documents first
+    await extractAndSaveAttachments(liveDb);
+
+    // 2) Sanitize the database of any 'undefined' properties that Firestore rejects
+    sanitizeForFirestore(liveDb);
+
+    // 3) Persist clean, tiny database document to Firestore with a 4s timeout race
     const docRef = doc(firestore, "system_state", "gbfleet_db");
-    const snap = await getDoc(docRef);
-    if (snap.exists()) {
-      const remoteData = snap.data();
-      if (remoteData && remoteData.users && remoteData.companies) {
-        // Enforce preserving demo or state rules
-        let scrubbed = false;
-        if (remoteData.companies && remoteData.companies.some((c: any) => c.id === "comp_1")) {
-          remoteData.companies = remoteData.companies.filter((c: any) => c.id !== "comp_1");
-          scrubbed = true;
-        }
-        if (remoteData.users && remoteData.users.some((u: any) => u.id === "user_1" || u.companyId === "comp_1")) {
-          remoteData.users = remoteData.users.filter((u: any) => u.id !== "user_1" && u.companyId !== "comp_1");
-          scrubbed = true;
-        }
-        const arrayKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "gas_stations", "expense_companies", "bills", "driver_payments", "driver_adjustments"];
-        arrayKeys.forEach(key => {
-          if (remoteData[key] && remoteData[key].some((item: any) => item.companyId === "comp_1" || item.id?.includes("init"))) {
-            remoteData[key] = remoteData[key].filter((item: any) => item.companyId !== "comp_1" && !item.id?.includes("init"));
-            scrubbed = true;
-          }
-        });
-
-        // No merging of old local storage items is performed to prevent resurrection of deleted/modified records.
-        // Firestore is the absolute source of truth. We only ensure that required array fields exist on the pulled data.
-        const allKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "gas_stations", "expense_companies", "chat_logs", "bills", "driver_payments", "driver_adjustments"];
-        allKeys.forEach(key => {
-          if (!remoteData[key]) {
-            remoteData[key] = [];
-          }
-        });
-
-        liveDb = remoteData;
-        try {
-          localStorage.setItem("gbfleet_db_local", JSON.stringify(liveDb));
-        } catch (e) {
-          // ignore
-        }
-        console.log("[Firebase Client SDK] Successfully synced fresh Firestore data.");
-        
-        if (scrubbed) {
-          await persistDB();
-        }
-
-        notifyListeners();
-      }
-    } else {
-      console.log("[Firebase Client SDK] Remote gbfleet_db document does not exist. Initializing with local data.");
-      await persistDB();
+    const writePromise = setDoc(docRef, liveDb);
+    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Firestore write timeout")), 4000));
+    try {
+      await Promise.race([writePromise, timeoutPromise]);
+      console.log("[Firebase Client SDK] Consolidated write to Firestore successfully completed.");
+    } catch (timeoutErr) {
+      console.warn("[Firebase Client SDK] Firestore write timed out or offline, saved locally.", timeoutErr);
     }
   } catch (err: any) {
-    console.warn("[Firebase Client SDK] Connection fallback: Failed to pull remote Firestore document on initialization.", err.message);
+    console.error("[Firebase Client SDK] Error: Failed to persist directly to Firestore.", err.message);
+  } finally {
+    isWritingToFirestore = false;
+    currentResolvers.forEach(resolve => {
+      try {
+        resolve();
+      } catch (e) {
+        // ignore
+      }
+    });
+    if (pendingWriteResolvers.length > 0) {
+      scheduleRemoteWrite();
+    }
   }
 }
 
-// Attach Real-Time Firestore onSnapshot Listener
+function scheduleRemoteWrite(): Promise<void> {
+  return new Promise((resolve) => {
+    pendingWriteResolvers.push(resolve);
+    if (debounceWriteTimer) {
+      clearTimeout(debounceWriteTimer);
+    }
+    // 300ms debounce collapses multiple consecutive form edits/clicks into 1 write
+    debounceWriteTimer = setTimeout(() => {
+      debounceWriteTimer = null;
+      executeRemoteWrite();
+    }, 300);
+  });
+}
+
+/**
+ * Persists changes made to liveDb.
+ * 1) Instantly updates local memory and localStorage (zero latency for user).
+ * 2) Immediately notifies reactive components.
+ * 3) Debounces remote Firestore write to prevent read/write storms.
+ */
+export async function persistDB(flushImmediately: boolean = false): Promise<void> {
+  // Generate local write tracking ID to prevent self-echo loops in onSnapshot
+  const writeId = "w_" + Date.now() + "_" + Math.random().toString(36).substr(2, 6);
+  liveDb._writeId = writeId;
+  liveDb._writeTimestamp = Date.now();
+  lastLocalWriteId = writeId;
+
+  // Save clean database locally immediately for 100% responsiveness & offline resilience
+  try {
+    localStorage.setItem("gbfleet_db_local", JSON.stringify(liveDb));
+  } catch (e) {
+    console.error("Failed to write DB to localStorage:", e);
+  }
+
+  // Notify reactive listeners across the app so all UI views update instantly
+  notifyListeners();
+
+  if (flushImmediately) {
+    if (debounceWriteTimer) {
+      clearTimeout(debounceWriteTimer);
+      debounceWriteTimer = null;
+    }
+    return new Promise((resolve) => {
+      pendingWriteResolvers.push(resolve);
+      executeRemoteWrite();
+    });
+  }
+
+  return scheduleRemoteWrite();
+}
+
+// Unified initialization & real-time sync with single-read on boot (no duplicate getDoc)
 let snapshotUnsubscribe: (() => void) | null = null;
+let initialPullPromise: Promise<void> | null = null;
+let resolveInitialPull: (() => void) | null = null;
+
 function initFirestoreLiveListener() {
   try {
     if (snapshotUnsubscribe) {
@@ -216,45 +223,123 @@ function initFirestoreLiveListener() {
     }
     const docRef = doc(firestore, "system_state", "gbfleet_db");
     snapshotUnsubscribe = onSnapshot(docRef, (snap) => {
-      if (snap.exists()) {
-        const remoteData = snap.data();
-        if (remoteData && remoteData.users && remoteData.companies) {
-          const allKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "gas_stations", "expense_companies", "chat_logs", "bills", "driver_payments", "driver_adjustments"];
-          allKeys.forEach(key => {
-            if (!remoteData[key]) {
-              remoteData[key] = [];
-            }
-          });
-
-          liveDb = remoteData;
-          try {
-            localStorage.setItem("gbfleet_db_local", JSON.stringify(liveDb));
-          } catch (e) {
-            // ignore
-          }
-          console.log("[Firebase Client SDK] Real-time live Firestore push received! Notifying subscribers.");
-          notifyListeners();
+      const finishInitial = () => {
+        if (resolveInitialPull) {
+          resolveInitialPull();
+          resolveInitialPull = null;
         }
+      };
+
+      if (!snap.exists()) {
+        console.log("[Firebase Client SDK] Remote gbfleet_db does not exist yet. Initializing.");
+        setDoc(docRef, liveDb).catch(console.error);
+        finishInitial();
+        return;
       }
+
+      // 1) Ignore optimistic local writes already reflected in memory
+      if (snap.metadata.hasPendingWrites) {
+        finishInitial();
+        return;
+      }
+
+      const remoteData = snap.data();
+      if (!remoteData || !remoteData.users || !remoteData.companies) {
+        finishInitial();
+        return;
+      }
+
+      // 2) Self-echo prevention: If this snapshot confirms our own write, do not trigger a reload loop!
+      if (remoteData._writeId && remoteData._writeId === lastLocalWriteId) {
+        finishInitial();
+        return;
+      }
+
+      // 3) Timestamp regression prevention
+      if (remoteData._writeTimestamp && liveDb._writeTimestamp && remoteData._writeTimestamp < liveDb._writeTimestamp) {
+        finishInitial();
+        return;
+      }
+
+      // 4) External update from another tab, device or user
+      const allKeys = ["trucks", "drivers", "fuel_logs", "expenses", "cash_flow", "freights", "maintenance_alerts", "routes", "gas_stations", "expense_companies", "chat_logs", "bills", "driver_payments", "driver_adjustments"];
+      allKeys.forEach(key => {
+        if (!remoteData[key]) {
+          remoteData[key] = [];
+        }
+      });
+
+      liveDb = remoteData;
+      if (remoteData._writeId) {
+        lastLocalWriteId = remoteData._writeId;
+      }
+
+      try {
+        localStorage.setItem("gbfleet_db_local", JSON.stringify(liveDb));
+      } catch (e) {
+        // ignore
+      }
+
+      console.log("[Firebase Client SDK] Genuine remote Firestore update received. Notifying subscribers.");
+      finishInitial();
+      notifyListeners();
     }, (error) => {
       console.warn("[Firebase Client SDK] Real-time snapshot listener error:", error.message);
+      if (resolveInitialPull) {
+        resolveInitialPull();
+        resolveInitialPull = null;
+      }
     });
   } catch (err: any) {
     console.warn("[Firebase Client SDK] Failed to set up snapshot listener:", err.message);
+    if (resolveInitialPull) {
+      resolveInitialPull();
+      resolveInitialPull = null;
+    }
   }
 }
 
-let initialPullPromise: Promise<void> | null = null;
-
-export function ensureDbPulled() {
+export function ensureDbPulled(): Promise<void> {
   if (!initialPullPromise) {
-    initialPullPromise = pullDB();
-    initFirestoreLiveListener();
+    initialPullPromise = new Promise((resolve) => {
+      resolveInitialPull = resolve;
+      // Resilient fallback: If offline or slow connection, unlock app after 2.5s using local cached DB
+      setTimeout(() => {
+        if (resolveInitialPull) {
+          console.log("[Firebase Client SDK] Boot timeout - continuing with local database state.");
+          resolveInitialPull();
+          resolveInitialPull = null;
+        }
+      }, 2500);
+
+      initFirestoreLiveListener();
+    });
   }
   return initialPullPromise;
 }
 
-// Kick off initial background sync & live listener
+// Backward-compatible alias for explicit refresh
+export async function pullDB(forceFresh: boolean = false) {
+  if (forceFresh) {
+    try {
+      const docRef = doc(firestore, "system_state", "gbfleet_db");
+      const snap = await getDoc(docRef);
+      if (snap.exists()) {
+        const remoteData = snap.data();
+        if (remoteData && remoteData.users && remoteData.companies) {
+          liveDb = remoteData;
+          localStorage.setItem("gbfleet_db_local", JSON.stringify(liveDb));
+          notifyListeners();
+        }
+      }
+    } catch (e) {
+      console.warn("pullDB explicit fetch error:", e);
+    }
+  }
+  return ensureDbPulled();
+}
+
+// Kick off initial background sync & live listener on module load
 ensureDbPulled();
 
 // Helper to resolve request context dynamically

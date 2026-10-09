@@ -1186,8 +1186,8 @@ Consumido Estimado: ${consumption} km/l | Óleo Diesel: R$ ${dieselPrice.toFixed
                 <label className="block text-[10px] font-black uppercase text-slate-500 mb-1.5">Pedágios (R$)</label>
                 <input 
                   type="number" 
-                  value={tolls || ''}
-                  onChange={e => setTolls(Math.max(0, Number(e.target.value)))}
+                  value={tolls === 0 ? '' : tolls}
+                  onChange={e => setTolls(e.target.value === '' ? 0 : Math.max(0, Number(e.target.value)))}
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono font-bold focus:outline-none"
                   placeholder="R$ 0,00"
                 />
@@ -1196,8 +1196,8 @@ Consumido Estimado: ${consumption} km/l | Óleo Diesel: R$ ${dieselPrice.toFixed
                 <label className="block text-[10px] font-black uppercase text-slate-500 mb-1.5">Diária Equipe (R$)</label>
                 <input 
                   type="number" 
-                  value={driverRate || ''}
-                  onChange={e => setDriverRate(Math.max(0, Number(e.target.value)))}
+                  value={driverRate === 0 ? '' : driverRate}
+                  onChange={e => setDriverRate(e.target.value === '' ? 0 : Math.max(0, Number(e.target.value)))}
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono font-bold focus:outline-none"
                   placeholder="R$ 0,00"
                 />
@@ -1206,8 +1206,8 @@ Consumido Estimado: ${consumption} km/l | Óleo Diesel: R$ ${dieselPrice.toFixed
                 <label className="block text-[10px] font-black uppercase text-slate-500 mb-1.5">Outros Custos (R$)</label>
                 <input 
                   type="number" 
-                  value={otherCosts || ''}
-                  onChange={e => setOtherCosts(Math.max(0, Number(e.target.value)))}
+                  value={otherCosts === 0 ? '' : otherCosts}
+                  onChange={e => setOtherCosts(e.target.value === '' ? 0 : Math.max(0, Number(e.target.value)))}
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono font-bold focus:outline-none"
                   placeholder="R$ 0,00"
                 />
@@ -1219,8 +1219,8 @@ Consumido Estimado: ${consumption} km/l | Óleo Diesel: R$ ${dieselPrice.toFixed
                 <input 
                   type="number" 
                   readOnly={tipoCalculo !== 'fixo'}
-                  value={freightValue || ''}
-                  onChange={e => setFreightValue(Math.max(0, Number(e.target.value)))}
+                  value={freightValue === 0 ? '' : freightValue}
+                  onChange={e => setFreightValue(e.target.value === '' ? 0 : Math.max(0, Number(e.target.value)))}
                   className={cn(
                     "w-full rounded-xl px-3 py-2 text-xs font-mono font-black border focus:outline-none transition-all",
                     tipoCalculo !== 'fixo'
@@ -1770,9 +1770,10 @@ Consumido Estimado: ${consumption} km/l | Óleo Diesel: R$ ${dieselPrice.toFixed
               <input
                 type="number"
                 min="0"
-                value={formValorPedagio || ''}
-                onChange={e => setFormValorPedagio(Math.max(0, Number(e.target.value)))}
+                value={formValorPedagio === 0 ? '' : formValorPedagio}
+                onChange={e => setFormValorPedagio(e.target.value === '' ? 0 : Math.max(0, Number(e.target.value)))}
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-mono font-bold"
+                placeholder="R$ 0,00"
               />
             </div>
 
@@ -1782,9 +1783,10 @@ Consumido Estimado: ${consumption} km/l | Óleo Diesel: R$ ${dieselPrice.toFixed
               <input
                 type="number"
                 min="0"
-                value={formDiariaMotorista || ''}
-                onChange={e => setFormDiariaMotorista(Math.max(0, Number(e.target.value)))}
+                value={formDiariaMotorista === 0 ? '' : formDiariaMotorista}
+                onChange={e => setFormDiariaMotorista(e.target.value === '' ? 0 : Math.max(0, Number(e.target.value)))}
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-mono font-bold"
+                placeholder="R$ 0,00"
               />
             </div>
 
@@ -1794,9 +1796,10 @@ Consumido Estimado: ${consumption} km/l | Óleo Diesel: R$ ${dieselPrice.toFixed
               <input
                 type="number"
                 min="0"
-                value={formOutrosCustos || ''}
-                onChange={e => setFormOutrosCustos(Math.max(0, Number(e.target.value)))}
+                value={formOutrosCustos === 0 ? '' : formOutrosCustos}
+                onChange={e => setFormOutrosCustos(e.target.value === '' ? 0 : Math.max(0, Number(e.target.value)))}
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-mono font-bold"
+                placeholder="R$ 0,00"
               />
             </div>
           </div>
@@ -1807,10 +1810,10 @@ Consumido Estimado: ${consumption} km/l | Óleo Diesel: R$ ${dieselPrice.toFixed
             <input
               type="number"
               min="0"
-              value={formValorFrete || ''}
-              onChange={e => setFormValorFrete(Math.max(0, Number(e.target.value)))}
+              value={formValorFrete === 0 ? '' : formValorFrete}
+              onChange={e => setFormValorFrete(e.target.value === '' ? 0 : Math.max(0, Number(e.target.value)))}
               className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-mono font-bold text-blue-600 focus:outline-none"
-              placeholder="Preço padrão do frete de venda"
+              placeholder="R$ 0,00"
             />
           </div>
 

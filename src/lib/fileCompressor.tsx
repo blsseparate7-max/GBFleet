@@ -3,8 +3,41 @@ import { Eye, FileText, X } from 'lucide-react';
 import { doc, getDoc } from 'firebase/firestore';
 import { firestore } from './firebaseClientDb';
 
-// Cache to store loaded attachments so we don't fetch them multiple times in the same session
+// In-memory cache to store loaded attachments
 const attachmentCache: Record<string, string> = {};
+
+/**
+ * Cache an attachment both in memory and sessionStorage to eliminate repeated Firestore reads.
+ */
+export function cacheAttachment(refId: string, base64: string) {
+  if (!refId || !base64) return;
+  attachmentCache[refId] = base64;
+  try {
+    sessionStorage.setItem("gbfleet_att_" + refId, base64);
+  } catch {
+    // sessionStorage quota or security restriction fallback
+  }
+}
+
+/**
+ * Retrieve cached attachment from memory or sessionStorage.
+ */
+export function getCachedAttachment(refId: string): string | null {
+  if (!refId) return null;
+  if (attachmentCache[refId]) {
+    return attachmentCache[refId];
+  }
+  try {
+    const saved = sessionStorage.getItem("gbfleet_att_" + refId);
+    if (saved) {
+      attachmentCache[refId] = saved;
+      return saved;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
 
 /**
  * Compresses an image client-side to keep base64 strings tiny (~20kb-60kb),
@@ -86,12 +119,14 @@ export function AttachmentPreview({ src, label, className }: AttachmentPreviewPr
       return;
     }
 
-    if (isOpen && isRef && !realSrc && !loading) {
-      if (attachmentCache[src]) {
-        setRealSrc(attachmentCache[src]);
-        return;
-      }
+    // Check if attachment is already cached in memory or sessionStorage
+    const cached = getCachedAttachment(src);
+    if (cached) {
+      setRealSrc(cached);
+      return;
+    }
 
+    if (isOpen && isRef && !realSrc && !loading) {
       setLoading(true);
       const docId = src.replace('attachment_ref:', '');
       const docRef = doc(firestore, 'system_state', docId);
@@ -101,7 +136,7 @@ export function AttachmentPreview({ src, label, className }: AttachmentPreviewPr
           if (snap.exists()) {
             const fileData = snap.data();
             if (fileData && fileData.base64) {
-              attachmentCache[src] = fileData.base64;
+              cacheAttachment(src, fileData.base64);
               setRealSrc(fileData.base64);
             }
           }
