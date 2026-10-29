@@ -1,12 +1,16 @@
 import React, { useState } from "react";
 import { Truck, Lock, Mail, AlertCircle, Eye, EyeOff, User, Building2, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { useAuth } from "../contexts/AuthContext";
+import { useTenant } from "../contexts/TenantContext";
 
 interface LoginProps {
   onLoginSuccess: (user: any, company: any) => void;
 }
 
 export default function Login({ onLoginSuccess }: LoginProps) {
+  const { loginInstant } = useAuth();
+  const { updateTenantCache } = useTenant();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -42,7 +46,11 @@ export default function Login({ onLoginSuccess }: LoginProps) {
         throw new Error(data.error || "Erro ao processar solicitação.");
       }
 
-      // Success
+      // Immediately hydrate Stale-While-Revalidate caches (<50ms)
+      loginInstant(data.user, data.company, data.token);
+      if (data.company) {
+        updateTenantCache(data.company);
+      }
       onLoginSuccess(data.user, data.company);
     } catch (err: any) {
       setError(err.message || "E-mail ou senha inválidos.");
@@ -50,6 +58,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
       setIsLoading(false);
     }
   };
+
 
   return (
     <div className="min-h-screen bg-slate-950 flex flex-col justify-center items-center px-4 relative overflow-hidden font-sans">

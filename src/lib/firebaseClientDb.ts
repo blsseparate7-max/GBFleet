@@ -3,6 +3,12 @@ import { getFirestore, doc, getDoc, setDoc, onSnapshot } from "firebase/firestor
 import { configJson } from "./configJson";
 import { dbTemplate } from "./dbTemplate";
 import { cacheAttachment } from "./fileCompressor";
+import {
+  setCachedUserProfile,
+  setCachedTenant,
+  invalidateTenantCache,
+  sanitizeTenantPublicData
+} from "./tenantService";
 
 // Initialize Firebase Web SDK Client
 const firebaseConfig = {
@@ -119,8 +125,13 @@ let debounceWriteTimer: any = null;
 let pendingWriteResolvers: Array<() => void> = [];
 let isWritingToFirestore = false;
 
-async function executeRemoteWrite(): Promise<void> {
+async function executeRemoteWrite(allowReset: boolean = false): Promise<void> {
   if (isWritingToFirestore) return;
+  // Data-loss guard: Never allow an uninitialized/empty template state to overwrite Firestore unless explicit reset
+  if (!allowReset && (!liveDb?.companies || (liveDb.companies.length <= 1 && (!liveDb.trucks || liveDb.trucks.length === 0)))) {
+    console.warn("[Firebase Client SDK] Guard blocked writing empty template state to Firestore.");
+    return;
+  }
   isWritingToFirestore = true;
 
   const currentResolvers = [...pendingWriteResolvers];
@@ -231,9 +242,10 @@ function initFirestoreLiveListener() {
       };
 
       if (!snap.exists()) {
-        console.log("[Firebase Client SDK] Remote gbfleet_db does not exist yet. Initializing.");
-        setDoc(docRef, liveDb).catch(console.error);
-        finishInitial();
+        if (!snap.metadata.fromCache) {
+          console.warn("[Firebase Client SDK] Remote gbfleet_db not found on server.");
+          finishInitial();
+        }
         return;
       }
 
@@ -255,8 +267,10 @@ function initFirestoreLiveListener() {
         return;
       }
 
-      // 3) Timestamp regression prevention
-      if (remoteData._writeTimestamp && liveDb._writeTimestamp && remoteData._writeTimestamp < liveDb._writeTimestamp) {
+      // 3) Timestamp regression prevention (except when local cache is an empty template and remote is populated)
+      const isLocalEmptyTemplate = (!liveDb.companies || liveDb.companies.length <= 1) && (!liveDb.trucks || liveDb.trucks.length === 0);
+      const isRemotePopulated = (remoteData.companies && remoteData.companies.length > 1) || (remoteData.trucks && remoteData.trucks.length > 0);
+      if (!isLocalEmptyTemplate && !isRemotePopulated && remoteData._writeTimestamp && liveDb._writeTimestamp && remoteData._writeTimestamp < liveDb._writeTimestamp) {
         finishInitial();
         return;
       }
@@ -373,9 +387,20 @@ function resolveContext(headers: Record<string, string>) {
 // Returns a Promise<Response> object replicating Express fetch behavior.
 // ----------------------------------------------------
 export async function emulateApiCall(path: string, options: any = {}): Promise<Response> {
-  // Ensure the database has been fully pulled/synced from Firestore on boot before executing any action.
-  // This guarantees that we never use stale or empty cached data.
-  await ensureDbPulled();
+  // Stale-While-Revalidate: If liveDb already has cached companies/users in memory (from localStorage or previous sync),
+  // DO NOT block the UI waiting for the initial network pull. Trigger ensureDbPulled() in the background (<5ms response)
+  // while onSnapshot silently updates the UI if remote changes exist.
+  const hasHydratedCache =
+    Array.isArray(liveDb?.users) &&
+    liveDb.users.length > 0 &&
+    ((Array.isArray(liveDb?.companies) && liveDb.companies.length > 1) ||
+      (Array.isArray(liveDb?.trucks) && liveDb.trucks.length > 0));
+
+  if (hasHydratedCache) {
+    ensureDbPulled().catch(() => {});
+  } else {
+    await ensureDbPulled();
+  }
 
   const method = (options.method || "GET").toUpperCase();
   const headers = options.headers || {};
@@ -386,7 +411,7 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
 
   const ctx = resolveContext(headers);
 
-  // Helper helper to return JSON response mock
+  // Helper to return JSON response mock
   const jsonResponse = (data: any, status: number = 200) => {
     return new Response(JSON.stringify(data), {
       status,
@@ -406,14 +431,38 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       });
     }
 
-    // 2) POST /api/auth/login
+    // 1.5) GET /api/auth/me (Server/Client Superadmin & Role verification)
+    if (cleanPath === "/api/auth/me" && method === "GET") {
+      if (!ctx.user) {
+        return jsonResponse({ authorized: false, isSaaSAdmin: false, role: "guest" }, 401);
+      }
+      const isSaaSAdmin = ctx.user.role === "superadmin" || ctx.user.role === "saas_admin";
+      return jsonResponse({
+        authorized: true,
+        isSaaSAdmin,
+        role: ctx.user.role || "admin",
+        uid: ctx.user.id,
+        tenantId: ctx.companyId
+      });
+    }
+
+    // 2) POST /api/auth/login (Direct O(1) lookup + Stale-While-Revalidate cache population)
     if (cleanPath === "/api/auth/login" && method === "POST") {
       const emailStr = String(body.email || "").toLowerCase().trim();
       const passwordStr = String(body.password || "");
 
-      const user = liveDb.users.find((u: any) => u.email?.toLowerCase() === emailStr);
+      let user = liveDb.users.find((u: any) => u.email?.toLowerCase() === emailStr);
+      // If local cache did not have this user yet, pull fresh from Firestore once
+      if (!user) {
+        await pullDB(true);
+        user = liveDb.users.find((u: any) => u.email?.toLowerCase() === emailStr);
+      }
       if (!user) {
         return jsonResponse({ error: "E-mail ou senha incorretos." }, 401);
+      }
+
+      if (user.ativo === false) {
+        return jsonResponse({ error: "Conta de usuário desativada pelo administrador." }, 403);
       }
 
       const correctPassword = String(user.password || "demo");
@@ -421,13 +470,50 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
         return jsonResponse({ error: "E-mail ou senha incorretos." }, 401);
       }
 
-      const company = liveDb.companies.find((c: any) => c.id === user.companyId) || { id: user.companyId, nome: "GBFleet Demo" };
-      return jsonResponse({ success: true, user, company });
+      const rawCompany = liveDb.companies.find((c: any) => c.id === user.companyId) || { id: user.companyId, nome: "GBFleet Demo" };
+      const company = sanitizeTenantPublicData(rawCompany);
+
+      // Immediately hydrate Stale-While-Revalidate caches (<50ms on subsequent reloads)
+      setCachedUserProfile(user.id, user);
+      if (company?.id) {
+        setCachedTenant(company.id, company);
+      }
+
+      const tokenPayload = btoa(
+        JSON.stringify({
+          uid: user.id,
+          email: user.email,
+          role: user.role,
+          tenantId: user.companyId,
+          iat: Date.now()
+        })
+      );
+      const token = `gbf_${tokenPayload}`;
+      try {
+        localStorage.setItem("gbfleet_session_token", token);
+      } catch (e) {}
+
+      return jsonResponse({ success: true, user, company, token });
     }
 
-    // Auth validation middleware logic
-    if (cleanPath !== "/api/reset" && !ctx.user) {
+    // Auth validation middleware logic (Note: /api/reset is NO LONGER exempted from authentication!)
+    if (!ctx.user) {
       return jsonResponse({ error: "Sessão expirada. Faça login novamente." }, 401);
+    }
+
+    // Multi-Tenant Zero-Trust Guard: Block cross-tenant body/query tampering for non-superadmin users
+    const requestedTenantId = body?.tenantId || body?.companyId;
+    if (
+      requestedTenantId &&
+      ctx.user &&
+      ctx.user.role !== "superadmin" &&
+      ctx.user.role !== "saas_admin" &&
+      requestedTenantId !== ctx.companyId
+    ) {
+      return jsonResponse(
+        { error: "Acesso negado (403 Forbidden): Violação de isolamento Multi-Tenant detectada." },
+        403
+      );
     }
 
     // 3) PUT /api/auth/profile
@@ -450,25 +536,239 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
         dbUser.password = body.password.trim();
       }
 
+      let dbCompany = liveDb.companies.find((c: any) => c.id === dbUser.companyId);
+      if (dbCompany) {
+        if (body.logoUrl !== undefined) dbCompany.logoUrl = body.logoUrl;
+        if (body.logoSize !== undefined) {
+          const parsedSize = Number(body.logoSize);
+          dbCompany.logoSize = !isNaN(parsedSize) && parsedSize >= 24 && parsedSize <= 160 ? parsedSize : 56;
+        }
+        invalidateTenantCache(dbCompany.id);
+        setCachedTenant(dbCompany.id, sanitizeTenantPublicData(dbCompany));
+      }
+
+      setCachedUserProfile(dbUser.id, dbUser);
       await persistDB();
-      return jsonResponse({ success: true, user: dbUser });
+      return jsonResponse({ success: true, user: dbUser, company: dbCompany });
     }
+
+
+    // Helper to compute normalized licensing and billing fields for any company (tenant)
+    const computeCompanyLicenseState = (c: any, mainUser?: any) => {
+      const created = new Date(c.createdAt || new Date());
+      const now = new Date();
+      const trialDays = c.trialDays !== undefined ? Number(c.trialDays) : 30;
+      const elapsedDays = Math.floor((now.getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
+      const defaultDueDate = new Date(created.getTime() + trialDays * 86400000).toISOString().split("T")[0];
+
+      const trialEndDate = c.trialEndDate || defaultDueDate;
+      const planExpiresAt = c.planExpiresAt || c.dataVencimento || trialEndDate;
+      const dataVencimento = planExpiresAt;
+      const gracePeriodDays = c.gracePeriodDays !== undefined ? Number(c.gracePeriodDays) : 0;
+      const dueDateDay =
+        c.dueDateDay !== undefined
+          ? Number(c.dueDateDay)
+          : Number((planExpiresAt || "").split("-")[2]) || 10;
+
+      const limiteCaminhoes = c.limiteCaminhoes ?? 10;
+      const valorPorCaminhao = c.valorPorCaminhao ?? 30;
+      const calculatedFee = limiteCaminhoes * valorPorCaminhao;
+      const planPrice =
+        c.planPrice !== undefined
+          ? Number(c.planPrice)
+          : c.monthlyFeeOverride !== undefined
+          ? Number(c.monthlyFeeOverride)
+          : c.valorMensalidade !== undefined
+          ? Number(c.valorMensalidade)
+          : calculatedFee;
+      const monthlyFeeOverride = c.monthlyFeeOverride !== undefined ? Number(c.monthlyFeeOverride) : planPrice;
+      const valorMensalidade = planPrice;
+
+      const promoEnabled = Boolean(c.promoEnabled);
+      const promoFirstPaymentAmount = c.promoFirstPaymentAmount !== undefined ? Number(c.promoFirstPaymentAmount) : 0;
+      const effectiveChargeAmount =
+        promoEnabled && promoFirstPaymentAmount > 0
+          ? promoFirstPaymentAmount
+          : planPrice > 0
+          ? planPrice
+          : 149.9;
+
+      const planName =
+        c.planName ||
+        (c.plano === "Basic"
+          ? "Plano Frota Essencial"
+          : c.plano === "Pro"
+          ? "Plano Transportadora Pro"
+          : c.plano
+          ? `Plano ${c.plano}`
+          : "Plano Transportadora Pro");
+
+      const isActive = c.isActive !== undefined ? Boolean(c.isActive) : c.status !== "inativo";
+
+      // Calculate exact expiration vs today and grace period cutoff (end of day 23:59:59)
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      const expStart = new Date(planExpiresAt + "T00:00:00");
+      const daysUntilExpiration = isNaN(expStart.getTime())
+        ? Math.max(0, trialDays - elapsedDays)
+        : Math.round((expStart.getTime() - todayStart.getTime()) / 86400000);
+
+      const cutoffDate = new Date(planExpiresAt + "T23:59:59");
+      if (!isNaN(cutoffDate.getTime()) && gracePeriodDays > 0) {
+        cutoffDate.setDate(cutoffDate.getDate() + gracePeriodDays);
+      }
+      const isPastGracePeriod = !isNaN(cutoffDate.getTime()) ? now.getTime() > cutoffDate.getTime() : false;
+
+      const rawPlanStatus: "active" | "trial" | "suspended" | "canceled" =
+        c.planStatus || (!isActive ? "suspended" : c.pago ? "active" : "trial");
+
+      const isManuallySuspended =
+        !isActive ||
+        c.status === "inativo" ||
+        rawPlanStatus === "suspended" ||
+        rawPlanStatus === "canceled";
+
+      const isBlocked = isManuallySuspended || isPastGracePeriod;
+      const isExpiringWarning = !isBlocked && daysUntilExpiration <= 5;
+
+      let licenseBadge: "active" | "trial" | "expiring" | "expired" | "suspended" = "active";
+      if (isManuallySuspended) {
+        licenseBadge = "suspended";
+      } else if (isPastGracePeriod) {
+        licenseBadge = "expired";
+      } else if (daysUntilExpiration <= 5) {
+        licenseBadge = "expiring";
+      } else if (rawPlanStatus === "trial" || !c.pago) {
+        licenseBadge = "trial";
+      }
+
+      return {
+        ...c,
+        planName,
+        planStatus: rawPlanStatus,
+        isActive,
+        status: isActive ? "ativo" : "inativo",
+        planExpiresAt,
+        dataVencimento,
+        trialDays,
+        trialEndDate,
+        dueDateDay,
+        limiteCaminhoes,
+        valorPorCaminhao,
+        planPrice,
+        monthlyFeeOverride,
+        valorMensalidade,
+        promoEnabled,
+        promoFirstPaymentAmount,
+        effectiveChargeAmount,
+        gracePeriodDays,
+        cnpjCpf: c.cnpjCpf || "",
+        ownerName: c.ownerName || mainUser?.nome || c.nome || "",
+        ownerEmail: c.ownerEmail || mainUser?.email || "",
+        ownerPhone: c.ownerPhone || "",
+        daysRemaining: Math.max(0, daysUntilExpiration),
+        daysUntilExpiration,
+        isPastGracePeriod,
+        isBlocked,
+        isExpiringWarning,
+        licenseBadge
+      };
+    };
+
+    const computeNext30Days = (currentExpiresAt?: string): string => {
+      const today = new Date();
+      today.setHours(12, 0, 0, 0);
+      let baseDate = today;
+      if (currentExpiresAt && /^\d{4}-\d{2}-\d{2}$/.test(currentExpiresAt)) {
+        const parsed = new Date(currentExpiresAt + "T12:00:00");
+        if (!isNaN(parsed.getTime()) && parsed.getTime() > today.getTime()) {
+          baseDate = parsed;
+        }
+      }
+      const nextDate = new Date(baseDate.getTime() + 30 * 24 * 60 * 60 * 1000);
+      return nextDate.toISOString().split("T")[0];
+    };
+
+    // 3.5) POST /api/saas/payment/confirm-unlock (Zero-Trust: Verifies paymentId on backend MP API first!)
+    if (cleanPath === "/api/saas/payment/confirm-unlock" && method === "POST") {
+      const targetTenantId = body.tenantId || ctx.companyId;
+      const paymentId = String(body.paymentId || "").trim();
+      if (!paymentId || !/^\d+$/.test(paymentId)) {
+        return jsonResponse(
+          { error: "Desbloqueio bloqueado (403 Forbidden): ID de pagamento numérico válido é obrigatório." },
+          403
+        );
+      }
+
+      const comp = (liveDb.companies || []).find((c: any) => c.id === targetTenantId);
+      if (!comp) {
+        return jsonResponse({ error: "Empresa não encontrada para desbloqueio." }, 404);
+      }
+
+      // Verify on the server-side Mercado Pago endpoint before allowing local unlock
+      try {
+        const checkRes = await fetch(`/api/saas/payment/check-status/${encodeURIComponent(paymentId)}`);
+        if (!checkRes.ok) {
+          return jsonResponse(
+            { error: "Desbloqueio bloqueado: Pagamento não confirmado na API oficial do Mercado Pago." },
+            403
+          );
+        }
+        const checkData = await checkRes.json();
+        if (checkData.status !== "approved" || checkData.tenantId !== targetTenantId) {
+          return jsonResponse(
+            { error: "Desbloqueio bloqueado: O pagamento informado ainda não consta como aprovado." },
+            403
+          );
+        }
+      } catch {
+        return jsonResponse(
+          { error: "Falha ao validar autenticidade do pagamento junto ao servidor." },
+          502
+        );
+      }
+
+      if (comp.lastApprovedPaymentId !== paymentId) {
+        const nextExp = computeNext30Days(comp.planExpiresAt || comp.dataVencimento);
+        comp.planExpiresAt = nextExp;
+        comp.dataVencimento = nextExp;
+        comp.planStatus = "active";
+        comp.isActive = true;
+        comp.status = "ativo";
+        comp.pago = true;
+        if (comp.promoEnabled) {
+          comp.promoEnabled = false;
+        }
+        comp.lastApprovedPaymentId = paymentId;
+        comp.lastPaymentAt = new Date().toISOString();
+        invalidateTenantCache(comp.id);
+        await persistDB(true);
+      }
+
+      const mainUser = (liveDb.users || []).find((u: any) => u.companyId === comp.id && u.role === "admin");
+      const updatedState = computeCompanyLicenseState(sanitizeTenantPublicData(comp), mainUser);
+      setCachedTenant(comp.id, updatedState);
+      return jsonResponse({
+        success: true,
+        company: updatedState
+      });
+    }
+
+
 
     // 4) GET /api/data
     if (cleanPath === "/api/data" && method === "GET") {
+      const rawCompany = ctx.currentCompany;
+      const mainAdmin = rawCompany
+        ? (liveDb.users || []).find((u: any) => u.companyId === rawCompany.id && u.role === "admin")
+        : null;
+      const currentCompany = rawCompany ? computeCompanyLicenseState(rawCompany, mainAdmin) : null;
+
       let isBlocked = false;
-      let daysRemaining = 30;
+      let daysRemaining = currentCompany?.daysRemaining ?? 30;
 
-      const currentCompany = ctx.currentCompany;
       if (currentCompany && ctx.user.role !== "superadmin") {
-        const created = new Date(currentCompany.createdAt || new Date());
-        const now = new Date();
-        const elapsedDays = Math.floor((now.getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
-        daysRemaining = Math.max(0, (currentCompany.trialDays || 30) - elapsedDays);
-
-        if (currentCompany.status === "inativo" || (!currentCompany.pago && daysRemaining <= 0)) {
-          isBlocked = true;
-        }
+        isBlocked = currentCompany.isBlocked;
       }
 
       if (isBlocked) {
@@ -568,28 +868,15 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
             .filter((cf: any) => cf.companyId === c.id && cf.tipo === "saida")
             .reduce((sum: number, cf: any) => sum + (Number(cf.valor) || 0), 0);
 
-          const created = new Date(c.createdAt || new Date());
-          const now = new Date();
-          const elapsedDays = Math.floor((now.getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
-          const daysRemaining = Math.max(0, (c.trialDays || 30) - elapsedDays);
-
-          const limiteCaminhoes = c.limiteCaminhoes ?? 10;
-          const valorPorCaminhao = c.valorPorCaminhao ?? 30;
-          const valorMensalidade = c.valorMensalidade ?? (limiteCaminhoes * valorPorCaminhao);
-          const dataVencimento = c.dataVencimento ?? new Date(created.getTime() + (c.trialDays || 30) * 86400000).toISOString().split('T')[0];
+          const normalized = computeCompanyLicenseState(c, mainUser);
 
           return {
-            ...c,
-            limiteCaminhoes,
-            valorPorCaminhao,
-            valorMensalidade,
-            dataVencimento,
+            ...normalized,
             truckCount,
             driverCount,
             freightCount,
             userCount,
             balance: entries - egress,
-            daysRemaining,
             adminUser: mainUser ? {
               id: mainUser.id,
               nome: mainUser.nome,
@@ -607,7 +894,35 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
         return jsonResponse({ error: "Não autorizado." }, 403);
       }
 
-      const { nome, adminNome, adminEmail, adminPassword, plano, status, pago, trialDays, dataVencimento, limiteCaminhoes, valorPorCaminhao, valorMensalidade } = body;
+      const {
+        nome,
+        adminNome,
+        adminEmail,
+        adminPassword,
+        plano,
+        planName,
+        planStatus,
+        isActive,
+        planExpiresAt,
+        status,
+        pago,
+        trialDays,
+        trialEndDate,
+        dueDateDay,
+        monthlyFeeOverride,
+        planPrice,
+        promoEnabled,
+        promoFirstPaymentAmount,
+        gracePeriodDays,
+        cnpjCpf,
+        ownerName,
+        ownerEmail,
+        ownerPhone,
+        dataVencimento,
+        limiteCaminhoes,
+        valorPorCaminhao,
+        valorMensalidade
+      } = body;
       if (!nome || !adminEmail) {
         return jsonResponse({ error: "Nome da empresa e e-mail do admin são obrigatórios." }, 400);
       }
@@ -619,26 +934,50 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       }
 
       const createdDate = new Date();
-      const defaultDueDate = new Date(createdDate.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      const trialDaysNum = trialDays !== undefined ? Number(trialDays) : 30;
+      const defaultDueDate = new Date(createdDate.getTime() + trialDaysNum * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
       const limiteCaminhoesNum = limiteCaminhoes !== undefined ? Number(limiteCaminhoes) : 10;
       const valorPorCaminhaoNum = valorPorCaminhao !== undefined ? Number(valorPorCaminhao) : 30;
-      const valorMensalidadeNum = valorMensalidade !== undefined ? Number(valorMensalidade) : (limiteCaminhoesNum * valorPorCaminhaoNum);
+      const valorMensalidadeNum =
+        planPrice !== undefined ? Number(planPrice) :
+        monthlyFeeOverride !== undefined ? Number(monthlyFeeOverride) :
+        valorMensalidade !== undefined ? Number(valorMensalidade) :
+        (limiteCaminhoesNum * valorPorCaminhaoNum);
+
+      const effectiveDueDate = planExpiresAt || dataVencimento || defaultDueDate;
+      const activeBool = isActive !== undefined ? Boolean(isActive) : (status !== "inativo");
+      const resolvedStatus = planStatus || (pago ? "active" : "trial");
 
       const newCompany = {
         id: "comp_" + Math.random().toString(36).substr(2, 9),
         nome: nome.trim(),
-        plano: plano || "Enterprise",
+        plano: plano || "Pro",
+        planName: planName || (plano ? `Plano ${plano}` : "Plano Transportadora Pro"),
+        planStatus: resolvedStatus,
+        isActive: activeBool,
         createdAt: createdDate.toISOString(),
-        status: status || "ativo",
-        pago: pago !== undefined ? pago : false,
-        trialDays: trialDays ? Number(trialDays) : 30,
+        status: activeBool ? "ativo" : "inativo",
+        pago: pago !== undefined ? Boolean(pago) : resolvedStatus === "active",
+        trialDays: trialDaysNum,
+        trialEndDate: trialEndDate || defaultDueDate,
+        planExpiresAt: effectiveDueDate,
+        dataVencimento: effectiveDueDate,
+        dueDateDay: dueDateDay !== undefined ? Number(dueDateDay) : (Number(effectiveDueDate.split("-")[2]) || 10),
+        monthlyFeeOverride: valorMensalidadeNum,
+        planPrice: valorMensalidadeNum,
+        valorMensalidade: valorMensalidadeNum,
+        promoEnabled: Boolean(promoEnabled),
+        promoFirstPaymentAmount: promoFirstPaymentAmount !== undefined ? Number(promoFirstPaymentAmount) : 0,
+        gracePeriodDays: gracePeriodDays !== undefined ? Number(gracePeriodDays) : 0,
+        cnpjCpf: cnpjCpf ? String(cnpjCpf).trim() : "",
+        ownerName: ownerName ? String(ownerName).trim() : (adminNome ? adminNome.trim() : nome.trim()),
+        ownerEmail: ownerEmail ? String(ownerEmail).toLowerCase().trim() : emailLower,
+        ownerPhone: ownerPhone ? String(ownerPhone).trim() : "",
         supportCode: null,
         supportCodeCreatedAt: null,
         supportAuthorizedUntil: null,
-        dataVencimento: dataVencimento || defaultDueDate,
         limiteCaminhoes: limiteCaminhoesNum,
-        valorPorCaminhao: valorPorCaminhaoNum,
-        valorMensalidade: valorMensalidadeNum
+        valorPorCaminhao: valorPorCaminhaoNum
       };
 
       const newAdmin = {
@@ -653,9 +992,87 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       liveDb.companies.push(newCompany);
       liveDb.users.push(newAdmin);
 
-      await persistDB();
-      return jsonResponse({ success: true, company: newCompany, admin: newAdmin });
+      await persistDB(true);
+      return jsonResponse({ success: true, company: computeCompanyLicenseState(newCompany, newAdmin), admin: newAdmin });
     }
+
+    // 6.5) POST /api/superadmin/companies/:id/renew (+30 Days Manual Renewal)
+    if (cleanPath.endsWith("/renew") && cleanPath.startsWith("/api/superadmin/companies/") && method === "POST") {
+      if (ctx.user.role !== "superadmin") {
+        return jsonResponse({ error: "Não autorizado." }, 403);
+      }
+      const parts = cleanPath.split("/");
+      const targetId = parts[parts.length - 2];
+      const comp = (liveDb.companies || []).find((c: any) => c.id === targetId);
+      if (!comp) {
+        return jsonResponse({ error: "Empresa não encontrada." }, 404);
+      }
+
+      const nextExp = computeNext30Days(comp.planExpiresAt || comp.dataVencimento);
+      comp.planExpiresAt = nextExp;
+      comp.dataVencimento = nextExp;
+      comp.planStatus = "active";
+      comp.isActive = true;
+      comp.status = "ativo";
+      comp.pago = true;
+      comp.lastPaymentAt = new Date().toISOString();
+
+      await persistDB(true);
+      const mainUser = (liveDb.users || []).find((u: any) => u.companyId === comp.id && u.role === "admin");
+      const renewedComp = computeCompanyLicenseState(sanitizeTenantPublicData(comp), mainUser);
+      invalidateTenantCache(comp.id);
+      setCachedTenant(comp.id, renewedComp);
+      return jsonResponse({
+        success: true,
+        company: renewedComp,
+        newExpiresAt: nextExp
+      });
+    }
+
+    // 6.6) POST /api/superadmin/companies/:id/toggle-status (Quick Manual Block / Unblock)
+    if (cleanPath.endsWith("/toggle-status") && cleanPath.startsWith("/api/superadmin/companies/") && method === "POST") {
+      if (ctx.user.role !== "superadmin") {
+        return jsonResponse({ error: "Não autorizado." }, 403);
+      }
+      const parts = cleanPath.split("/");
+      const targetId = parts[parts.length - 2];
+      const comp = (liveDb.companies || []).find((c: any) => c.id === targetId);
+      if (!comp) {
+        return jsonResponse({ error: "Empresa não encontrada." }, 404);
+      }
+
+      const mainUser = (liveDb.users || []).find((u: any) => u.companyId === comp.id && u.role === "admin");
+      const currentState = computeCompanyLicenseState(comp, mainUser);
+
+      if (currentState.isBlocked) {
+        // Unblock company
+        comp.isActive = true;
+        comp.status = "ativo";
+        comp.planStatus = "active";
+        comp.pago = true;
+        // If it was blocked due to past expiration date, advance expiration by +30 days so it unlocks cleanly
+        if (currentState.isPastGracePeriod) {
+          const nextExp = computeNext30Days(comp.planExpiresAt || comp.dataVencimento);
+          comp.planExpiresAt = nextExp;
+          comp.dataVencimento = nextExp;
+        }
+      } else {
+        // Block / Suspend company manually
+        comp.isActive = false;
+        comp.status = "inativo";
+        comp.planStatus = "suspended";
+      }
+
+      await persistDB(true);
+      const toggledComp = computeCompanyLicenseState(sanitizeTenantPublicData(comp), mainUser);
+      invalidateTenantCache(comp.id);
+      setCachedTenant(comp.id, toggledComp);
+      return jsonResponse({
+        success: true,
+        company: toggledComp
+      });
+    }
+
 
     // 7) PUT /api/superadmin/companies/:id
     if (cleanPath.startsWith("/api/superadmin/companies/") && method === "PUT") {
@@ -673,16 +1090,49 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
 
       if (body.nome !== undefined) comp.nome = body.nome.trim();
       if (body.plano !== undefined) comp.plano = body.plano;
-      if (body.status !== undefined) comp.status = body.status;
-      if (body.pago !== undefined) comp.pago = body.pago;
+      if (body.planName !== undefined) comp.planName = body.planName.trim();
+      if (body.status !== undefined) {
+        comp.status = body.status;
+        comp.isActive = body.status === "ativo";
+      }
+      if (body.isActive !== undefined) {
+        comp.isActive = Boolean(body.isActive);
+        comp.status = Boolean(body.isActive) ? "ativo" : "inativo";
+      }
+      if (body.planStatus !== undefined) {
+        comp.planStatus = body.planStatus;
+        if (body.planStatus === "suspended" || body.planStatus === "canceled") {
+          comp.isActive = false;
+          comp.status = "inativo";
+        } else if (body.isActive === undefined && body.status === undefined) {
+          comp.isActive = true;
+          comp.status = "ativo";
+        }
+      }
+      if (body.pago !== undefined) comp.pago = Boolean(body.pago);
       if (body.trialDays !== undefined) {
         const val = Number(body.trialDays);
         comp.trialDays = isNaN(val) ? 30 : val;
       }
+      if (body.trialEndDate !== undefined) comp.trialEndDate = body.trialEndDate;
       if (body.createdAt !== undefined) comp.createdAt = body.createdAt;
-      if (body.dataVencimento !== undefined) comp.dataVencimento = body.dataVencimento;
+      if (body.dataVencimento !== undefined) {
+        comp.dataVencimento = body.dataVencimento;
+        comp.planExpiresAt = body.dataVencimento;
+      }
+      if (body.planExpiresAt !== undefined) {
+        comp.planExpiresAt = body.planExpiresAt;
+        comp.dataVencimento = body.planExpiresAt;
+      }
+      if (body.dueDateDay !== undefined) comp.dueDateDay = Number(body.dueDateDay) || 10;
+      if (body.gracePeriodDays !== undefined) comp.gracePeriodDays = Number(body.gracePeriodDays) || 0;
+      if (body.promoEnabled !== undefined) comp.promoEnabled = Boolean(body.promoEnabled);
+      if (body.promoFirstPaymentAmount !== undefined) comp.promoFirstPaymentAmount = Number(body.promoFirstPaymentAmount) || 0;
+      if (body.cnpjCpf !== undefined) comp.cnpjCpf = String(body.cnpjCpf).trim();
+      if (body.ownerName !== undefined) comp.ownerName = String(body.ownerName).trim();
+      if (body.ownerEmail !== undefined) comp.ownerEmail = String(body.ownerEmail).toLowerCase().trim();
+      if (body.ownerPhone !== undefined) comp.ownerPhone = String(body.ownerPhone).trim();
       
-      // Robust handling of fleet limit and pricing variables with logging
       if (body.limiteCaminhoes !== undefined) {
         const parsedLim = Number(body.limiteCaminhoes);
         comp.limiteCaminhoes = isNaN(parsedLim) ? 10 : parsedLim;
@@ -691,18 +1141,20 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
         const parsedVal = Number(body.valorPorCaminhao);
         comp.valorPorCaminhao = isNaN(parsedVal) ? 30 : parsedVal;
       }
-      if (body.valorMensalidade !== undefined) {
-        const parsedMensal = Number(body.valorMensalidade);
-        comp.valorMensalidade = isNaN(parsedMensal) ? ((comp.limiteCaminhoes || 10) * (comp.valorPorCaminhao || 30)) : parsedMensal;
-      }
 
-      console.log(`[Firebase Client SDK] Updating company subscription: ${targetId}`, {
-        nome: comp.nome,
-        limiteCaminhoes: comp.limiteCaminhoes,
-        valorPorCaminhao: comp.valorPorCaminhao,
-        valorMensalidade: comp.valorMensalidade,
-        dataVencimento: comp.dataVencimento
-      });
+      const rawFee =
+        body.planPrice !== undefined
+          ? Number(body.planPrice)
+          : body.monthlyFeeOverride !== undefined
+          ? Number(body.monthlyFeeOverride)
+          : body.valorMensalidade !== undefined
+          ? Number(body.valorMensalidade)
+          : undefined;
+      if (rawFee !== undefined && !isNaN(rawFee)) {
+        comp.valorMensalidade = rawFee;
+        comp.planPrice = rawFee;
+        comp.monthlyFeeOverride = rawFee;
+      }
 
       // Associated Admin user edit (dados cadastrais e redefinição de senha)
       const companyAdmin = liveDb.users.find((u: any) => u.companyId === targetId && u.role === "admin");
@@ -725,9 +1177,13 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
         }
       }
 
-      await persistDB();
-      return jsonResponse({ success: true, company: comp });
+      await persistDB(true);
+      const updatedComp = computeCompanyLicenseState(sanitizeTenantPublicData(comp), companyAdmin);
+      invalidateTenantCache(comp.id);
+      setCachedTenant(comp.id, updatedComp);
+      return jsonResponse({ success: true, company: updatedComp });
     }
+
 
     // 8) DELETE /api/superadmin/companies/:id
     if (cleanPath.startsWith("/api/superadmin/companies/") && method === "DELETE") {
@@ -778,24 +1234,41 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       return jsonResponse({ success: true, authorizedUntil: comp.supportAuthorizedUntil });
     }
 
-    // 10) POST /api/support/generate
+    // 10) POST /api/support/generate (Alphanumeric 6-char code with 15-min expiration)
     if (cleanPath === "/api/support/generate" && method === "POST") {
       const activeComp = ctx.currentCompany;
       if (!activeComp) {
         return jsonResponse({ error: "Empresa não resolvida." }, 404);
       }
 
-      const code = "GB-" + Math.floor(1000 + Math.random() * 9000);
+      const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+      let randomPart = "";
+      for (let i = 0; i < 6; i++) {
+        randomPart += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+      const code = "GB-" + randomPart;
       activeComp.supportCode = code;
       activeComp.supportCodeCreatedAt = new Date().toISOString();
+      activeComp.supportAuthorizedUntil = null;
 
       await persistDB();
       return jsonResponse({ success: true, supportCode: code });
     }
 
-    // 11) POST /api/reset
+    // 11) POST /api/reset (Strictly locked to Superadmin with explicit confirmation)
     if (cleanPath === "/api/reset" && method === "POST") {
-      // Restore initial data but preserve admin master
+      if (!ctx.user || (ctx.user.role !== "superadmin" && ctx.user.role !== "saas_admin")) {
+        return jsonResponse(
+          { error: "Acesso negado (403 Forbidden): Apenas o Superadmin pode executar reset de ambiente." },
+          403
+        );
+      }
+      if (body.confirmReset !== "RESET_CONFIRMED_BY_SUPERADMIN") {
+        return jsonResponse(
+          { error: "Confirmação de segurança obrigatória (confirmReset) ausente." },
+          400
+        );
+      }
       const baseObj = JSON.parse(JSON.stringify(dbTemplate));
       const superadmin = liveDb.users.find((u: any) => u.role === "superadmin");
       if (superadmin) {
@@ -806,6 +1279,7 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       await persistDB();
       return jsonResponse({ success: true });
     }
+
 
     // 12) POST /api/fuel_logs
     if (cleanPath === "/api/fuel_logs" && method === "POST") {
@@ -893,8 +1367,8 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       const parts = cleanPath.split("/");
       const targetId = parts[parts.length - 1];
 
-      const matchLog = liveDb.fuel_logs.find((f: any) => f.id === targetId);
-      if (!matchLog) return jsonResponse({ error: "Abastecimento não encontrado." }, 404);
+      const matchLog = liveDb.fuel_logs.find((f: any) => f.id === targetId && f.companyId === ctx.companyId);
+      if (!matchLog) return jsonResponse({ error: "Abastecimento não encontrado ou acesso negado." }, 404);
 
       const oldLog = { ...matchLog };
 
@@ -910,15 +1384,17 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       matchLog.litrosArla = body.litrosArla ? Number(body.litrosArla) : undefined;
       matchLog.valorArla = body.valorArla ? Number(body.valorArla) : undefined;
 
-      // Filter out old diesel/arla automatic expense entries for this fuel log
+      // Filter out old diesel/arla automatic expense entries for this fuel log (scoped to ctx.companyId)
       liveDb.expenses = liveDb.expenses.filter((e: any) => {
+        if (e.companyId !== ctx.companyId) return true;
         const isFuelSync = e.fuelLogId === targetId || (e.documento === "Auto-Abastecimento" && e.truckId === oldLog.truckId && Number(e.valor) === Number(oldLog.valor) && e.data === oldLog.data);
         const isArlaSync = e.fuelLogId === targetId && (e.tipo?.includes("Arla") || e.documento === "Auto-Abastecimento-Arla");
         return !isFuelSync && !isArlaSync;
       });
 
-      // Filter out old diesel/arla automatic cash flow entries for this fuel log
+      // Filter out old diesel/arla automatic cash flow entries for this fuel log (scoped to ctx.companyId)
       liveDb.cash_flow = liveDb.cash_flow.filter((c: any) => {
+        if (c.companyId !== ctx.companyId) return true;
         const isFuelSync = c.fuelLogId === targetId || c.id === `cash_fuel_${targetId}` || (c.tipo === "saida" && c.categoria?.includes("Diesel") && Number(c.valor) === Number(oldLog.valor) && c.data === oldLog.data && c.descricao?.includes(oldLog.truckId));
         const isArlaSync = c.fuelLogId === targetId || c.id === `cash_arla_${targetId}` || (c.tipo === "saida" && c.categoria?.includes("Arla") && Number(c.valor) === Number(oldLog.valorArla) && c.data === oldLog.data && c.descricao?.includes(oldLog.truckId));
         return !isFuelSync && !isArlaSync;
@@ -989,19 +1465,19 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       const parts = cleanPath.split("/");
       const targetId = parts[parts.length - 1];
 
-      const oldLogIndex = liveDb.fuel_logs.findIndex((f: any) => f.id === targetId);
+      const oldLogIndex = liveDb.fuel_logs.findIndex((f: any) => f.id === targetId && f.companyId === ctx.companyId);
       if (oldLogIndex === -1) {
-        return jsonResponse({ error: "Abastecimento não encontrado." }, 404);
+        return jsonResponse({ error: "Abastecimento não encontrado ou acesso negado." }, 404);
       }
       const oldLog = liveDb.fuel_logs[oldLogIndex];
 
       liveDb.fuel_logs.splice(oldLogIndex, 1);
 
-      // Remove associated expense
-      liveDb.expenses = liveDb.expenses.filter((e: any) => !(e.fuelLogId === targetId || (e.documento === "Auto-Abastecimento" && e.truckId === oldLog.truckId && Number(e.valor) === Number(oldLog.valor) && e.data === oldLog.data)));
+      // Remove associated expense (scoped to ctx.companyId)
+      liveDb.expenses = liveDb.expenses.filter((e: any) => e.companyId !== ctx.companyId || !(e.fuelLogId === targetId || (e.documento === "Auto-Abastecimento" && e.truckId === oldLog.truckId && Number(e.valor) === Number(oldLog.valor) && e.data === oldLog.data)));
 
-      // Remove associated cash flow
-      liveDb.cash_flow = liveDb.cash_flow.filter((c: any) => !(c.fuelLogId === targetId || (c.tipo === "saida" && c.categoria?.includes("Diesel") && Number(c.valor) === Number(oldLog.valor) && c.data === oldLog.data && c.descricao?.includes(oldLog.truckId))));
+      // Remove associated cash flow (scoped to ctx.companyId)
+      liveDb.cash_flow = liveDb.cash_flow.filter((c: any) => c.companyId !== ctx.companyId || !(c.fuelLogId === targetId || (c.tipo === "saida" && c.categoria?.includes("Diesel") && Number(c.valor) === Number(oldLog.valor) && c.data === oldLog.data && c.descricao?.includes(oldLog.truckId))));
 
       await persistDB();
       return jsonResponse({ success: true });
@@ -1044,9 +1520,9 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
     if (cleanPath.startsWith("/api/expenses/") && method === "PUT") {
       const parts = cleanPath.split("/");
       const targetId = parts[parts.length - 1];
-      const idx = liveDb.expenses.findIndex((e: any) => e.id === targetId);
+      const idx = liveDb.expenses.findIndex((e: any) => e.id === targetId && e.companyId === ctx.companyId);
       if (idx === -1) {
-        return jsonResponse({ error: "Despesa não encontrada." }, 404);
+        return jsonResponse({ error: "Despesa não encontrada ou acesso negado." }, 404);
       }
 
       const oldExpense = { ...liveDb.expenses[idx] };
@@ -1091,22 +1567,23 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
     if (cleanPath.startsWith("/api/expenses/") && method === "DELETE") {
       const parts = cleanPath.split("/");
       const targetId = parts[parts.length - 1];
-      const idx = liveDb.expenses.findIndex((e: any) => e.id === targetId);
-      if (idx !== -1) {
-        const oldExpense = liveDb.expenses[idx];
-        
-        // Remove matching cash flow entry
-        liveDb.cash_flow = liveDb.cash_flow.filter((c: any) => {
-          const isMatch = c.companyId === ctx.companyId &&
-            (c.descricao === `Despesa ${oldExpense.tipo} - Placa ${oldExpense.truckId}` ||
-             c.descricao === `Despesa: ${oldExpense.tipo} - ${oldExpense.truckId}`) &&
-            c.valor === oldExpense.valor &&
-            c.data === oldExpense.data;
-          return !isMatch;
-        });
-
-        liveDb.expenses = liveDb.expenses.filter((e: any) => e.id !== targetId);
+      const idx = liveDb.expenses.findIndex((e: any) => e.id === targetId && e.companyId === ctx.companyId);
+      if (idx === -1) {
+        return jsonResponse({ error: "Despesa não encontrada ou acesso negado." }, 404);
       }
+      const oldExpense = liveDb.expenses[idx];
+      
+      // Remove matching cash flow entry
+      liveDb.cash_flow = liveDb.cash_flow.filter((c: any) => {
+        const isMatch = c.companyId === ctx.companyId &&
+          (c.descricao === `Despesa ${oldExpense.tipo} - Placa ${oldExpense.truckId}` ||
+           c.descricao === `Despesa: ${oldExpense.tipo} - ${oldExpense.truckId}`) &&
+          c.valor === oldExpense.valor &&
+          c.data === oldExpense.data;
+        return !isMatch;
+      });
+
+      liveDb.expenses = liveDb.expenses.filter((e: any) => !(e.id === targetId && e.companyId === ctx.companyId));
       await persistDB();
       return jsonResponse({ success: true });
     }
@@ -1130,8 +1607,8 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
     if (cleanPath.startsWith("/api/cash_flow/") && method === "PUT") {
       const parts = cleanPath.split("/");
       const targetId = parts[parts.length - 1];
-      const matchItem = liveDb.cash_flow.find((c: any) => c.id === targetId);
-      if (!matchItem) return jsonResponse({ error: "Item de caixa não encontrado." }, 404);
+      const matchItem = liveDb.cash_flow.find((c: any) => c.id === targetId && c.companyId === ctx.companyId);
+      if (!matchItem) return jsonResponse({ error: "Item de caixa não encontrado ou acesso negado." }, 404);
 
       if (body.tipo !== undefined) matchItem.tipo = body.tipo;
       if (body.categoria !== undefined) matchItem.categoria = body.categoria;
@@ -1146,10 +1623,13 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
     if (cleanPath.startsWith("/api/cash_flow/") && method === "DELETE") {
       const parts = cleanPath.split("/");
       const targetId = parts[parts.length - 1];
-      liveDb.cash_flow = liveDb.cash_flow.filter((c: any) => c.id !== targetId);
+      const exists = liveDb.cash_flow.some((c: any) => c.id === targetId && c.companyId === ctx.companyId);
+      if (!exists) return jsonResponse({ error: "Item de caixa não encontrado ou acesso negado." }, 404);
+      liveDb.cash_flow = liveDb.cash_flow.filter((c: any) => !(c.id === targetId && c.companyId === ctx.companyId));
       await persistDB();
       return jsonResponse({ success: true });
     }
+
 
     // 14.5) POST, PUT, DELETE /api/bills
     if (cleanPath === "/api/bills" && method === "POST") {
@@ -1222,10 +1702,10 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       if (!liveDb.bills) liveDb.bills = [];
       const parts = cleanPath.split("/");
       const targetId = parts[parts.length - 1];
-      const idx = liveDb.bills.findIndex((b: any) => b.id === targetId);
+      const idx = liveDb.bills.findIndex((b: any) => b.id === targetId && b.companyId === ctx.companyId);
 
       if (idx === -1) {
-        return jsonResponse({ error: "Conta a pagar não encontrada." }, 404);
+        return jsonResponse({ error: "Conta a pagar não encontrada ou acesso negado." }, 404);
       }
 
       const oldBill = { ...liveDb.bills[idx] };
@@ -1277,8 +1757,8 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
 
       // Revert from Paid to Pendente
       if (newBill.status === "Pendente" && oldBill.status === "Pago") {
-        liveDb.expenses = liveDb.expenses.filter((e: any) => e.billId !== targetId);
-        liveDb.cash_flow = liveDb.cash_flow.filter((c: any) => c.billId !== targetId);
+        liveDb.expenses = liveDb.expenses.filter((e: any) => !(e.billId === targetId && e.companyId === ctx.companyId));
+        liveDb.cash_flow = liveDb.cash_flow.filter((c: any) => !(c.billId === targetId && c.companyId === ctx.companyId));
       }
 
       await persistDB();
@@ -1289,10 +1769,12 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       if (!liveDb.bills) liveDb.bills = [];
       const parts = cleanPath.split("/");
       const targetId = parts[parts.length - 1];
+      const exists = liveDb.bills.some((b: any) => b.id === targetId && b.companyId === ctx.companyId);
+      if (!exists) return jsonResponse({ error: "Conta a pagar não encontrada ou acesso negado." }, 404);
 
-      liveDb.bills = liveDb.bills.filter((b: any) => b.id !== targetId);
-      liveDb.expenses = liveDb.expenses.filter((e: any) => e.billId !== targetId);
-      liveDb.cash_flow = liveDb.cash_flow.filter((c: any) => c.billId !== targetId);
+      liveDb.bills = liveDb.bills.filter((b: any) => !(b.id === targetId && b.companyId === ctx.companyId));
+      liveDb.expenses = liveDb.expenses.filter((e: any) => !(e.billId === targetId && e.companyId === ctx.companyId));
+      liveDb.cash_flow = liveDb.cash_flow.filter((c: any) => !(c.billId === targetId && c.companyId === ctx.companyId));
 
       await persistDB();
       return jsonResponse({ success: true });
@@ -1355,10 +1837,13 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
     if (cleanPath.startsWith("/api/trucks/") && method === "DELETE") {
       const parts = cleanPath.split("/");
       const targetId = parts[parts.length - 1];
-      liveDb.trucks = liveDb.trucks.filter((t: any) => t.id !== targetId);
+      const exists = liveDb.trucks.some((t: any) => t.id === targetId && t.companyId === ctx.companyId);
+      if (!exists) return jsonResponse({ error: "Veículo não encontrado ou acesso negado." }, 404);
+      liveDb.trucks = liveDb.trucks.filter((t: any) => !(t.id === targetId && t.companyId === ctx.companyId));
       await persistDB();
       return jsonResponse({ success: true });
     }
+
 
     // 17) POST & PUT /api/freights
     if (cleanPath === "/api/freights" && method === "POST") {
@@ -1565,8 +2050,8 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       const parts = cleanPath.split("/");
       const targetId = parts[parts.length - 2]; // id before "/status"
 
-      const matchFrt = liveDb.freights.find((f: any) => f.id === targetId);
-      if (!matchFrt) return jsonResponse({ error: "Frete não encontrado." }, 404);
+      const matchFrt = liveDb.freights.find((f: any) => f.id === targetId && f.companyId === ctx.companyId);
+      if (!matchFrt) return jsonResponse({ error: "Frete não encontrado ou acesso negado." }, 404);
 
       matchFrt.status = body.status;
       await persistDB();
@@ -1577,8 +2062,8 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       const parts = cleanPath.split("/");
       const targetId = parts[parts.length - 1];
 
-      const matchFrt = liveDb.freights.find((f: any) => f.id === targetId);
-      if (!matchFrt) return jsonResponse({ error: "Frete não encontrado." }, 404);
+      const matchFrt = liveDb.freights.find((f: any) => f.id === targetId && f.companyId === ctx.companyId);
+      if (!matchFrt) return jsonResponse({ error: "Frete não encontrado ou acesso negado." }, 404);
 
       const isNumericMotorista = typeof body.motorista === "number" || (!isNaN(Number(body.motorista)) && String(body.motorista).trim() !== "");
       const motoristaCost = isNumericMotorista ? Number(body.motorista) : Number(body.comissao || 0);
@@ -1587,7 +2072,7 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       // Find driver name for logging/reference
       let driverName = "Não especificado";
       if (motoristaIdOrName) {
-        const foundDriver = (liveDb.drivers || []).find((d: any) => d.id === motoristaIdOrName || d.nome === motoristaIdOrName);
+        const foundDriver = (liveDb.drivers || []).find((d: any) => (d.id === motoristaIdOrName || d.nome === motoristaIdOrName) && d.companyId === ctx.companyId);
         if (foundDriver) {
           driverName = foundDriver.nome;
         } else {
@@ -1637,7 +2122,7 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       matchFrt.fotoComprovanteGeral = body.fotoComprovanteGeral || "";
 
       // Remove existing related cash entries first to re-add/update cleanly
-      liveDb.cash_flow = liveDb.cash_flow.filter((c: any) => !c.id.includes(targetId));
+      liveDb.cash_flow = liveDb.cash_flow.filter((c: any) => !(c.companyId === ctx.companyId && c.id.includes(targetId)));
 
       // Re-seed updated cash entries
       const entryCash = {
@@ -1681,12 +2166,12 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       if (!liveDb.fuel_logs) liveDb.fuel_logs = [];
       if (!liveDb.expenses) liveDb.expenses = [];
       
-      liveDb.fuel_logs = liveDb.fuel_logs.filter((l: any) => l.id !== fuelLogId);
-      liveDb.expenses = liveDb.expenses.filter((e: any) => e.fuelLogId !== fuelLogId);
-      liveDb.cash_flow = liveDb.cash_flow.filter((c: any) => c.fuelLogId !== fuelLogId && c.id !== "cash_fuel_" + fuelLogId && c.id !== "cash_arla_" + fuelLogId);
+      liveDb.fuel_logs = liveDb.fuel_logs.filter((l: any) => !(l.companyId === ctx.companyId && l.id === fuelLogId));
+      liveDb.expenses = liveDb.expenses.filter((e: any) => !(e.companyId === ctx.companyId && e.fuelLogId === fuelLogId));
+      liveDb.cash_flow = liveDb.cash_flow.filter((c: any) => !(c.companyId === ctx.companyId && (c.fuelLogId === fuelLogId || c.id === "cash_fuel_" + fuelLogId || c.id === "cash_arla_" + fuelLogId)));
 
       if (Number(matchFrt.combustivel) > 0 || Number(body.valorArla) > 0) {
-        const matchedStation = (liveDb.gas_stations || []).find((g: any) => g.id === (body.gasStationId || ""));
+        const matchedStation = (liveDb.gas_stations || []).find((g: any) => g.id === (body.gasStationId || "") && g.companyId === ctx.companyId);
         const priceDiesel = matchedStation?.precoDiesel || 6.20;
         const estimatedLiters = Number((Number(matchFrt.combustivel) / priceDiesel).toFixed(2));
 
@@ -1766,14 +2251,16 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
     if (cleanPath.startsWith("/api/freights/") && method === "DELETE") {
       const parts = cleanPath.split("/");
       const targetId = parts[parts.length - 1];
+      const exists = liveDb.freights.some((f: any) => f.id === targetId && f.companyId === ctx.companyId);
+      if (!exists) return jsonResponse({ error: "Frete não encontrado ou acesso negado." }, 404);
 
-      liveDb.freights = liveDb.freights.filter((f: any) => f.id !== targetId);
+      liveDb.freights = liveDb.freights.filter((f: any) => !(f.id === targetId && f.companyId === ctx.companyId));
       
-      // Cascade delete fuel logs, expenses, and cash flows cleanly
+      // Cascade delete fuel logs, expenses, and cash flows cleanly (scoped to ctx.companyId)
       const fuelLogId = "fuel_freight_" + targetId;
-      liveDb.fuel_logs = (liveDb.fuel_logs || []).filter((l: any) => l.id !== fuelLogId);
-      liveDb.expenses = (liveDb.expenses || []).filter((e: any) => e.fuelLogId !== fuelLogId);
-      liveDb.cash_flow = (liveDb.cash_flow || []).filter((c: any) => c.fuelLogId !== fuelLogId && c.id !== "cash_fuel_" + fuelLogId && !c.id.includes(targetId));
+      liveDb.fuel_logs = (liveDb.fuel_logs || []).filter((l: any) => !(l.companyId === ctx.companyId && l.id === fuelLogId));
+      liveDb.expenses = (liveDb.expenses || []).filter((e: any) => !(e.companyId === ctx.companyId && e.fuelLogId === fuelLogId));
+      liveDb.cash_flow = (liveDb.cash_flow || []).filter((c: any) => !(c.companyId === ctx.companyId && (c.fuelLogId === fuelLogId || c.id === "cash_fuel_" + fuelLogId || c.id.includes(targetId))));
 
       await persistDB();
       return jsonResponse({ success: true });
@@ -1814,8 +2301,8 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       const parts = cleanPath.split("/");
       const targetId = parts[parts.length - 2];
 
-      const matchMaint = liveDb.maintenance_alerts.find((m: any) => m.id === targetId);
-      if (!matchMaint) return jsonResponse({ error: "Manutenção não encontrada." }, 404);
+      const matchMaint = liveDb.maintenance_alerts.find((m: any) => m.id === targetId && m.companyId === ctx.companyId);
+      if (!matchMaint) return jsonResponse({ error: "Manutenção não encontrada ou acesso negado." }, 404);
 
       const finalCost = Number(body.custo || body.custoFinal || 0);
       const completionDate = body.dataRealizada || new Date().toISOString().split("T")[0];
@@ -1863,7 +2350,9 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
     if (cleanPath.startsWith("/api/maintenance_alerts/") && method === "DELETE") {
       const parts = cleanPath.split("/");
       const targetId = parts[parts.length - 1];
-      liveDb.maintenance_alerts = liveDb.maintenance_alerts.filter((m: any) => m.id !== targetId);
+      const exists = liveDb.maintenance_alerts.some((m: any) => m.id === targetId && m.companyId === ctx.companyId);
+      if (!exists) return jsonResponse({ error: "Manutenção não encontrada ou acesso negado." }, 404);
+      liveDb.maintenance_alerts = liveDb.maintenance_alerts.filter((m: any) => !(m.id === targetId && m.companyId === ctx.companyId));
       await persistDB();
       return jsonResponse({ success: true });
     }
@@ -1900,8 +2389,8 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       const parts = cleanPath.split("/");
       const targetId = parts[parts.length - 1];
 
-      const matchDrv = liveDb.drivers.find((d: any) => d.id === targetId);
-      if (!matchDrv) return jsonResponse({ error: "Motorista não encontrado." }, 404);
+      const matchDrv = liveDb.drivers.find((d: any) => d.id === targetId && d.companyId === ctx.companyId);
+      if (!matchDrv) return jsonResponse({ error: "Motorista não encontrado ou acesso negado." }, 404);
 
       if (body.nome !== undefined) matchDrv.nome = body.nome;
       if (body.cpf !== undefined) matchDrv.cpf = body.cpf;
@@ -1922,7 +2411,9 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
     if (cleanPath.startsWith("/api/drivers/") && method === "DELETE") {
       const parts = cleanPath.split("/");
       const targetId = parts[parts.length - 1];
-      liveDb.drivers = liveDb.drivers.filter((d: any) => d.id !== targetId);
+      const exists = liveDb.drivers.some((d: any) => d.id === targetId && d.companyId === ctx.companyId);
+      if (!exists) return jsonResponse({ error: "Motorista não encontrado ou acesso negado." }, 404);
+      liveDb.drivers = liveDb.drivers.filter((d: any) => !(d.id === targetId && d.companyId === ctx.companyId));
       await persistDB();
       return jsonResponse({ success: true });
     }
@@ -1948,8 +2439,8 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       const parts = cleanPath.split("/");
       const targetId = parts[parts.length - 1];
 
-      const matchRt = liveDb.routes.find((r: any) => r.id === targetId);
-      if (!matchRt) return jsonResponse({ error: "Rota não encontrada." }, 404);
+      const matchRt = liveDb.routes.find((r: any) => r.id === targetId && r.companyId === ctx.companyId);
+      if (!matchRt) return jsonResponse({ error: "Rota não encontrada ou acesso negado." }, 404);
 
       if (body.nome !== undefined) matchRt.nome = body.nome;
       if (body.origem !== undefined) matchRt.origem = body.origem;
@@ -1965,7 +2456,9 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
     if (cleanPath.startsWith("/api/routes/") && method === "DELETE") {
       const parts = cleanPath.split("/");
       const targetId = parts[parts.length - 1];
-      liveDb.routes = liveDb.routes.filter((r: any) => r.id !== targetId);
+      const exists = liveDb.routes.some((r: any) => r.id === targetId && r.companyId === ctx.companyId);
+      if (!exists) return jsonResponse({ error: "Rota não encontrada ou acesso negado." }, 404);
+      liveDb.routes = liveDb.routes.filter((r: any) => !(r.id === targetId && r.companyId === ctx.companyId));
       await persistDB();
       return jsonResponse({ success: true });
     }
@@ -1992,7 +2485,7 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
 
       // Register matching Expense in the central system
       if (newPay.valorTotalPago > 0) {
-        const foundDriver = (liveDb.drivers || []).find((d: any) => d.id === newPay.driverId);
+        const foundDriver = (liveDb.drivers || []).find((d: any) => d.id === newPay.driverId && d.companyId === ctx.companyId);
         const drvName = foundDriver ? foundDriver.nome : "Motorista";
 
         liveDb.expenses.push({
@@ -2024,7 +2517,9 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
     if (cleanPath.startsWith("/api/driver_payments/") && method === "DELETE") {
       const parts = cleanPath.split("/");
       const targetId = parts[parts.length - 1];
-      liveDb.driver_payments = (liveDb.driver_payments || []).filter((p: any) => p.id !== targetId);
+      const exists = (liveDb.driver_payments || []).some((p: any) => p.id === targetId && p.companyId === ctx.companyId);
+      if (!exists) return jsonResponse({ error: "Pagamento não encontrado ou acesso negado." }, 404);
+      liveDb.driver_payments = (liveDb.driver_payments || []).filter((p: any) => !(p.id === targetId && p.companyId === ctx.companyId));
       await persistDB();
       return jsonResponse({ success: true });
     }
@@ -2050,7 +2545,9 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
     if (cleanPath.startsWith("/api/driver_adjustments/") && method === "DELETE") {
       const parts = cleanPath.split("/");
       const targetId = parts[parts.length - 1];
-      liveDb.driver_adjustments = (liveDb.driver_adjustments || []).filter((a: any) => a.id !== targetId);
+      const exists = (liveDb.driver_adjustments || []).some((a: any) => a.id === targetId && a.companyId === ctx.companyId);
+      if (!exists) return jsonResponse({ error: "Ajuste não encontrado ou acesso negado." }, 404);
+      liveDb.driver_adjustments = (liveDb.driver_adjustments || []).filter((a: any) => !(a.id === targetId && a.companyId === ctx.companyId));
       await persistDB();
       return jsonResponse({ success: true });
     }
@@ -2156,8 +2653,8 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       const targetId = parts[parts.length - 1];
 
       if (!liveDb.gas_stations) liveDb.gas_stations = [];
-      const matchGas = liveDb.gas_stations.find((g: any) => g.id === targetId);
-      if (!matchGas) return jsonResponse({ error: "Posto não encontrado." }, 404);
+      const matchGas = liveDb.gas_stations.find((g: any) => g.id === targetId && g.companyId === ctx.companyId);
+      if (!matchGas) return jsonResponse({ error: "Posto não encontrado ou acesso negado." }, 404);
 
       if (body.nome !== undefined) matchGas.nome = body.nome;
       if (body.cnpj !== undefined) matchGas.cnpj = body.cnpj;
@@ -2175,7 +2672,9 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       const parts = cleanPath.split("/");
       const targetId = parts[parts.length - 1];
       if (!liveDb.gas_stations) liveDb.gas_stations = [];
-      liveDb.gas_stations = liveDb.gas_stations.filter((g: any) => g.id !== targetId);
+      const exists = liveDb.gas_stations.some((g: any) => g.id === targetId && g.companyId === ctx.companyId);
+      if (!exists) return jsonResponse({ error: "Posto não encontrado ou acesso negado." }, 404);
+      liveDb.gas_stations = liveDb.gas_stations.filter((g: any) => !(g.id === targetId && g.companyId === ctx.companyId));
       await persistDB();
       return jsonResponse({ success: true });
     }
@@ -2218,7 +2717,9 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       const parts = cleanPath.split("/");
       const targetId = parts[parts.length - 1];
       if (!liveDb.expense_companies) liveDb.expense_companies = [];
-      liveDb.expense_companies = liveDb.expense_companies.filter((ec: any) => ec.id !== targetId);
+      const exists = liveDb.expense_companies.some((ec: any) => ec.id === targetId && ec.companyId === ctx.companyId);
+      if (!exists) return jsonResponse({ error: "Empresa de despesa não encontrada ou acesso negado." }, 404);
+      liveDb.expense_companies = liveDb.expense_companies.filter((ec: any) => !(ec.id === targetId && ec.companyId === ctx.companyId));
       await persistDB();
       return jsonResponse({ success: true });
     }
@@ -2230,3 +2731,4 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
     return jsonResponse({ error: "Erro interno ao processar a requisição client-side.", message: err.message }, 500);
   }
 }
+

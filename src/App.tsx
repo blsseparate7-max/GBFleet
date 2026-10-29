@@ -4,7 +4,15 @@
  */
 
 import Layout from './components/Layout';
+import { AuthProvider } from './contexts/AuthContext';
+import { TenantProvider } from './contexts/TenantContext';
 
 export default function App() {
-  return <Layout />;
+  return (
+    <AuthProvider>
+      <TenantProvider>
+        <Layout />
+      </TenantProvider>
+    </AuthProvider>
+  );
 }

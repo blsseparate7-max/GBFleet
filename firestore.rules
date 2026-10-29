@@ -1,24 +1,187 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Default-deny catch-all for any unapproved collections
-    match /{document=**} {
-      allow read, write: if false;
+
+    // ===============================================================
+    // Helper Functions (Multi-Tenant Isolation & Zero-Trust RBAC)
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
     }
 
-    // Main system state document: Allow reading and updating, but strictly forbid deletion to protect system data
+    function getUserDoc() {
+      return get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data;
+    }
+
+    function hasUserDoc() {
+      return isAuthenticated() && exists(/databases/$(database)/documents/usuarios/$(request.auth.uid));
+    }
+
+    function isSaaSAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.email == 'super@gbfleet.ai' ||
+        (hasUserDoc() && (
+          getUserDoc().role == 'superadmin' ||
+          getUserDoc().role == 'saas_admin' ||
+          getUserDoc().tipo == 'saas_admin'
+        ))
+      );
+    }
+
+    function isTenantMember(tenantId) {
+      return isSaaSAdmin() || (
+        hasUserDoc() &&
+        getUserDoc().ativo != false &&
+        (getUserDoc().tenantId == tenantId || getUserDoc().companyId == tenantId)
+      );
+    }
+
+    function isTenantAdmin(tenantId) {
+      return isSaaSAdmin() || (
+        isTenantMember(tenantId) &&
+        (getUserDoc().role in ['admin', 'gestor', 'owner'] || getUserDoc().tipo in ['admin', 'gestor', 'owner'])
+      );
+    }
+
+    // ===============================================================
+    // 1. User Profiles (/usuarios/{userId})
+    // Blocks public list & blocks self-privilege escalation (changing role/tipo or tenantId)
+    // ===============================================================
+    match /usuarios/{userId} {
+      allow get: if isAuthenticated() && (
+        request.auth.uid == userId ||
+        isSaaSAdmin() ||
+        (hasUserDoc() && (
+          resource.data.tenantId == getUserDoc().tenantId ||
+          resource.data.companyId == getUserDoc().companyId
+        ))
+      );
+      // Block public listing of all users across tenants
+      allow list: if isSaaSAdmin() || (
+        hasUserDoc() && (
+          resource.data.tenantId == getUserDoc().tenantId ||
+          resource.data.companyId == getUserDoc().companyId
+        )
+      );
+
+      allow create: if isSaaSAdmin() || (
+        isAuthenticated() &&
+        request.auth.uid == userId &&
+        request.resource.data.get('role', 'admin') in ['motorista', 'operador', 'admin'] &&
+        request.resource.data.get('tipo', 'admin') != 'saas_admin'
+      );
+
+      // Block Privilege Escalation: Users cannot alter their own role, tipo, tenantId, or companyId
+      allow update: if isSaaSAdmin() || (
+        isAuthenticated() &&
+        request.auth.uid == userId &&
+        request.resource.data.get('role', resource.data.get('role', '')) == resource.data.get('role', '') &&
+        request.resource.data.get('tipo', resource.data.get('tipo', '')) == resource.data.get('tipo', '') &&
+        request.resource.data.get('tenantId', resource.data.get('tenantId', '')) == resource.data.get('tenantId', '') &&
+        request.resource.data.get('companyId', resource.data.get('companyId', '')) == resource.data.get('companyId', '')
+      ) || (
+        hasUserDoc() &&
+        isTenantAdmin(resource.data.get('tenantId', resource.data.get('companyId', ''))) &&
+        request.resource.data.get('role', '') != 'superadmin' &&
+        request.resource.data.get('tipo', '') != 'saas_admin'
+      );
+
+      allow delete: if isSaaSAdmin();
+    }
+
+    // ===============================================================
+    // 2. Tenants & Protected Vault (/tenants/{tenantId}/private_settings/{docId})
+    // ===============================================================
+    match /tenants/{tenantId} {
+      allow get: if isTenantMember(tenantId);
+      allow list: if isSaaSAdmin();
+      allow create: if isSaaSAdmin();
+      // Tenant admins can update basic profile info but cannot forge license expiration or planStatus unless SaaS Admin
+      allow update: if isSaaSAdmin() || (
+        isTenantAdmin(tenantId) &&
+        request.resource.data.get('planExpiresAt', resource.data.get('planExpiresAt', '')) == resource.data.get('planExpiresAt', '') &&
+        request.resource.data.get('planStatus', resource.data.get('planStatus', '')) == resource.data.get('planStatus', '')
+      );
+      allow delete: if isSaaSAdmin();
+
+      // Protected Vault for API Keys & Webhooks: strictly restricted to Tenant Admin or SaaS Admin
+      match /private_settings/{docId} {
+        allow read, write: if isTenantAdmin(tenantId) || isSaaSAdmin();
+      }
+    }
+
+    // ===============================================================
+    // 3. Multi-Tenant Fleet Operational Collections
+    // ===============================================================
+    match /caminhoes/{docId} {
+      allow read: if isTenantMember(resource.data.get('tenantId', resource.data.get('companyId', '')));
+      allow create: if isTenantMember(request.resource.data.get('tenantId', request.resource.data.get('companyId', '')));
+      allow update, delete: if isTenantMember(resource.data.get('tenantId', resource.data.get('companyId', '')));
+    }
+
+    match /fretes/{docId} {
+      allow read: if isTenantMember(resource.data.get('tenantId', resource.data.get('companyId', '')));
+      allow create: if isTenantMember(request.resource.data.get('tenantId', request.resource.data.get('companyId', '')));
+      allow update, delete: if isTenantMember(resource.data.get('tenantId', resource.data.get('companyId', '')));
+    }
+
+    match /abastecimentos/{docId} {
+      allow read: if isTenantMember(resource.data.get('tenantId', resource.data.get('companyId', '')));
+      allow create: if isTenantMember(request.resource.data.get('tenantId', request.resource.data.get('companyId', '')));
+      allow update, delete: if isTenantMember(resource.data.get('tenantId', resource.data.get('companyId', '')));
+    }
+
+    match /despesas/{docId} {
+      allow read: if isTenantMember(resource.data.get('tenantId', resource.data.get('companyId', '')));
+      allow create: if isTenantMember(request.resource.data.get('tenantId', request.resource.data.get('companyId', '')));
+      allow update, delete: if isTenantMember(resource.data.get('tenantId', resource.data.get('companyId', '')));
+    }
+
+    match /manutencoes/{docId} {
+      allow read: if isTenantMember(resource.data.get('tenantId', resource.data.get('companyId', '')));
+      allow create: if isTenantMember(request.resource.data.get('tenantId', request.resource.data.get('companyId', '')));
+      allow update, delete: if isTenantMember(resource.data.get('tenantId', resource.data.get('companyId', '')));
+    }
+
+    match /motoristas/{docId} {
+      allow read: if isTenantMember(resource.data.get('tenantId', resource.data.get('companyId', '')));
+      allow create: if isTenantMember(request.resource.data.get('tenantId', request.resource.data.get('companyId', '')));
+      allow update, delete: if isTenantMember(resource.data.get('tenantId', resource.data.get('companyId', '')));
+    }
+
+    match /financeiro/{docId} {
+      allow read: if isTenantMember(resource.data.get('tenantId', resource.data.get('companyId', '')));
+      allow create: if isTenantMember(request.resource.data.get('tenantId', request.resource.data.get('companyId', '')));
+      allow update, delete: if isTenantMember(resource.data.get('tenantId', resource.data.get('companyId', '')));
+    }
+
+    // ===============================================================
+    // 4. Immutable Security Audit Logs (/security_audit_logs/{logId})
+    // ===============================================================
+    match /security_audit_logs/{logId} {
+      allow read: if isSaaSAdmin();
+      allow create: if true;
+      allow update, delete: if false;
+    }
+
+    // ===============================================================
+    // 5. Consolidated System State & Attachments (Preserves Existing Production Data)
+    // ===============================================================
     match /system_state/gbfleet_db {
       allow read: if true;
       allow create, update: if true;
       allow delete: if false;
     }
 
-    // Attachment documents (isolated base64 receipts and files): Allow reading and saving, disallow deletion
     match /system_state/{attachDoc} {
       allow read: if true;
       allow create, update: if true;
       allow delete: if false;
     }
+
+    // Default-deny catch-all for any unapproved collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
   }
 }
-

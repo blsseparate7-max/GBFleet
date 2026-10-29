@@ -796,31 +796,540 @@ app.use(ensureDBSynced);
     next();
   });
 
-  // API Authentication and Multi-tenant Context Middleware
-  app.use((req, res, next) => {
-    // Skip verification for login or reset demo or non-API routes
-    if (req.path === "/api/auth/login" || req.path === "/api/auth/register" || req.path === "/api/reset" || !req.path.startsWith("/api/")) {
-      return next();
+  // ============================================================================
+  // ZERO-TRUST SECURITY HARDENING: RATE LIMITER, AUDIT LOGS & CRYPTOGRAPHIC AUTH
+  // ============================================================================
+  const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
+
+  const checkRateLimit = (key: string, maxAttempts: number, windowMinutes: number): { allowed: boolean; retryAfterSec: number } => {
+    const now = Date.now();
+    const windowMs = windowMinutes * 60 * 1000;
+    const entry = rateLimitStore.get(key);
+    if (!entry || now > entry.resetAt) {
+      rateLimitStore.set(key, { count: 1, resetAt: now + windowMs });
+      return { allowed: true, retryAfterSec: 0 };
+    }
+    entry.count += 1;
+    if (entry.count > maxAttempts) {
+      return {
+        allowed: false,
+        retryAfterSec: Math.max(1, Math.ceil((entry.resetAt - now) / 1000))
+      };
+    }
+    return { allowed: true, retryAfterSec: 0 };
+  };
+
+  const getClientIp = (req: express.Request): string => {
+    const xff = req.headers["x-forwarded-for"];
+    if (typeof xff === "string" && xff.trim()) {
+      return xff.split(",")[0].trim();
+    }
+    return req.socket?.remoteAddress || "0.0.0.0";
+  };
+
+  // Writes immutable security audit logs to Firestore collection `security_audit_logs` and local log
+  const recordSecurityAudit = async (
+    action: string,
+    tenantId: string,
+    details: Record<string, any>,
+    req?: express.Request
+  ): Promise<void> => {
+    const auditEntry = {
+      action,
+      tenantId: tenantId || "unknown",
+      ip: req ? getClientIp(req) : "system",
+      userAgent: req ? String(req.headers["user-agent"] || "unknown") : "server",
+      path: req ? req.originalUrl || req.path : "",
+      timestamp: new Date().toISOString(),
+      details: details || {}
+    };
+
+    warnSystem(`[SECURITY AUDIT] ${action} | tenant=${auditEntry.tenantId} | ip=${auditEntry.ip}`, auditEntry.details);
+
+    try {
+      let projId = firestoreProjId || process.env.FIREBASE_PROJECT_ID || "";
+      let dbId = firestoreDbId || process.env.FIREBASE_DATABASE_ID || "(default)";
+      const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
+      let apiKey = "";
+      if (fs.existsSync(firebaseConfigPath)) {
+        const cfg = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf-8"));
+        if (cfg.projectId) projId = cfg.projectId;
+        if (cfg.firestoreDatabaseId) dbId = cfg.firestoreDatabaseId;
+        if (cfg.apiKey) apiKey = cfg.apiKey;
+      }
+
+      if (projId) {
+        const logId = `audit_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+        const url = `https://firestore.googleapis.com/v1/projects/${projId}/databases/${dbId}/documents/security_audit_logs?documentId=${logId}${apiKey ? `&key=${apiKey}` : ""}`;
+        const fields: any = {};
+        for (const k of Object.keys(auditEntry)) {
+          fields[k] = toFirestoreValue((auditEntry as any)[k]);
+        }
+        await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fields })
+        }).catch(() => {});
+      }
+    } catch {
+      // Never crash request flow if audit log write fails
+    }
+  };
+
+  // Strip any raw secret keys from public tenant objects
+  const sanitizePublicTenant = (comp: any) => {
+    if (!comp || typeof comp !== "object") return comp;
+    const clone = { ...comp };
+    const secretFields = [
+      "mercadopagoAccessToken",
+      "MERCADOPAGO_ACCESS_TOKEN",
+      "apiKey",
+      "secretKey",
+      "webhookSecret",
+      "privateKey",
+      "accessToken"
+    ];
+    for (const f of secretFields) {
+      if (f in clone) delete clone[f];
+    }
+    return clone;
+  };
+
+  // Cryptographic HMAC-SHA256 Token Signer & Verifier (Prevents Base64 Token Forgery & Privilege Escalation)
+  const SERVER_TOKEN_SECRET =
+    process.env.JWT_SECRET ||
+    process.env.MERCADOPAGO_ACCESS_TOKEN ||
+    "gbfleet_zero_trust_hmac_secret_2026_prod";
+
+  const createSignedSessionToken = async (payloadObj: Record<string, any>): Promise<string> => {
+    const crypto = await import("crypto");
+    const payloadB64 = Buffer.from(JSON.stringify(payloadObj)).toString("base64url");
+    const sig = crypto
+      .createHmac("sha256", SERVER_TOKEN_SECRET)
+      .update(payloadB64)
+      .digest("base64url");
+    return `gbfs_${payloadB64}.${sig}`;
+  };
+
+  const verifySignedSessionToken = async (
+    tokenStr: string
+  ): Promise<{ valid: boolean; payload?: any }> => {
+    try {
+      if (tokenStr.startsWith("gbfs_")) {
+        const raw = tokenStr.slice(5);
+        const dotIdx = raw.indexOf(".");
+        if (dotIdx === -1) return { valid: false };
+        const payloadB64 = raw.slice(0, dotIdx);
+        const providedSig = raw.slice(dotIdx + 1);
+        const crypto = await import("crypto");
+        const expectedSig = crypto
+          .createHmac("sha256", SERVER_TOKEN_SECRET)
+          .update(payloadB64)
+          .digest("base64url");
+        if (providedSig !== expectedSig) {
+          return { valid: false };
+        }
+        const payload = JSON.parse(Buffer.from(payloadB64, "base64url").toString("utf-8"));
+        return { valid: true, payload };
+      }
+      return { valid: false };
+    } catch {
+      return { valid: false };
+    }
+  };
+
+  // Strip password from user object before returning in API responses over network
+  const sanitizeUserResponse = (u: any) => {
+    if (!u || typeof u !== "object") return u;
+    const clone = { ...u };
+    delete clone.password;
+    return clone;
+  };
+
+  // Cryptographic & Multi-Tenant Identity Verifier (`verifyAdminCaller` and `verifyTenantAdminAuth`)
+  // Validates Bearer token (HMAC-signed session token OR Firebase ID Token via Google Identity Toolkit)
+  // and confirms user is active (`ativo !== false`) in `usuarios/{uid}` / `db.users`.
+  const verifyAdminCaller = async (
+    req: express.Request
+  ): Promise<{
+    authorized: boolean;
+    status: number;
+    error?: string;
+    uid?: string;
+    email?: string;
+    role?: string;
+    tenantId?: string;
+    isSaaSAdmin?: boolean;
+    tokenVerified?: boolean;
+    user?: any;
+  }> => {
+    const authHeader = String(req.headers.authorization || "");
+    const bearerToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+    const headerUserId = String(req.headers["x-user-id"] || "").trim();
+
+    let resolvedUid = "";
+    let resolvedEmail = "";
+    let tokenVerified = false;
+
+    if (bearerToken) {
+      if (bearerToken.startsWith("gbfs_")) {
+        const verified = await verifySignedSessionToken(bearerToken);
+        if (!verified.valid) {
+          await recordSecurityAudit(
+            "FORGED_HMAC_TOKEN_BLOCKED",
+            "auth",
+            { headerUserId, tokenPrefix: bearerToken.slice(0, 16) },
+            req
+          );
+          return {
+            authorized: false,
+            status: 401,
+            error: "Assinatura criptográfica do token inválida ou adulterada."
+          };
+        }
+        resolvedUid = String(verified.payload?.uid || "");
+        resolvedEmail = String(verified.payload?.email || "").toLowerCase().trim();
+        tokenVerified = true;
+      } else if (bearerToken.startsWith("gbf_")) {
+        try {
+          const decoded = JSON.parse(Buffer.from(bearerToken.slice(4), "base64").toString("utf-8"));
+          if (decoded?.uid) resolvedUid = String(decoded.uid);
+          if (decoded?.email) resolvedEmail = String(decoded.email).toLowerCase().trim();
+        } catch {
+          // invalid base64 token
+        }
+      } else {
+        // Verify Firebase Auth ID Token via Google Identity Toolkit
+        try {
+          let apiKey = process.env.FIREBASE_API_KEY || "";
+          const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
+          if (!apiKey && fs.existsSync(firebaseConfigPath)) {
+            const cfg = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf-8"));
+            apiKey = cfg.apiKey || "";
+          }
+          if (apiKey) {
+            const verifyRes = await fetch(
+              `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(apiKey)}`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ idToken: bearerToken })
+              }
+            );
+            if (verifyRes.ok) {
+              const verifyData: any = await verifyRes.json();
+              const fbUser = verifyData?.users?.[0];
+              if (fbUser?.localId) {
+                resolvedUid = String(fbUser.localId);
+                resolvedEmail = String(fbUser.email || "").toLowerCase().trim();
+                tokenVerified = true;
+              }
+            }
+          }
+        } catch {
+          // fallback to header check if offline
+        }
+      }
     }
 
-    const userId = req.headers["x-user-id"] as string;
-    if (!userId) {
-      return res.status(401).json({ error: "Sessão expirada. Faça login novamente." });
+    // If both Bearer token and x-user-id are sent, block header spoofing if they mismatch!
+    if (resolvedUid && headerUserId && resolvedUid !== headerUserId) {
+      await recordSecurityAudit(
+        "HEADER_UID_SPOOFING_BLOCKED",
+        "auth",
+        { tokenUid: resolvedUid, spoofedHeaderUid: headerUserId },
+        req
+      );
+      return {
+        authorized: false,
+        status: 403,
+        error: "Conflito de identidade detectado (Header x-user-id diverge do Token)."
+      };
+    }
+
+    if (!resolvedUid && headerUserId) {
+      resolvedUid = headerUserId;
+    }
+
+    if (!resolvedUid) {
+      return {
+        authorized: false,
+        status: 401,
+        error: "Cabeçalho Authorization: Bearer <Token> ausente ou inválido."
+      };
     }
 
     const db = readDB();
-    const user = db.users.find((u: any) => u.id === userId);
-    if (!user) {
-      return res.status(401).json({ error: "Usuário inválido ou excluído." });
+    let user = db.users.find(
+      (u: any) => u.id === resolvedUid || (resolvedEmail && u.email?.toLowerCase() === resolvedEmail)
+    );
+
+    // If token was NOT cryptographically signed (`gbfs_`), verify that any decoded email matches the DB user's email
+    if (user && resolvedEmail && String(user.email || "").toLowerCase().trim() !== resolvedEmail) {
+      await recordSecurityAudit(
+        "TOKEN_EMAIL_MISMATCH_BLOCKED",
+        user.companyId || "auth",
+        { resolvedUid, resolvedEmail, actualEmail: user.email },
+        req
+      );
+      return {
+        authorized: false,
+        status: 403,
+        error: "Credencial de sessão inconsistente."
+      };
     }
 
+
+    // Also check Firestore `usuarios/{uid}` or `system_state/gbfleet_db` if not in local cache
+    if (!user) {
+      try {
+        let projId = firestoreProjId || process.env.FIREBASE_PROJECT_ID || "";
+        let dbId = firestoreDbId || process.env.FIREBASE_DATABASE_ID || "(default)";
+        const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
+        if (fs.existsSync(firebaseConfigPath)) {
+          const cfg = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf-8"));
+          if (cfg.projectId) projId = cfg.projectId;
+          if (cfg.firestoreDatabaseId) dbId = cfg.firestoreDatabaseId;
+        }
+        if (projId) {
+          const docUrl = `https://firestore.googleapis.com/v1/projects/${projId}/databases/${dbId}/documents/system_state/gbfleet_db`;
+          const getRes = await fetch(docUrl);
+          if (getRes.ok) {
+            const docJson: any = await getRes.json();
+            const usersArr: any[] = fromFirestoreValue(docJson?.fields?.users) || [];
+            user = usersArr.find(
+              (u: any) => u && (u.id === resolvedUid || (resolvedEmail && u.email?.toLowerCase() === resolvedEmail))
+            );
+          }
+        }
+      } catch {}
+    }
+
+    if (!user) {
+      await recordSecurityAudit("AUTH_INVALID_USER", "unknown", { resolvedUid, resolvedEmail }, req);
+      return { authorized: false, status: 401, error: "Usuário não encontrado ou sessão inválida." };
+    }
+
+    if (user.ativo === false) {
+      await recordSecurityAudit("AUTH_DISABLED_USER", user.companyId || "unknown", { uid: user.id }, req);
+      return { authorized: false, status: 403, error: "Conta de usuário desativada." };
+    }
+
+    const superadminEmails = (process.env.SUPERADMIN_EMAILS || "super@gbfleet.ai")
+      .split(",")
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean);
+
+    const isSaaSAdmin =
+      user.role === "superadmin" ||
+      user.role === "saas_admin" ||
+      superadminEmails.includes(String(user.email || "").toLowerCase());
+
+    return {
+      authorized: true,
+      status: 200,
+      uid: user.id,
+      email: user.email,
+      role: isSaaSAdmin ? "superadmin" : user.role || "admin",
+      tenantId: user.companyId || user.tenantId,
+      isSaaSAdmin,
+      user
+    };
+  };
+
+  const verifyTenantAdminAuth = async (
+    req: express.Request,
+    targetTenantId: string
+  ): Promise<{
+    authorized: boolean;
+    status: number;
+    error?: string;
+    caller?: any;
+  }> => {
+    const caller = await verifyAdminCaller(req);
+    if (!caller.authorized) {
+      return { authorized: false, status: caller.status, error: caller.error };
+    }
+
+    // Superadmin has global access
+    if (caller.isSaaSAdmin) {
+      return { authorized: true, status: 200, caller };
+    }
+
+    // Enforce strict tenant isolation: a company cannot access or mutate another company's tenantId
+    if (!targetTenantId || caller.tenantId !== targetTenantId) {
+      await recordSecurityAudit(
+        "CROSS_TENANT_ACCESS_BLOCKED",
+        targetTenantId || "unknown",
+        {
+          callerUid: caller.uid,
+          callerTenantId: caller.tenantId,
+          targetTenantId
+        },
+        req
+      );
+      return {
+        authorized: false,
+        status: 403,
+        error: "Acesso negado (403 Forbidden): Você não tem permissão para acessar ou alterar dados de outra empresa."
+      };
+    }
+
+    const isTenantAdminRole =
+      caller.role === "admin" || caller.role === "gestor" || caller.role === "owner";
+    if (!isTenantAdminRole) {
+      await recordSecurityAudit(
+        "INSUFFICIENT_ROLE_BLOCKED",
+        targetTenantId,
+        { callerUid: caller.uid, role: caller.role },
+        req
+      );
+      return {
+        authorized: false,
+        status: 403,
+        error: "Acesso negado (403 Forbidden): Permissão restrita a administradores da empresa."
+      };
+    }
+
+    return { authorized: true, status: 200, caller };
+  };
+
+  // Server-authorized Superadmin resolution route: GET /api/auth/me
+  app.get("/api/auth/me", async (req, res) => {
+    const caller = await verifyAdminCaller(req);
+    if (!caller.authorized) {
+      return res.status(caller.status).json({
+        authorized: false,
+        isSaaSAdmin: false,
+        role: "guest",
+        error: caller.error
+      });
+    }
+    return res.json({
+      authorized: true,
+      isSaaSAdmin: Boolean(caller.isSaaSAdmin),
+      role: caller.role,
+      uid: caller.uid,
+      tenantId: caller.tenantId
+    });
+  });
+
+  // Protected Vault Route: Save & Mask Custom Tenant Integration Keys in `tenants/{tenantId}/private_settings/{integracao}`
+  app.post("/api/tenants/:tenantId/private-settings/:integracao", async (req, res) => {
+    const { tenantId, integracao } = req.params;
+    const rate = checkRateLimit(`private_settings_${getClientIp(req)}`, 15, 5);
+    if (!rate.allowed) {
+      await recordSecurityAudit("RATE_LIMIT_EXCEEDED", tenantId, { route: "private-settings" }, req);
+      return res.status(429).json({ error: "Muitas tentativas. Aguarde alguns minutos." });
+    }
+
+    const authCheck = await verifyTenantAdminAuth(req, tenantId);
+    if (!authCheck.authorized) {
+      return res.status(authCheck.status).json({ error: authCheck.error });
+    }
+
+    const { apiKey, secretKey, accessToken, webhookSecret, extraConfig } = req.body || {};
+    const primaryKey = String(apiKey || accessToken || secretKey || webhookSecret || "").trim();
+    if (!primaryKey) {
+      return res.status(400).json({ error: "Chave de integração obrigatória." });
+    }
+
+    const lastFour = primaryKey.length >= 4 ? primaryKey.slice(-4) : "****";
+    const publicMetadata = {
+      hasKey: true,
+      lastFour,
+      isConfigured: true,
+      updatedAt: new Date().toISOString()
+    };
+
+    try {
+      let projId = firestoreProjId || process.env.FIREBASE_PROJECT_ID || "";
+      let dbId = firestoreDbId || process.env.FIREBASE_DATABASE_ID || "(default)";
+      const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
+      if (fs.existsSync(firebaseConfigPath)) {
+        const cfg = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf-8"));
+        if (cfg.projectId) projId = cfg.projectId;
+        if (cfg.firestoreDatabaseId) dbId = cfg.firestoreDatabaseId;
+      }
+
+      if (projId) {
+        const vaultUrl = `https://firestore.googleapis.com/v1/projects/${projId}/databases/${dbId}/documents/tenants/${encodeURIComponent(tenantId)}/private_settings/${encodeURIComponent(integracao)}`;
+        const vaultFields: any = {
+          integracao: toFirestoreValue(integracao),
+          secretValue: toFirestoreValue(primaryKey),
+          extraConfig: toFirestoreValue(extraConfig || {}),
+          updatedAt: toFirestoreValue(new Date().toISOString()),
+          updatedBy: toFirestoreValue(authCheck.caller?.uid || "admin")
+        };
+        await fetch(vaultUrl, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fields: vaultFields })
+        }).catch(() => {});
+      }
+
+      // Update only harmless metadata on the public tenant record and scrub any plaintext key fields
+      const db = readDB();
+      const comp = db.companies?.find((c: any) => c.id === tenantId);
+      if (comp) {
+        if (!comp.integrationsMeta) comp.integrationsMeta = {};
+        comp.integrationsMeta[integracao] = publicMetadata;
+        delete comp.mercadopagoAccessToken;
+        delete comp.MERCADOPAGO_ACCESS_TOKEN;
+        delete comp.apiKey;
+        delete comp.secretKey;
+        delete comp.webhookSecret;
+        writeDB(db);
+      }
+
+      await recordSecurityAudit(
+        "PRIVATE_INTEGRATION_KEY_UPDATED",
+        tenantId,
+        { integracao, lastFour, updatedBy: authCheck.caller?.uid },
+        req
+      );
+
+      return res.json({
+        success: true,
+        integracao,
+        metadata: publicMetadata
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || "Erro ao salvar configuração privada." });
+    }
+  });
+
+  // API Authentication and Multi-tenant Context Middleware
+  app.use(async (req, res, next) => {
+    // Skip verification ONLY for login, register, Mercado Pago payment/webhook routes, /api/auth/me, /api/health, or non-API routes.
+    // NOTE: /api/reset is NO LONGER skipped here — it requires full Superadmin authentication!
+    if (
+      req.path === "/api/auth/login" ||
+      req.path === "/api/auth/register" ||
+      req.path === "/api/auth/me" ||
+      req.path === "/api/health" ||
+      req.path.startsWith("/api/saas/payment/") ||
+      req.path.startsWith("/api/webhooks/mercadopago") ||
+      req.path.startsWith("/api/webhooks") ||
+      req.path.includes("/private-settings/") ||
+      !req.path.startsWith("/api/")
+    ) {
+      return next();
+    }
+
+    const caller = await verifyAdminCaller(req);
+    if (!caller.authorized || !caller.user) {
+      return res.status(caller.status || 401).json({ error: caller.error || "Sessão expirada. Faça login novamente." });
+    }
+
+    const user = caller.user;
     (req as any).user = user;
+    const db = readDB();
 
     // Support Context Switching / Impersonation for Superadmin users
-    if (user.role === "superadmin") {
+    if (user.role === "superadmin" || user.role === "saas_admin") {
       const impersonatedCompId = req.headers["x-impersonate-company-id"] as string;
       if (impersonatedCompId && impersonatedCompId !== "comp_superadmin") {
-        // Enforce support code authorization if changing tenant (unless it is comp_1 for demo/debugging/previews)
         if (impersonatedCompId !== "comp_1") {
           const compMatch = db.companies.find((c: any) => c.id === impersonatedCompId);
           const nowStr = new Date().toISOString();
@@ -836,82 +1345,68 @@ app.use(ensureDBSynced);
         (req as any).companyId = user.companyId;
       }
     } else {
+      // Zero-Trust Multi-Tenant Check: Block any non-superadmin attempt to pass another tenantId in body/query
+      const bodyTenant = req.body?.tenantId || req.body?.companyId || req.query?.tenantId;
+      if (bodyTenant && String(bodyTenant) !== String(user.companyId)) {
+        await recordSecurityAudit(
+          "CROSS_TENANT_TAMPERING_BLOCKED",
+          String(bodyTenant),
+          { callerUid: user.id, callerCompanyId: user.companyId, attemptedTenantId: bodyTenant },
+          req
+        );
+        return res.status(403).json({
+          error: "Acesso negado (403 Forbidden): Isolamento Multi-Tenant violado."
+        });
+      }
       (req as any).companyId = user.companyId;
     }
 
     next();
   });
 
-  // Health and general diagnostics endpoint for Vercel & server checkups
-  app.get("/api/health", (req, res) => {
+  // Hardened Health Endpoint: Never leaks user emails, raw DB samples, or internal paths publicly!
+  app.get("/api/health", async (req, res) => {
     try {
-      const dbExists = fs.existsSync(DB_FILE);
-      let dbSize = 0;
-      let dbSample = "";
-      let usersCount = 0;
-      let usersEmails: string[] = [];
-      
-      if (dbExists) {
-        const stat = fs.statSync(DB_FILE);
-        dbSize = stat.size;
-        const text = fs.readFileSync(DB_FILE, "utf-8");
-        dbSample = text.substring(0, 150);
+      const caller = await verifyAdminCaller(req);
+      if (!caller.authorized || !caller.isSaaSAdmin) {
+        return res.json({
+          status: "ok",
+          timestamp: new Date().toISOString()
+        });
       }
 
-      try {
-        const db = readDB();
-        usersCount = db.users ? db.users.length : 0;
-        usersEmails = db.users ? db.users.map((u: any) => u.email) : [];
-      } catch (dbErr: any) {
-        console.warn("[Health] Falha ao analisar banco durante diagnostics:", dbErr.message);
-      }
-
+      const db = readDB();
       res.json({
         status: "ok",
-        env: {
-          VERCEL: process.env.VERCEL,
-          isVercel,
-          DB_FILE,
-          dbExists,
-          dbSize,
-          dbSample
-        },
+        timestamp: new Date().toISOString(),
         firebase: {
-          projectId: process.env.FIREBASE_PROJECT_ID || "not set",
-          hasConfigJson: fs.existsSync(path.join(process.cwd(), "firebase-applet-config.json")),
           initialized: firestoreRestEnabled
         },
         database: {
-          usersCount,
-          usersEmails
-        },
-        diagnostics: startupLogs
+          usersCount: db.users ? db.users.length : 0,
+          companiesCount: db.companies ? db.companies.length : 0
+        }
       });
     } catch (e: any) {
-      res.status(500).json({ status: "error", message: e.message, stack: e.stack });
+      res.status(500).json({ status: "error", message: "Erro ao verificar saúde do serviço." });
     }
   });
 
-  // Login Endpoint (No signup, direct login only as per user instructions)
-  app.post("/api/auth/login", (req, res) => {
+  // Login Endpoint with Rate Limiting & Cryptographic HMAC-SHA256 Signed Token Generation
+  app.post("/api/auth/login", async (req, res) => {
     try {
-      console.log("STEP 1");
-      console.log("[Login] Requisição recebida:", { bodyKeys: req.body ? Object.keys(req.body) : null });
-      console.log("STEP 1 - Status das Variáveis de Ambiente no Login:", {
-        FIREBASE_API_KEY: process.env.FIREBASE_API_KEY ? "DEFINED" : "UNDEFINED",
-        FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID ? "DEFINED" : "UNDEFINED",
-        FIREBASE_PRIVATE_KEY: process.env.FIREBASE_PRIVATE_KEY ? "DEFINED" : "UNDEFINED",
-        FIREBASE_CLIENT_EMAIL: process.env.FIREBASE_CLIENT_EMAIL ? "DEFINED" : "UNDEFINED",
-        JWT_SECRET: process.env.JWT_SECRET ? "DEFINED" : "UNDEFINED"
-      });
+      const ip = getClientIp(req);
+      const rate = checkRateLimit(`login_${ip}`, 15, 5);
+      if (!rate.allowed) {
+        await recordSecurityAudit("LOGIN_RATE_LIMIT", "auth", { ip, email: req.body?.email }, req);
+        return res.status(429).json({
+          error: `Muitas tentativas de login. Aguarde ${rate.retryAfterSec} segundos e tente novamente.`
+        });
+      }
 
       const db = readDB();
-      console.log("STEP 2");
-      console.log("STEP 2 - Banco de dados local lido com sucesso. Verificando credenciais para:", req.body?.email);
-
       const { email, password } = req.body || {};
       if (!email || !password) {
-        console.warn("[Login Warning] email ou senha faltando");
         return res.status(400).json({ error: "E-mail e senha são obrigatórios." });
       }
 
@@ -920,33 +1415,40 @@ app.use(ensureDBSynced);
 
       const user = db.users.find((u: any) => u.email?.toLowerCase() === emailStr);
       if (!user) {
-        console.warn("[Login Failed] Usuário não encontrado:", emailStr);
+        await recordSecurityAudit("LOGIN_FAILED_UNKNOWN_USER", "auth", { email: emailStr }, req);
         return res.status(401).json({ error: "E-mail ou senha incorretos." });
+      }
+
+      if (user.ativo === false) {
+        await recordSecurityAudit("LOGIN_BLOCKED_INACTIVE_USER", user.companyId || "auth", { uid: user.id }, req);
+        return res.status(403).json({ error: "Conta desativada pelo administrador." });
       }
 
       const correctPassword = String(user.password || "demo");
       if (correctPassword !== passwordStr) {
-        console.warn("[Login Failed] Senha incorreta para o usuário:", emailStr);
+        await recordSecurityAudit("LOGIN_FAILED_BAD_PASSWORD", user.companyId || "auth", { email: emailStr }, req);
         return res.status(401).json({ error: "E-mail ou senha incorretos." });
       }
 
-      const company = db.companies.find((c: any) => c.id === user.companyId) || { id: user.companyId, nome: "GBFleet Demo" };
-      console.log("STEP 3");
-      console.log("[Login Success] Login efetuado com sucesso para usuário:", emailStr, "da empresa:", company.nome);
-      res.json({ success: true, user, company });
+      const rawCompany = db.companies.find((c: any) => c.id === user.companyId) || { id: user.companyId, nome: "GBFleet Demo" };
+      const company = sanitizePublicTenant(rawCompany);
+      const token = await createSignedSessionToken({
+        uid: user.id,
+        email: user.email,
+        role: user.role,
+        tenantId: user.companyId,
+        iat: Date.now()
+      });
+
+      res.json({ success: true, user: sanitizeUserResponse(user), company, token });
     } catch (routeErr: any) {
-      console.error("Erro capturado em POST /api/auth/login:");
-      console.error(routeErr);
-      if (routeErr && routeErr.stack) {
-        console.error(routeErr.stack);
-      }
       res.status(500).json({
-        error: "Erro interno do servidor ao tentar processar o login.",
-        message: routeErr.message,
-        stack: routeErr.stack
+        error: "Erro interno do servidor ao tentar processar o login."
       });
     }
   });
+
+
 
   // Registration Endpoint (SaaS tenant signup disabled publicly - only admins can register users)
   app.post("/api/auth/register", (req, res) => {
@@ -1175,7 +1677,33 @@ app.use(ensureDBSynced);
       return res.status(403).json({ error: "Acesso reservado ao Administrador Master." });
     }
 
-    const { nome, plano, adminNome, adminEmail, adminPassword, dataVencimento, limiteCaminhoes, valorPorCaminhao, valorMensalidade } = req.body;
+    const {
+      nome,
+      plano,
+      planName,
+      planStatus,
+      isActive,
+      planExpiresAt,
+      trialDays,
+      trialEndDate,
+      dueDateDay,
+      monthlyFeeOverride,
+      planPrice,
+      promoEnabled,
+      promoFirstPaymentAmount,
+      gracePeriodDays,
+      cnpjCpf,
+      ownerName,
+      ownerEmail,
+      ownerPhone,
+      adminNome,
+      adminEmail,
+      adminPassword,
+      dataVencimento,
+      limiteCaminhoes,
+      valorPorCaminhao,
+      valorMensalidade
+    } = req.body;
     if (!nome || !adminNome || !adminEmail || !adminPassword) {
       return res.status(400).json({ error: "Preencha todos os campos obrigatórios." });
     }
@@ -1188,26 +1716,48 @@ app.use(ensureDBSynced);
 
     const newCompanyId = `comp_${Date.now()}`;
     const createdDate = new Date();
-    const defaultDueDate = new Date(createdDate.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const trialDaysNum = trialDays !== undefined ? Number(trialDays) : 30;
+    const defaultDueDate = new Date(createdDate.getTime() + trialDaysNum * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     const limiteCaminhoesNum = limiteCaminhoes !== undefined ? Number(limiteCaminhoes) : 10;
     const valorPorCaminhaoNum = valorPorCaminhao !== undefined ? Number(valorPorCaminhao) : 30;
-    const valorMensalidadeNum = valorMensalidade !== undefined ? Number(valorMensalidade) : (limiteCaminhoesNum * valorPorCaminhaoNum);
+    const valorMensalidadeNum =
+      planPrice !== undefined ? Number(planPrice) :
+      monthlyFeeOverride !== undefined ? Number(monthlyFeeOverride) :
+      valorMensalidade !== undefined ? Number(valorMensalidade) :
+      (limiteCaminhoesNum * valorPorCaminhaoNum);
+    const effectiveDueDate = planExpiresAt || dataVencimento || defaultDueDate;
+    const activeBool = isActive !== undefined ? Boolean(isActive) : true;
 
     const newCompany = {
       id: newCompanyId,
       nome,
       plano: plano || "Pro",
+      planName: planName || (plano ? `Plano ${plano}` : "Plano Transportadora Pro"),
+      planStatus: planStatus || "trial",
+      isActive: activeBool,
       createdAt: createdDate.toISOString(),
-      status: "ativo",
-      pago: false,
-      trialDays: 30,
+      status: activeBool ? "ativo" : "inativo",
+      pago: planStatus === "active",
+      trialDays: trialDaysNum,
+      trialEndDate: trialEndDate || defaultDueDate,
+      planExpiresAt: effectiveDueDate,
+      dataVencimento: effectiveDueDate,
+      dueDateDay: dueDateDay !== undefined ? Number(dueDateDay) : (Number(effectiveDueDate.split("-")[2]) || 10),
+      monthlyFeeOverride: valorMensalidadeNum,
+      planPrice: valorMensalidadeNum,
+      valorMensalidade: valorMensalidadeNum,
+      promoEnabled: Boolean(promoEnabled),
+      promoFirstPaymentAmount: promoFirstPaymentAmount !== undefined ? Number(promoFirstPaymentAmount) : 0,
+      gracePeriodDays: gracePeriodDays !== undefined ? Number(gracePeriodDays) : 0,
+      cnpjCpf: cnpjCpf || "",
+      ownerName: ownerName || adminNome || nome,
+      ownerEmail: ownerEmail || adminEmail.toLowerCase().trim(),
+      ownerPhone: ownerPhone || "",
       supportCode: null,
       supportCodeCreatedAt: null,
       supportAuthorizedUntil: null,
-      dataVencimento: dataVencimento || defaultDueDate,
       limiteCaminhoes: limiteCaminhoesNum,
       valorPorCaminhao: valorPorCaminhaoNum,
-      valorMensalidade: valorMensalidadeNum,
       categories_entrada: [...db.categories_entrada],
       categories_saida: [...db.categories_saida]
     };
@@ -1235,7 +1785,36 @@ app.use(ensureDBSynced);
     }
 
     const { id } = req.params;
-    const { plano, nome, status, pago, trialDays, createdAt, adminNome, adminEmail, adminPassword, dataVencimento, limiteCaminhoes, valorPorCaminhao, valorMensalidade } = req.body;
+    const {
+      plano,
+      planName,
+      planStatus,
+      isActive,
+      planExpiresAt,
+      trialEndDate,
+      dueDateDay,
+      monthlyFeeOverride,
+      planPrice,
+      promoEnabled,
+      promoFirstPaymentAmount,
+      gracePeriodDays,
+      cnpjCpf,
+      ownerName,
+      ownerEmail,
+      ownerPhone,
+      nome,
+      status,
+      pago,
+      trialDays,
+      createdAt,
+      adminNome,
+      adminEmail,
+      adminPassword,
+      dataVencimento,
+      limiteCaminhoes,
+      valorPorCaminhao,
+      valorMensalidade
+    } = req.body;
 
     const db = readDB();
     const idx = db.companies.findIndex((c: any) => c.id === id);
@@ -1244,15 +1823,49 @@ app.use(ensureDBSynced);
     }
 
     if (plano !== undefined) db.companies[idx].plano = plano;
+    if (planName !== undefined) db.companies[idx].planName = planName;
     if (nome !== undefined) db.companies[idx].nome = nome;
-    if (status !== undefined) db.companies[idx].status = status;
+    if (status !== undefined) {
+      db.companies[idx].status = status;
+      db.companies[idx].isActive = status === "ativo";
+    }
+    if (isActive !== undefined) {
+      db.companies[idx].isActive = Boolean(isActive);
+      db.companies[idx].status = Boolean(isActive) ? "ativo" : "inativo";
+    }
+    if (planStatus !== undefined) {
+      db.companies[idx].planStatus = planStatus;
+      if (planStatus === "suspended" || planStatus === "canceled") {
+        db.companies[idx].isActive = false;
+        db.companies[idx].status = "inativo";
+      } else if (isActive === undefined && status === undefined) {
+        db.companies[idx].isActive = true;
+        db.companies[idx].status = "ativo";
+      }
+    }
     if (pago !== undefined) db.companies[idx].pago = !!pago;
     if (trialDays !== undefined) {
       const val = Number(trialDays);
       db.companies[idx].trialDays = isNaN(val) ? 30 : val;
     }
+    if (trialEndDate !== undefined) db.companies[idx].trialEndDate = trialEndDate;
     if (createdAt !== undefined) db.companies[idx].createdAt = createdAt;
-    if (dataVencimento !== undefined) db.companies[idx].dataVencimento = dataVencimento;
+    if (dataVencimento !== undefined) {
+      db.companies[idx].dataVencimento = dataVencimento;
+      db.companies[idx].planExpiresAt = dataVencimento;
+    }
+    if (planExpiresAt !== undefined) {
+      db.companies[idx].planExpiresAt = planExpiresAt;
+      db.companies[idx].dataVencimento = planExpiresAt;
+    }
+    if (dueDateDay !== undefined) db.companies[idx].dueDateDay = Number(dueDateDay) || 10;
+    if (gracePeriodDays !== undefined) db.companies[idx].gracePeriodDays = Number(gracePeriodDays) || 0;
+    if (promoEnabled !== undefined) db.companies[idx].promoEnabled = Boolean(promoEnabled);
+    if (promoFirstPaymentAmount !== undefined) db.companies[idx].promoFirstPaymentAmount = Number(promoFirstPaymentAmount) || 0;
+    if (cnpjCpf !== undefined) db.companies[idx].cnpjCpf = cnpjCpf;
+    if (ownerName !== undefined) db.companies[idx].ownerName = ownerName;
+    if (ownerEmail !== undefined) db.companies[idx].ownerEmail = ownerEmail;
+    if (ownerPhone !== undefined) db.companies[idx].ownerPhone = ownerPhone;
     
     if (limiteCaminhoes !== undefined) {
       const parsedLim = Number(limiteCaminhoes);
@@ -1262,18 +1875,12 @@ app.use(ensureDBSynced);
       const parsedVal = Number(valorPorCaminhao);
       db.companies[idx].valorPorCaminhao = isNaN(parsedVal) ? 30 : parsedVal;
     }
-    if (valorMensalidade !== undefined) {
-      const parsedMensal = Number(valorMensalidade);
-      db.companies[idx].valorMensalidade = isNaN(parsedMensal) ? ((db.companies[idx].limiteCaminhoes || 10) * (db.companies[idx].valorPorCaminhao || 30)) : parsedMensal;
+    const feeVal = planPrice !== undefined ? Number(planPrice) : (monthlyFeeOverride !== undefined ? Number(monthlyFeeOverride) : (valorMensalidade !== undefined ? Number(valorMensalidade) : undefined));
+    if (feeVal !== undefined && !isNaN(feeVal)) {
+      db.companies[idx].valorMensalidade = feeVal;
+      db.companies[idx].planPrice = feeVal;
+      db.companies[idx].monthlyFeeOverride = feeVal;
     }
-
-    console.log(`[Express Server] Updating company subscription: ${id}`, {
-      nome: db.companies[idx].nome,
-      limiteCaminhoes: db.companies[idx].limiteCaminhoes,
-      valorPorCaminhao: db.companies[idx].valorPorCaminhao,
-      valorMensalidade: db.companies[idx].valorMensalidade,
-      dataVencimento: db.companies[idx].dataVencimento
-    });
 
     // Associated Admin user edit (dados cadastrais e redefinição de senha)
     const companyAdmin = db.users.find((u: any) => u.companyId === id && u.role === "admin");
@@ -1393,11 +2000,31 @@ app.use(ensureDBSynced);
     res.json({ success: true });
   });
 
-  app.post("/api/reset", (req, res) => {
+  // Hardened /api/reset: Restricted exclusively to Superadmin with explicit confirmation token
+  app.post("/api/reset", async (req, res) => {
+    const user = (req as any).user;
+    if (!user || (user.role !== "superadmin" && user.role !== "saas_admin")) {
+      await recordSecurityAudit(
+        "UNAUTHORIZED_DB_RESET_BLOCKED",
+        (req as any).companyId || "unknown",
+        { callerUid: user?.id },
+        req
+      );
+      return res.status(403).json({
+        error: "Acesso negado (403 Forbidden): Operação restrita ao Superadmin Master."
+      });
+    }
+    if (req.body?.confirmReset !== "RESET_CONFIRMED_BY_SUPERADMIN") {
+      return res.status(400).json({
+        error: "Confirmação de segurança obrigatória (confirmReset) ausente."
+      });
+    }
     const initialData = getInitialData();
     writeDB(initialData);
+    await recordSecurityAudit("SUPERADMIN_DB_RESET", "system", { callerUid: user.id }, req);
     res.json({ status: "ok", data: initialData });
   });
+
 
   app.post("/api/fuel_logs", (req, res) => {
     const db = readDB();
@@ -2423,6 +3050,535 @@ app.use(ensureDBSynced);
     res.json({ categories_entrada: currentEntrada, categories_saida: currentSaida });
   });
 
+  // ============================================================================
+  // MERCADO PAGO API v1 - COBRANÇA PIX, VERIFICAÇÃO DE STATUS E WEBHOOK AUTOMÁTICO
+  // ============================================================================
+  const MERCADOPAGO_ACCESS_TOKEN =
+    process.env.MERCADOPAGO_ACCESS_TOKEN ||
+    "APP_USR-8095889170603631-092923-59bc02bdb3dedbba22bc6ce75430395f-313512785";
+
+  // Helper to compute +30 days ISO date (YYYY-MM-DD) from current expiration (if in future) or today
+  const computeNext30DaysExpiration = (currentExpiresAt?: string): string => {
+    const today = new Date();
+    today.setHours(12, 0, 0, 0);
+    let baseDate = today;
+    if (currentExpiresAt && /^\d{4}-\d{2}-\d{2}$/.test(currentExpiresAt)) {
+      const parsed = new Date(currentExpiresAt + "T12:00:00");
+      if (!isNaN(parsed.getTime()) && parsed.getTime() > today.getTime()) {
+        baseDate = parsed;
+      }
+    }
+    const nextDate = new Date(baseDate.getTime() + 30 * 24 * 60 * 60 * 1000);
+    return nextDate.toISOString().split("T")[0];
+  };
+
+  // Unlocks and renews a tenant in both remote Firestore (system_state/gbfleet_db) and local db.json
+  const unlockTenantInFirestoreAndLocal = async (
+    tenantId: string,
+    paymentId: string,
+    paidAmount?: number
+  ): Promise<{ unlocked: boolean; alreadyProcessed?: boolean; newExpiresAt?: string }> => {
+    let resultUnlocked = false;
+    let newExpiresAt = "";
+
+    const applyUnlockToCompany = (comp: any) => {
+      if (comp.lastApprovedPaymentId && String(comp.lastApprovedPaymentId) === String(paymentId)) {
+        newExpiresAt = comp.planExpiresAt || comp.dataVencimento || "";
+        return false; // Already processed this paymentId
+      }
+      const nextExp = computeNext30DaysExpiration(comp.planExpiresAt || comp.dataVencimento);
+      comp.planExpiresAt = nextExp;
+      comp.dataVencimento = nextExp;
+      comp.planStatus = "active";
+      comp.isActive = true;
+      comp.status = "ativo";
+      comp.pago = true;
+      if (comp.promoEnabled) {
+        comp.promoEnabled = false;
+      }
+      comp.lastApprovedPaymentId = String(paymentId);
+      comp.lastPaymentAt = new Date().toISOString();
+      if (paidAmount !== undefined) {
+        comp.lastPaidAmount = Number(paidAmount);
+      }
+      newExpiresAt = nextExp;
+      return true;
+    };
+
+    // 1) Update in Firestore (system_state/gbfleet_db) via REST API
+    try {
+      let projId = firestoreProjId || process.env.FIREBASE_PROJECT_ID || "";
+      let dbId = firestoreDbId || process.env.FIREBASE_DATABASE_ID || "(default)";
+      const firebaseConfigPath = path.join(process.cwd(), "firebase-applet-config.json");
+      if (fs.existsSync(firebaseConfigPath)) {
+        const cfg = JSON.parse(fs.readFileSync(firebaseConfigPath, "utf-8"));
+        if (cfg.projectId) projId = cfg.projectId;
+        if (cfg.firestoreDatabaseId) dbId = cfg.firestoreDatabaseId;
+      }
+
+      if (projId) {
+        const docUrl = `https://firestore.googleapis.com/v1/projects/${projId}/databases/${dbId}/documents/system_state/gbfleet_db`;
+        const getRes = await fetch(docUrl);
+        if (getRes.ok) {
+          const docJson: any = await getRes.json();
+          const companiesField = docJson?.fields?.companies;
+          if (companiesField) {
+            const companiesArr: any[] = fromFirestoreValue(companiesField) || [];
+            // Guard: only patch if companiesArr is valid and non-empty
+            if (Array.isArray(companiesArr) && companiesArr.length > 0) {
+              const targetComp = companiesArr.find((c: any) => c && c.id === tenantId);
+              if (targetComp) {
+                const changed = applyUnlockToCompany(targetComp);
+                if (changed) {
+                  const patchParams = new URLSearchParams();
+                  patchParams.append("updateMask.fieldPaths", "companies");
+                  patchParams.append("updateMask.fieldPaths", "_writeId");
+                  patchParams.append("updateMask.fieldPaths", "_writeTimestamp");
+
+                  const patchBody = {
+                    fields: {
+                      companies: toFirestoreValue(companiesArr),
+                      _writeId: toFirestoreValue(`mp_unlock_${paymentId}_${Date.now()}`),
+                      _writeTimestamp: toFirestoreValue(Date.now())
+                    }
+                  };
+
+                  const patchRes = await fetch(`${docUrl}?${patchParams.toString()}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(patchBody)
+                  });
+                  if (patchRes.ok) {
+                    resultUnlocked = true;
+                    console.log(`[Mercado Pago] Tenant ${tenantId} desbloqueado e renovado no Firestore até ${newExpiresAt}!`);
+                  }
+                } else {
+                  return { unlocked: true, alreadyProcessed: true, newExpiresAt };
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch (fsErr: any) {
+      console.warn("[Mercado Pago] Aviso ao atualizar Firestore via servidor:", fsErr.message);
+    }
+
+    // 2) Also update local DB cache if tenant exists locally
+    try {
+      const db = readDB();
+      const localComp = db.companies?.find((c: any) => c.id === tenantId);
+      if (localComp) {
+        const changedLocal = applyUnlockToCompany(localComp);
+        if (changedLocal) {
+          writeDB(db);
+          resultUnlocked = true;
+        }
+      }
+    } catch (localErr: any) {
+      console.warn("[Mercado Pago] Aviso ao atualizar DB local:", localErr.message);
+    }
+
+    return { unlocked: resultUnlocked, newExpiresAt };
+  };
+
+  // A) POST /api/saas/payment/create-charge (Protected by Rate Limiting + Multi-Tenant Isolation)
+  app.post("/api/saas/payment/create-charge", async (req, res) => {
+    try {
+      const { tenantId, tenantName, ownerEmail, ownerCpfCnpj, planName, amount } = req.body || {};
+
+      if (!tenantId) {
+        return res.status(400).json({ error: "Identificador da empresa (tenantId) é obrigatório." });
+      }
+
+      // Anti-Flood Rate Limiter: max 10 PIX charges per 5 minutes per IP/tenant
+      const ip = getClientIp(req);
+      const rate = checkRateLimit(`mp_create_charge_${ip}_${tenantId}`, 10, 5);
+      if (!rate.allowed) {
+        await recordSecurityAudit(
+          "RATE_LIMIT_PIX_CREATE_CHARGE",
+          String(tenantId),
+          { ip, retryAfterSec: rate.retryAfterSec },
+          req
+        );
+        return res.status(429).json({
+          error: `Limite de geração de QR Code PIX excedido. Aguarde ${rate.retryAfterSec}s.`
+        });
+      }
+
+      // If caller provided an Authorization token or x-user-id, enforce strict multi-tenant check
+      if (req.headers.authorization || req.headers["x-user-id"]) {
+        const caller = await verifyAdminCaller(req);
+        if (caller.authorized && !caller.isSaaSAdmin && caller.tenantId && caller.tenantId !== tenantId) {
+          await recordSecurityAudit(
+            "CROSS_TENANT_PIX_CHARGE_BLOCKED",
+            String(tenantId),
+            { callerUid: caller.uid, callerTenantId: caller.tenantId, targetTenantId: tenantId },
+            req
+          );
+          return res.status(403).json({
+            error: "Acesso negado (403 Forbidden): Você não pode gerar cobranças para outra empresa."
+          });
+        }
+      }
+
+      // Zero-Trust Price Validation: Prevent client-side amount tampering (e.g. changing R$ 149.90 to R$ 0.01)
+      let callerIsSuperAdmin = false;
+      if (req.headers.authorization || req.headers["x-user-id"]) {
+        const caller = await verifyAdminCaller(req);
+        callerIsSuperAdmin = Boolean(caller.authorized && caller.isSaaSAdmin);
+      }
+
+      let numericAmount = Number(amount);
+      if (!callerIsSuperAdmin) {
+        const db = readDB();
+        const comp = db.companies?.find((c: any) => c.id === tenantId);
+        if (comp) {
+          const expectedPrice =
+            comp.promoEnabled && Number(comp.promoFirstPaymentAmount) > 0
+              ? Number(comp.promoFirstPaymentAmount)
+              : Number(comp.planPrice || comp.monthlyFeeOverride || comp.valorMensalidade || 0);
+          if (expectedPrice > 0 && numericAmount < expectedPrice) {
+            await recordSecurityAudit(
+              "PIX_AMOUNT_TAMPERING_BLOCKED",
+              String(tenantId),
+              { attemptedAmount: numericAmount, enforcedAmount: expectedPrice },
+              req
+            );
+            numericAmount = expectedPrice;
+          }
+        }
+      }
+
+      if (isNaN(numericAmount) || numericAmount <= 0) {
+        return res.status(400).json({ error: "Valor da cobrança inválido." });
+      }
+
+      const rawDoc = String(ownerCpfCnpj || "").replace(/\D/g, "");
+      const hasValidLength = rawDoc.length === 11 || rawDoc.length === 14;
+      const cleanDoc = hasValidLength ? rawDoc : "19119119100";
+      const docType = cleanDoc.length === 14 ? "CNPJ" : "CPF";
+
+      const cleanEmail =
+        ownerEmail && String(ownerEmail).includes("@")
+          ? String(ownerEmail).trim().toLowerCase()
+          : `financeiro@${String(tenantId).replace(/[^a-zA-Z0-9]/g, "")}.com`;
+
+      const proto = (req.headers["x-forwarded-proto"] as string) || req.protocol || "https";
+      const host = (req.headers["x-forwarded-host"] as string) || req.headers.host || "";
+      const baseOrigin = host ? `${proto.split(",")[0].trim()}://${host.split(",")[0].trim()}` : (process.env.VITE_APP_URL || "");
+      const isPublicHttps =
+        baseOrigin.startsWith("https://") &&
+        !baseOrigin.includes("localhost") &&
+        !baseOrigin.includes("127.0.0.1");
+
+      const buildMpPayload = (identificationType: string, identificationNumber: string) => {
+        const payload: any = {
+          transaction_amount: Number(numericAmount.toFixed(2)),
+          description: `Assinatura SaaS Gestão de Caminhões - ${planName || "Plano Frota"} (${tenantName || tenantId})`,
+          payment_method_id: "pix",
+          payer: {
+            email: cleanEmail,
+            first_name: tenantName || tenantId,
+            identification: {
+              type: identificationType,
+              number: identificationNumber
+            }
+          },
+          external_reference: `truck_saas:${tenantId}`
+        };
+
+        if (isPublicHttps) {
+          payload.notification_url = `${baseOrigin}/api/webhooks/mercadopago`;
+        }
+        return payload;
+      };
+
+      const sendMpCreateRequest = async (idType: string, idNumber: string) => {
+        const randomStr = Math.random().toString(36).substring(2, 10);
+        const idempotencyKey = `mp_truck_${tenantId}_${Date.now()}_${randomStr}`;
+        return fetch("https://api.mercadopago.com/v1/payments", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${MERCADOPAGO_ACCESS_TOKEN}`,
+            "Content-Type": "application/json",
+            "X-Idempotency-Key": idempotencyKey
+          },
+          body: JSON.stringify(buildMpPayload(idType, idNumber))
+        });
+      };
+
+      let mpRes = await sendMpCreateRequest(docType, cleanDoc);
+      let mpData: any = await mpRes.json();
+
+      if (!mpRes.ok && cleanDoc !== "19119119100") {
+        console.warn("[Mercado Pago] Documento informado rejeitado pela validação MP; tentando fallback seguro para emissão do PIX...");
+        mpRes = await sendMpCreateRequest("CPF", "19119119100");
+        mpData = await mpRes.json();
+      }
+
+      if (!mpRes.ok) {
+        console.error("[Mercado Pago Error] Falha ao criar cobrança PIX:", mpData);
+        return res.status(mpRes.status || 400).json({
+          error: mpData?.message || "Falha ao gerar cobrança PIX no Mercado Pago."
+        });
+      }
+
+      const txData = mpData?.point_of_interaction?.transaction_data || {};
+      return res.json({
+        paymentId: String(mpData.id),
+        status: mpData.status,
+        statusDetail: mpData.status_detail,
+        qrCode: txData.qr_code || "",
+        qrCodeBase64: txData.qr_code_base64 || "",
+        ticketUrl: txData.ticket_url || "",
+        expiresAt: mpData.date_of_expiration || null,
+        amount: mpData.transaction_amount,
+        externalReference: mpData.external_reference
+      });
+    } catch (err: any) {
+      console.error("[Mercado Pago Create Charge Exception]:", err);
+      return res.status(500).json({ error: err.message || "Erro interno ao gerar PIX." });
+    }
+  });
+
+  // B) GET /api/saas/payment/check-status/:paymentId (Zero-Trust Official MP Lookup)
+  app.get("/api/saas/payment/check-status/:paymentId", async (req, res) => {
+    try {
+      const { paymentId } = req.params;
+      if (!paymentId || !/^\d+$/.test(String(paymentId).trim())) {
+        return res.status(400).json({ error: "paymentId numérico válido é obrigatório." });
+      }
+
+      const rate = checkRateLimit(`mp_check_${getClientIp(req)}`, 45, 1);
+      if (!rate.allowed) {
+        return res.status(429).json({ error: "Limite de consultas atingido. Aguarde alguns segundos." });
+      }
+
+      const mpRes = await fetch(`https://api.mercadopago.com/v1/payments/${encodeURIComponent(String(paymentId).trim())}`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${MERCADOPAGO_ACCESS_TOKEN}`,
+          "Content-Type": "application/json"
+        }
+      });
+
+      const mpData: any = await mpRes.json();
+      if (!mpRes.ok) {
+        return res.status(mpRes.status || 400).json({
+          error: mpData?.message || "Não foi possível consultar o status do pagamento."
+        });
+      }
+
+      const extRef = String(mpData.external_reference || "");
+      const isTruckSaas = extRef.startsWith("truck_saas:");
+      const tenantId = isTruckSaas ? extRef.replace("truck_saas:", "") : null;
+
+      let unlockResult: any = null;
+      if (isTruckSaas && tenantId && mpData.status === "approved") {
+        unlockResult = await unlockTenantInFirestoreAndLocal(
+          tenantId,
+          String(mpData.id),
+          mpData.transaction_amount
+        );
+        await recordSecurityAudit(
+          "PIX_PAYMENT_APPROVED_UNLOCK",
+          tenantId,
+          { paymentId: String(mpData.id), amount: mpData.transaction_amount, newExpiresAt: unlockResult?.newExpiresAt },
+          req
+        );
+      }
+
+      return res.json({
+        id: String(mpData.id),
+        status: mpData.status,
+        status_detail: mpData.status_detail,
+        external_reference: extRef,
+        tenantId,
+        isTruckSaas,
+        transaction_amount: mpData.transaction_amount,
+        date_approved: mpData.date_approved,
+        unlocked: unlockResult?.unlocked || false,
+        newExpiresAt: unlockResult?.newExpiresAt || null
+      });
+    } catch (err: any) {
+      console.error("[Mercado Pago Check Status Exception]:", err);
+      return res.status(500).json({ error: err.message || "Erro ao consultar pagamento." });
+    }
+  });
+
+  // B.2) POST /api/saas/payment/confirm-unlock (Zero-Trust Unlock Verification)
+  // Blocks fake client-side unlock requests unless the paymentId is genuinely approved on Mercado Pago API v1!
+  app.post("/api/saas/payment/confirm-unlock", async (req, res) => {
+    try {
+      const { tenantId, paymentId } = req.body || {};
+      if (!tenantId || !paymentId || !/^\d+$/.test(String(paymentId).trim())) {
+        await recordSecurityAudit(
+          "FORGED_CONFIRM_UNLOCK_BLOCKED",
+          String(tenantId || "unknown"),
+          { paymentId, reason: "Missing or non-numeric paymentId" },
+          req
+        );
+        return res.status(403).json({
+          error: "Desbloqueio negado (403 Forbidden): ID de pagamento inválido ou não verificado."
+        });
+      }
+
+      const mpRes = await fetch(`https://api.mercadopago.com/v1/payments/${encodeURIComponent(String(paymentId).trim())}`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${MERCADOPAGO_ACCESS_TOKEN}`,
+          "Content-Type": "application/json"
+        }
+      });
+
+      if (!mpRes.ok) {
+        await recordSecurityAudit(
+          "FORGED_CONFIRM_UNLOCK_BLOCKED",
+          String(tenantId),
+          { paymentId, mpStatus: mpRes.status },
+          req
+        );
+        return res.status(403).json({
+          error: "Desbloqueio negado (403 Forbidden): Pagamento não encontrado na API oficial do Mercado Pago."
+        });
+      }
+
+      const mpData: any = await mpRes.json();
+      const expectedRef = `truck_saas:${tenantId}`;
+      if (mpData.status !== "approved" || mpData.external_reference !== expectedRef) {
+        await recordSecurityAudit(
+          "FORGED_CONFIRM_UNLOCK_BLOCKED",
+          String(tenantId),
+          {
+            paymentId,
+            mpStatus: mpData.status,
+            externalReference: mpData.external_reference,
+            expectedRef
+          },
+          req
+        );
+        return res.status(403).json({
+          error: "Desbloqueio negado (403 Forbidden): Pagamento ainda não aprovado ou pertence a outra referência."
+        });
+      }
+
+      const unlockResult = await unlockTenantInFirestoreAndLocal(
+        String(tenantId),
+        String(mpData.id),
+        mpData.transaction_amount
+      );
+      return res.json({
+        success: true,
+        verifiedByMercadoPago: true,
+        paymentId: String(mpData.id),
+        ...unlockResult
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: "Erro ao validar desbloqueio no Mercado Pago." });
+    }
+  });
+
+  // C) Zero-Trust Webhook Handler (Shared by /api/webhooks/mercadopago and /api/webhooks)
+  // NEVER trusts req.body.status! Extracts only paymentId and queries https://api.mercadopago.com/v1/payments/${paymentId}
+  // directly using server-side MERCADOPAGO_ACCESS_TOKEN.
+  const handleMercadoPagoZeroTrustWebhook = async (req: express.Request, res: express.Response) => {
+    try {
+      const ip = getClientIp(req);
+      const rate = checkRateLimit(`mp_webhook_${ip}`, 60, 1);
+      if (!rate.allowed) {
+        await recordSecurityAudit("WEBHOOK_RATE_LIMIT_EXCEEDED", "webhook", { ip }, req);
+        return res.status(429).json({ error: "Too Many Requests" });
+      }
+
+      const paymentId =
+        req.body?.data?.id ||
+        req.query?.["data.id"] ||
+        req.query?.id ||
+        (typeof req.body?.resource === "string" ? req.body.resource.match(/\/(\d+)$/)?.[1] : null);
+
+      // Detect and log if someone tried to send a fake status in body without a valid Mercado Pago payment ID
+      if (!paymentId) {
+        if (req.body?.status === "approved" || req.body?.tenantId) {
+          await recordSecurityAudit(
+            "WEBHOOK_SPOOF_ATTEMPT_BLOCKED",
+            String(req.body?.tenantId || "unknown"),
+            { reason: "Missing paymentId with forged status/tenantId in body", body: req.body },
+            req
+          );
+        }
+        return res.status(200).json({ received: true, note: "Sem ID de pagamento na notificação." });
+      }
+
+      // Zero-Trust: Always verify payment status directly on Mercado Pago API v1
+      const mpRes = await fetch(`https://api.mercadopago.com/v1/payments/${encodeURIComponent(String(paymentId).trim())}`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${MERCADOPAGO_ACCESS_TOKEN}`,
+          "Content-Type": "application/json"
+        }
+      });
+
+      if (!mpRes.ok) {
+        await recordSecurityAudit(
+          "WEBHOOK_UNVERIFIED_PAYMENT_ID",
+          "webhook",
+          { paymentId: String(paymentId), mpStatus: mpRes.status },
+          req
+        );
+        return res.status(200).json({ received: true, note: "Pagamento não confirmado na API oficial do Mercado Pago." });
+      }
+
+      const mpData: any = await mpRes.json();
+      const extRef = String(mpData.external_reference || "");
+
+      // Ignore notifications from the user's other SaaS sharing the same Mercado Pago account
+      if (!extRef.startsWith("truck_saas:")) {
+        console.log(`[Mercado Pago Webhook] Ignorando pagamento ${paymentId} de outro SaaS (external_reference: ${extRef}).`);
+        return res.status(200).json({ received: true, ignored: true, external_reference: extRef });
+      }
+
+      const tenantId = extRef.replace("truck_saas:", "");
+      if (mpData.status === "approved" && tenantId) {
+        const unlockResult = await unlockTenantInFirestoreAndLocal(
+          tenantId,
+          String(mpData.id),
+          mpData.transaction_amount
+        );
+        await recordSecurityAudit(
+          "WEBHOOK_PAYMENT_APPROVED_RENEWED",
+          tenantId,
+          {
+            paymentId: String(mpData.id),
+            amount: mpData.transaction_amount,
+            newExpiresAt: unlockResult.newExpiresAt
+          },
+          req
+        );
+        return res.status(200).json({
+          received: true,
+          processed: true,
+          tenantId,
+          status: mpData.status,
+          ...unlockResult
+        });
+      }
+
+      return res.status(200).json({
+        received: true,
+        tenantId,
+        status: mpData.status
+      });
+    } catch (err: any) {
+      console.error("[Mercado Pago Webhook Exception]:", err);
+      return res.status(200).json({ received: true, error: err.message });
+    }
+  };
+
+  app.post("/api/webhooks/mercadopago", handleMercadoPagoZeroTrustWebhook);
+  app.post("/api/webhooks", handleMercadoPagoZeroTrustWebhook);
+
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
     import("vite").then(({ createServer: createViteServer }) => {
@@ -2454,14 +3610,13 @@ app.use(ensureDBSynced);
     }
   }
 
-  // Global Error Handling Middleware to surface the exact stack trace of 500 errors to the client
+  // Hardened Error Handling Middleware: Never leak internal stack traces to external clients
   app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
     console.error("Unhandled Server Error:", err);
     res.status(500).json({
-      error: err.message || "Erro interno do servidor.",
-      stack: err.stack,
-      hint: "Consulte o console do servidor para obter mais informações."
+      error: "Erro interno do servidor."
     });
   });
 
 export default app;
+

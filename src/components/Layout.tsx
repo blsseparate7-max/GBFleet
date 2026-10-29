@@ -29,10 +29,18 @@ import {
   Image as ImageIcon,
   Upload,
   Trash2,
-  Sliders
+  Sliders,
+  QrCode,
+  Copy,
+  RefreshCw,
+  Sparkles,
+  ExternalLink
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { onDBSync } from '../lib/firebaseClientDb';
+import { useAuth } from '../contexts/AuthContext';
+import { useTenant } from '../contexts/TenantContext';
+import { getCachedTenant, setCachedTenant, setCachedUserProfile, invalidateTenantCache } from '../lib/tenantService';
 import Home from './Home';
 import Dashboard from './Dashboard';
 import Chat from './Chat';
@@ -52,14 +60,34 @@ import { ToastContainer, showToast } from './ui/Toast';
 
 type Tab = 'home' | 'dashboard' | 'trucks' | 'fuel' | 'expenses' | 'cash' | 'freights' | 'maintenance' | 'drivers' | 'driver_financials' | 'simulator' | 'reports' | 'saas';
 
+const SAFETY_LOADING_TIMEOUT_MS = 2500;
+
 export default function Layout() {
+  const { logout: authLogout, loginInstant } = useAuth();
+  const { updateTenantCache, invalidateCurrentTenant } = useTenant();
+
   const [currentUser, setCurrentUser] = useState<any>(() => {
-    const saved = localStorage.getItem('gbfleet_user');
-    return saved ? JSON.parse(saved) : null;
+    try {
+      const saved = localStorage.getItem('gbfleet_user');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
   });
   const [currentCompany, setCurrentCompany] = useState<any>(() => {
-    const saved = localStorage.getItem('gbfleet_company');
-    return saved ? JSON.parse(saved) : null;
+    try {
+      const saved = localStorage.getItem('gbfleet_company');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed?.id) {
+          return getCachedTenant(parsed.id) || parsed;
+        }
+        return parsed;
+      }
+    } catch {
+      // ignore
+    }
+    return null;
   });
   const [impersonatedCompanyId, setImpersonatedCompanyId] = useState<string | null>(() => {
     return localStorage.getItem('gbfleet_impersonate');
@@ -76,14 +104,90 @@ export default function Layout() {
 
   const [isDesktopSidebarOpen, setIsDesktopSidebarOpen] = useState(true);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [data, setData] = useState<any>(null);
+
+  // Instant Stale-While-Revalidate initial state from localStorage cache (<50ms) so the user never sees a blank loading screen
+  const [data, setData] = useState<any>(() => {
+    try {
+      const savedUserStr = localStorage.getItem('gbfleet_user');
+      const savedCompStr = localStorage.getItem('gbfleet_company');
+      const savedDbStr = localStorage.getItem('gbfleet_db_local');
+      if (savedUserStr && savedDbStr) {
+        const user = JSON.parse(savedUserStr);
+        const comp = savedCompStr ? JSON.parse(savedCompStr) : null;
+        const localDb = JSON.parse(savedDbStr);
+        const targetCompId = localStorage.getItem('gbfleet_impersonate') || user.companyId;
+        if (localDb && Array.isArray(localDb.trucks)) {
+          return {
+            currentUser: user,
+            company: comp,
+            trucks: (localDb.trucks || []).filter((t: any) => t.companyId === targetCompId),
+            drivers: (localDb.drivers || []).filter((d: any) => d.companyId === targetCompId),
+            fuel_logs: (localDb.fuel_logs || []).filter((f: any) => f.companyId === targetCompId),
+            expenses: (localDb.expenses || []).filter((e: any) => e.companyId === targetCompId),
+            cash_flow: (localDb.cash_flow || []).filter((c: any) => c.companyId === targetCompId),
+            freights: (localDb.freights || []).filter((f: any) => f.companyId === targetCompId),
+            maintenance_alerts: (localDb.maintenance_alerts || []).filter((m: any) => m.companyId === targetCompId),
+            routes: (localDb.routes || []).filter((r: any) => r.companyId === targetCompId),
+            gas_stations: (localDb.gas_stations || []).filter((g: any) => g.companyId === targetCompId),
+            expense_companies: (localDb.expense_companies || []).filter((ec: any) => ec.companyId === targetCompId),
+            driver_payments: (localDb.driver_payments || []).filter((dp: any) => dp.companyId === targetCompId),
+            driver_adjustments: (localDb.driver_adjustments || []).filter((da: any) => da.companyId === targetCompId),
+            categories_entrada: comp?.categories_entrada || localDb.categories_entrada || [],
+            categories_saida: comp?.categories_saida || localDb.categories_saida || [],
+            chat_logs: (localDb.chat_logs || []).filter((cl: any) => cl.companyId === targetCompId)
+          };
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return null;
+  });
+
+  // Safety Fallback Timeout (2500ms max) to prevent infinite "Carregando painel..." if 4G/Wi-Fi oscillates
+  useEffect(() => {
+    if (data || !currentUser) return;
+    const timer = setTimeout(() => {
+      setData((prev: any) =>
+        prev || {
+          currentUser,
+          company: currentCompany,
+          trucks: [],
+          drivers: [],
+          fuel_logs: [],
+          expenses: [],
+          cash_flow: [],
+          freights: [],
+          maintenance_alerts: [],
+          routes: [],
+          gas_stations: [],
+          expense_companies: [],
+          driver_payments: [],
+          driver_adjustments: [],
+          categories_entrada: [],
+          categories_saida: [],
+          chat_logs: []
+        }
+      );
+    }, SAFETY_LOADING_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [data, currentUser, currentCompany]);
 
   // Support authorization code state
   const [supportCodeState, setSupportCodeState] = useState<string | null>(null);
 
+
+  // Client-side Mercado Pago PIX Checkout state (for Blocked Screen & Expiration Warning Banner)
+  const [clientPixCharge, setClientPixCharge] = useState<any>(null);
+  const [isGeneratingClientPix, setIsGeneratingClientPix] = useState(false);
+  const [isCheckingClientPix, setIsCheckingClientPix] = useState(false);
+  const [clientPixCopied, setClientPixCopied] = useState(false);
+  const [isClientPixModalOpen, setIsClientPixModalOpen] = useState(false);
+
   // Trial remaining days value helper
   const daysRemaining = useMemo(() => {
     if (!currentCompany) return 30;
+    if (currentCompany.daysRemaining !== undefined) return currentCompany.daysRemaining;
     const created = new Date(currentCompany.createdAt || new Date());
     const now = new Date();
     const elapsedDays = Math.floor((now.getTime() - created.getTime()) / (1000 * 60 * 60 * 24));
@@ -351,16 +455,20 @@ export default function Layout() {
       if (json.currentUser) {
         setCurrentUser(json.currentUser);
         localStorage.setItem('gbfleet_user', JSON.stringify(json.currentUser));
+        setCachedUserProfile(json.currentUser.id, json.currentUser);
       }
       if (json.company) {
         setCurrentCompany(json.company);
         localStorage.setItem('gbfleet_company', JSON.stringify(json.company));
+        setCachedTenant(json.company.id, json.company);
+        updateTenantCache(json.company);
         setSupportCodeState(json.company.supportCode || null);
       }
     } catch (err) {
       console.error("Fetch error:", err);
     }
   };
+
 
   const handleGenerateSupportCode = async () => {
     try {
@@ -391,15 +499,126 @@ export default function Layout() {
     });
   }, [currentUser?.id]);
 
+  // Automatic 4-second polling for client Mercado Pago PIX payment (both on Blocked Screen and Renewal Modal)
+  useEffect(() => {
+    if (!clientPixCharge || clientPixCharge.status === 'approved' || !currentCompany) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/saas/payment/check-status/${clientPixCharge.paymentId}`);
+        if (!res.ok) return;
+        const statusData = await res.json();
+        if (statusData.status === 'approved') {
+          setClientPixCharge((prev: any) => (prev ? { ...prev, status: 'approved' } : null));
+          await fetch('/api/saas/payment/confirm-unlock', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              tenantId: currentCompany.id,
+              paymentId: clientPixCharge.paymentId,
+              amount: clientPixCharge.amount
+            })
+          });
+          showToast('✓ Pagamento PIX confirmado! Seu painel foi desbloqueado e renovado por +30 dias!', 'success', 6000);
+          setIsClientPixModalOpen(false);
+          fetchData();
+        }
+      } catch (e) {
+        // silent background check
+      }
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, [clientPixCharge, currentCompany?.id]);
+
+  const handleGenerateClientPix = async (openModalIfUnlocked: boolean = false) => {
+    if (!currentCompany) return;
+    if (openModalIfUnlocked) {
+      setIsClientPixModalOpen(true);
+    }
+    setIsGeneratingClientPix(true);
+    setClientPixCopied(false);
+
+    const amountToCharge =
+      currentCompany.effectiveChargeAmount ||
+      (currentCompany.promoEnabled && Number(currentCompany.promoFirstPaymentAmount) > 0
+        ? Number(currentCompany.promoFirstPaymentAmount)
+        : Number(currentCompany.planPrice || currentCompany.monthlyFeeOverride || currentCompany.valorMensalidade || 149.9));
+
+    try {
+      const res = await fetch('/api/saas/payment/create-charge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tenantId: currentCompany.id,
+          tenantName: currentCompany.nome,
+          ownerEmail: currentCompany.ownerEmail || currentUser?.email || `financeiro@${currentCompany.id}.com`,
+          ownerCpfCnpj: currentCompany.cnpjCpf || '',
+          planName: currentCompany.planName || `Plano ${currentCompany.plano || 'Pro'}`,
+          amount: amountToCharge
+        })
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        throw new Error(json.error || 'Erro ao gerar QR Code PIX.');
+      }
+      setClientPixCharge(json);
+    } catch (err: any) {
+      showToast(err.message || 'Falha ao gerar cobrança PIX no Mercado Pago.', 'error');
+    } finally {
+      setIsGeneratingClientPix(false);
+    }
+  };
+
+  const handleManualVerifyClientPix = async () => {
+    if (!clientPixCharge || !currentCompany) return;
+    setIsCheckingClientPix(true);
+    try {
+      const res = await fetch(`/api/saas/payment/check-status/${clientPixCharge.paymentId}`);
+      const statusData = await res.json();
+      if (statusData.status === 'approved') {
+        setClientPixCharge((prev: any) => (prev ? { ...prev, status: 'approved' } : null));
+        await fetch('/api/saas/payment/confirm-unlock', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tenantId: currentCompany.id,
+            paymentId: clientPixCharge.paymentId,
+            amount: clientPixCharge.amount
+          })
+        });
+        showToast('✓ Pagamento PIX confirmado! Painel liberado por +30 dias!', 'success', 6000);
+        setIsClientPixModalOpen(false);
+        fetchData();
+      } else {
+        showToast('Ainda aguardando confirmação do banco. Assim que pagar, a liberação é automática!', 'info');
+      }
+    } catch {
+      showToast('Erro ao consultar status do pagamento.', 'error');
+    } finally {
+      setIsCheckingClientPix(false);
+    }
+  };
+
+  const handleCopyClientPix = () => {
+    if (!clientPixCharge?.qrCode) return;
+    navigator.clipboard.writeText(clientPixCharge.qrCode);
+    setClientPixCopied(true);
+    showToast('✓ Código PIX Copia e Cola copiado!', 'success');
+    setTimeout(() => setClientPixCopied(false), 3000);
+  };
+
   const handleLogout = () => {
     setCurrentUser(null);
     setCurrentCompany(null);
     setImpersonatedCompanyId(null);
     setData(null);
     setSupportCodeState(null);
+    authLogout();
     localStorage.removeItem('gbfleet_user');
     localStorage.removeItem('gbfleet_company');
     localStorage.removeItem('gbfleet_impersonate');
+    localStorage.removeItem('gbfleet_session_token');
     setActiveTab('home');
   };
 
@@ -408,6 +627,13 @@ export default function Layout() {
     setCurrentCompany(company);
     localStorage.setItem('gbfleet_user', JSON.stringify(user));
     localStorage.setItem('gbfleet_company', JSON.stringify(company));
+    loginInstant(user, company);
+    if (company?.id) {
+      invalidateTenantCache(company.id);
+      setCachedTenant(company.id, company);
+      updateTenantCache(company);
+    }
+    invalidateCurrentTenant();
     
     if (user.role === 'superadmin') {
       setActiveTab('saas');
@@ -415,6 +641,7 @@ export default function Layout() {
       setActiveTab('home');
     }
   };
+
 
   const handleImpersonate = async (companyId: string) => {
     if (!companyId) {
@@ -466,41 +693,177 @@ export default function Layout() {
   }
 
   if (data?.blocked) {
+    const blockedComp = data.company || currentCompany;
+    const chargeAmt =
+      blockedComp?.effectiveChargeAmount ||
+      (blockedComp?.promoEnabled && Number(blockedComp?.promoFirstPaymentAmount) > 0
+        ? Number(blockedComp.promoFirstPaymentAmount)
+        : Number(blockedComp?.planPrice || blockedComp?.monthlyFeeOverride || blockedComp?.valorMensalidade || 149.9));
+    const regularAmt = Number(blockedComp?.planPrice || blockedComp?.valorMensalidade || chargeAmt);
+    const expDateStr = (blockedComp?.planExpiresAt || blockedComp?.dataVencimento)
+      ? new Date((blockedComp.planExpiresAt || blockedComp.dataVencimento) + 'T12:00:00').toLocaleDateString('pt-BR')
+      : 'Vencida';
+
     return (
-      <div className="flex h-screen w-screen items-center justify-center bg-slate-900 font-sans text-slate-100 p-4">
-        <div className="bg-slate-800 border border-slate-700 max-w-lg w-full rounded-3xl p-8 shadow-2xl relative overflow-hidden space-y-6">
-          <div className="absolute top-0 left-0 w-full h-1.5 bg-rose-500" />
+      <div className="flex min-h-screen w-screen items-center justify-center bg-slate-900 font-sans text-slate-100 p-4 overflow-y-auto">
+        <div className="bg-slate-800 border border-slate-700 max-w-xl w-full rounded-3xl p-6 sm:p-8 shadow-2xl relative overflow-hidden space-y-6 my-8">
+          <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-rose-500 via-amber-500 to-emerald-500" />
           
-          <div className="space-y-4 text-center">
-            <div className="w-16 h-16 bg-rose-550/10 text-rose-450 rounded-full flex items-center justify-center mx-auto border border-rose-500/20">
-              <ShieldAlert className="w-8 h-8 animate-pulse text-rose-500" />
+          <div className="space-y-3 text-center">
+            <div className="w-14 h-14 bg-rose-500/10 text-rose-400 rounded-2xl flex items-center justify-center mx-auto border border-rose-500/20">
+              <ShieldAlert className="w-7 h-7 animate-pulse text-rose-500" />
             </div>
             <div className="space-y-1">
-              <h2 className="text-xl font-extrabold tracking-tight text-white">Painel Temporariamente Bloqueado</h2>
-              <p className="text-xs text-slate-400">Assinatura corporativa inativa ou período gratuito esgotado.</p>
+              <h2 className="text-xl font-extrabold tracking-tight text-white">
+                Licença Expirada ou Suspensa
+              </h2>
+              <p className="text-xs text-slate-400">
+                Realize o pagamento via PIX abaixo para desbloquear seu painel instantaneamente (+30 dias).
+              </p>
             </div>
           </div>
 
-          <div className="bg-slate-950/45 rounded-2xl p-5 border border-slate-700/50 space-y-3.5 text-xs text-slate-300">
-            <div className="flex items-start gap-3">
-              <div className="w-1.5 h-1.5 bg-rose-500 rounded-full mt-1.5 shrink-0" />
-              <p className="leading-relaxed">
-                Sua empresa <strong>{currentCompany?.nome || "GBFleet Demo"}</strong> completou os 30 dias de trial gratuito ou teve seu status suspenso.
-              </p>
+          {/* Resumo da Fatura / Plano */}
+          <div className="bg-slate-950/60 rounded-2xl p-4 border border-slate-700/70 space-y-3 text-xs">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Empresa / Transportadora</span>
+                <span className="font-extrabold text-white text-sm">{blockedComp?.nome || 'Empresa'}</span>
+              </div>
+              <div className="text-right">
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Vencimento</span>
+                <span className="font-mono font-bold text-rose-400">{expDateStr}</span>
+              </div>
             </div>
-            <div className="flex items-start gap-3">
-              <div className="w-1.5 h-1.5 bg-rose-500 rounded-full mt-1.5 shrink-0" />
-              <p className="leading-relaxed">
-                Deixamos tudo pronto para integração de webhook com a <strong>Asaas</strong>. Para liberar o painel principal, finalize a liquidação de fatura ou solicite o desbloqueio.
-              </p>
+
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Plano Contratado</span>
+                <span className="font-bold text-slate-200">
+                  {blockedComp?.planName || `Plano ${blockedComp?.plano || 'Transportadora Pro'}`}
+                </span>
+              </div>
+              <div className="text-right">
+                <span className="text-[10px] uppercase font-bold text-slate-400 block">Valor para Liberação (+30d)</span>
+                <div className="flex items-center justify-end gap-2">
+                  {blockedComp?.promoEnabled && Number(blockedComp?.promoFirstPaymentAmount) > 0 && (
+                    <span className="text-[11px] text-slate-500 line-through font-mono">
+                      R$ {regularAmt.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </span>
+                  )}
+                  <span className="text-base font-black text-emerald-400 font-mono">
+                    R$ {chargeAmt.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+              </div>
             </div>
+          </div>
+
+          {/* Área de Desbloqueio Instantâneo via PIX (Mercado Pago) */}
+          <div className="bg-slate-900/90 border border-emerald-500/30 rounded-2xl p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <QrCode className="w-5 h-5 text-emerald-400" />
+                <span className="text-xs font-extrabold uppercase tracking-wider text-emerald-300">
+                  Desbloqueio Instantâneo via PIX (Mercado Pago)
+                </span>
+              </div>
+              <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full font-bold">
+                Liberação em segundos
+              </span>
+            </div>
+
+            {!clientPixCharge ? (
+              <button
+                type="button"
+                disabled={isGeneratingClientPix}
+                onClick={() => handleGenerateClientPix(false)}
+                className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-800 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl transition shadow-lg flex items-center justify-center gap-2 cursor-pointer"
+              >
+                {isGeneratingClientPix ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Gerando QR Code PIX no Mercado Pago...</span>
+                  </>
+                ) : (
+                  <>
+                    <QrCode className="w-4 h-4" />
+                    <span>Gerar QR Code PIX para Desbloquear Agora</span>
+                  </>
+                )}
+              </button>
+            ) : (
+              <div className="space-y-4 animate-fade-in">
+                {clientPixCharge.qrCodeBase64 && (
+                  <div className="bg-white p-3.5 rounded-2xl w-48 h-48 mx-auto flex items-center justify-center shadow-inner">
+                    <img
+                      src={`data:image/png;base64,${clientPixCharge.qrCodeBase64}`}
+                      alt="QR Code PIX"
+                      className="w-full h-full object-contain"
+                    />
+                  </div>
+                )}
+
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold uppercase text-slate-400 block text-center">
+                    Ou copie o código PIX Copia e Cola abaixo:
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      readOnly
+                      value={clientPixCharge.qrCode}
+                      className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-[11px] font-mono text-slate-300 select-all"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleCopyClientPix}
+                      className={cn(
+                        "px-4 py-2 rounded-xl font-bold text-xs transition flex items-center gap-1.5 cursor-pointer shrink-0",
+                        clientPixCopied ? "bg-emerald-600 text-white" : "bg-blue-600 hover:bg-blue-500 text-white"
+                      )}
+                    >
+                      {clientPixCopied ? <Check size={14} /> : <Copy size={14} />}
+                      <span>{clientPixCopied ? "Copiado!" : "Copiar PIX"}</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <button
+                    type="button"
+                    disabled={isCheckingClientPix}
+                    onClick={handleManualVerifyClientPix}
+                    className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <RefreshCw size={14} className={cn(isCheckingClientPix && "animate-spin")} />
+                    <span>Já Paguei — Verificar e Liberar</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isGeneratingClientPix}
+                    onClick={() => handleGenerateClientPix(false)}
+                    className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl border border-slate-700 transition cursor-pointer"
+                  >
+                    Novo QR
+                  </button>
+                </div>
+
+                <div className="text-[10px] text-emerald-400/90 text-center flex items-center justify-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                  <span>Aguardando confirmação do pagamento... Seu painel abrirá sozinho assim que compensar!</span>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Special Support Code Group on Block Screen */}
           <div className="bg-slate-750 border border-slate-700/60 p-4 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4">
             <div className="space-y-1 text-center sm:text-left">
               <p className="text-xs font-bold text-white">Conciliação Técnica de Suporte</p>
-              <p className="text-[10px] text-slate-400 leading-relaxed">Gere um código temporário de acesso para que o administrador possa verificar sua conta e liberar o painel.</p>
+              <p className="text-[10px] text-slate-400 leading-relaxed">
+                Precisa de ajuda? Gere um código temporário para o suporte verificar sua conta.
+              </p>
             </div>
             <div className="shrink-0 w-full sm:w-auto">
               {supportCodeState ? (
@@ -513,7 +876,7 @@ export default function Layout() {
               ) : (
                 <button
                   onClick={handleGenerateSupportCode}
-                  className="w-full sm:w-auto px-4 py-2.5 bg-rose-600 hover:bg-rose-550 text-white font-bold text-[11px] rounded-xl transition-all cursor-pointer shadow-md"
+                  className="w-full sm:w-auto px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white font-bold text-[11px] rounded-xl transition-all cursor-pointer"
                 >
                   Gerar Código
                 </button>
@@ -524,12 +887,13 @@ export default function Layout() {
           <div className="flex gap-4">
             <button
               onClick={handleLogout}
-              className="flex-1 py-3 bg-slate-740 hover:bg-slate-700 text-slate-200 hover:text-white font-extrabold text-xs rounded-xl transition border border-slate-600 cursor-pointer text-center"
+              className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white font-extrabold text-xs rounded-xl transition border border-slate-700 cursor-pointer text-center"
             >
               Sair da Conta (Logout)
             </button>
           </div>
         </div>
+        <ToastContainer />
       </div>
     );
   }
@@ -885,6 +1249,36 @@ export default function Layout() {
           </div>
         )}
 
+        {/* Aviso de Expiração de Licença (Banner no Topo quando faltam <= 5 dias) */}
+        {currentUser?.role !== 'superadmin' && currentCompany?.isExpiringWarning && (
+          <div className="bg-gradient-to-r from-amber-500 via-amber-600 to-orange-600 text-white px-4 lg:px-8 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 shadow-sm shrink-0">
+            <div className="flex items-center gap-2.5 text-xs">
+              <AlertCircle size={17} className="shrink-0 animate-bounce" />
+              <p className="font-semibold">
+                {currentCompany.daysUntilExpiration === 0 ? (
+                  <>Atenção: A licença do seu plano <strong>vence HOJE</strong> ({new Date((currentCompany.planExpiresAt || currentCompany.dataVencimento) + 'T12:00:00').toLocaleDateString('pt-BR')}).</>
+                ) : currentCompany.daysUntilExpiration < 0 ? (
+                  <>Aviso Crítico: Sua licença venceu há <strong>{Math.abs(currentCompany.daysUntilExpiration)} dia(s)</strong> (Período de tolerância ativo).</>
+                ) : (
+                  <>Aviso de Renovação: Sua assinatura vence em <strong>{currentCompany.daysUntilExpiration} dia(s)</strong> ({new Date((currentCompany.planExpiresAt || currentCompany.dataVencimento) + 'T12:00:00').toLocaleDateString('pt-BR')}).</>
+                )}
+                {' '}Evite o bloqueio automático do painel renovando via PIX.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => handleGenerateClientPix(true)}
+              className="bg-white hover:bg-amber-50 text-amber-900 font-extrabold text-[11px] px-3.5 py-1.5 rounded-xl shadow-xs transition flex items-center gap-1.5 self-start sm:self-auto shrink-0 cursor-pointer"
+            >
+              <QrCode size={13} className="text-emerald-600" />
+              <span>
+                Renovar Agora via PIX (R${' '}
+                {Number(currentCompany.effectiveChargeAmount || currentCompany.planPrice || currentCompany.valorMensalidade || 149.9).toLocaleString('pt-BR', { minimumFractionDigits: 2 })})
+              </span>
+            </button>
+          </div>
+        )}
+
         <div className="flex-1 overflow-y-auto p-4 md:p-8">
           {!data && activeTab !== 'saas' ? (
             <div className="h-full flex items-center justify-center flex-col text-slate-400 gap-3">
@@ -1150,12 +1544,26 @@ export default function Layout() {
                   <div className="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700">
                     <span className="text-[9px] uppercase font-bold text-slate-400 block mb-0.5">Próximo Vencimento</span>
                     <span className="font-extrabold text-amber-300 text-xs">
-                      {currentCompany?.dataVencimento 
-                        ? new Date(currentCompany.dataVencimento + 'T12:00:00').toLocaleDateString('pt-BR') 
+                      {(currentCompany?.planExpiresAt || currentCompany?.dataVencimento)
+                        ? new Date((currentCompany.planExpiresAt || currentCompany.dataVencimento) + 'T12:00:00').toLocaleDateString('pt-BR') 
                         : 'A definir'}
                     </span>
                   </div>
                 </div>
+
+                {currentUser?.role !== 'superadmin' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsProfileOpen(false);
+                      handleGenerateClientPix(true);
+                    }}
+                    className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs rounded-xl transition flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+                  >
+                    <QrCode size={15} />
+                    <span>Pagar / Renovar Assinatura (+30 Dias) via PIX</span>
+                  </button>
+                )}
               </div>
 
               {/* Channel notifications preferences (Interactive Settings Mock) */}
@@ -1249,6 +1657,121 @@ export default function Layout() {
           </div>
         </div>
       )}
+
+      {/* Modal de Checkout Transparente PIX (Renovação de Assinatura) */}
+      {isClientPixModalOpen && currentCompany && (
+        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in font-sans">
+          <div className="bg-white rounded-3xl max-w-md w-full overflow-hidden shadow-2xl border border-slate-200">
+            <div className="p-5 bg-gradient-to-r from-emerald-600 to-teal-700 text-white flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center">
+                  <QrCode className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-sm">Renovação Instantânea via PIX</h3>
+                  <p className="text-[11px] text-emerald-100">
+                    {currentCompany.planName || `Plano ${currentCompany.plano || 'Pro'}`} (+30 Dias)
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsClientPixModalOpen(false)}
+                className="p-1.5 hover:bg-white/20 rounded-lg text-white cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 flex items-center justify-between text-xs">
+                <div>
+                  <span className="text-[10px] font-bold uppercase text-slate-400 block">Vencimento Atual</span>
+                  <span className="font-bold text-slate-800">
+                    {(currentCompany.planExpiresAt || currentCompany.dataVencimento)
+                      ? new Date((currentCompany.planExpiresAt || currentCompany.dataVencimento) + 'T12:00:00').toLocaleDateString('pt-BR')
+                      : 'Hoje'}
+                  </span>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] font-bold uppercase text-slate-400 block">Valor da Fatura</span>
+                  <span className="text-base font-black text-emerald-700 font-mono">
+                    R${' '}
+                    {Number(
+                      currentCompany.effectiveChargeAmount ||
+                        currentCompany.planPrice ||
+                        currentCompany.valorMensalidade ||
+                        149.9
+                    ).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+              </div>
+
+              {isGeneratingClientPix ? (
+                <div className="py-10 text-center space-y-3">
+                  <div className="w-8 h-8 border-4 border-emerald-600 border-t-transparent rounded-full animate-spin mx-auto" />
+                  <p className="text-xs font-bold text-slate-600">Gerando QR Code PIX no Mercado Pago...</p>
+                </div>
+              ) : clientPixCharge ? (
+                <div className="space-y-4">
+                  {clientPixCharge.qrCodeBase64 && (
+                    <div className="flex flex-col items-center justify-center bg-white border border-slate-200 rounded-2xl p-4">
+                      <img
+                        src={`data:image/png;base64,${clientPixCharge.qrCodeBase64}`}
+                        alt="QR Code PIX"
+                        className="w-48 h-48 object-contain"
+                      />
+                      <span className="text-[11px] font-bold text-slate-500 mt-2">
+                        Escaneie com o aplicativo do seu banco
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black uppercase text-slate-500 block">
+                      PIX Copia e Cola
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        readOnly
+                        value={clientPixCharge.qrCode}
+                        className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-[11px] font-mono text-slate-600 select-all"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleCopyClientPix}
+                        className={cn(
+                          "px-3.5 py-2 rounded-xl font-bold text-xs transition flex items-center gap-1.5 cursor-pointer shrink-0",
+                          clientPixCopied ? "bg-emerald-600 text-white" : "bg-slate-900 hover:bg-slate-800 text-white"
+                        )}
+                      >
+                        {clientPixCopied ? <Check size={14} /> : <Copy size={14} />}
+                        <span>{clientPixCopied ? "Copiado!" : "Copiar"}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={isCheckingClientPix}
+                    onClick={handleManualVerifyClientPix}
+                    className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <RefreshCw size={14} className={cn(isCheckingClientPix && "animate-spin")} />
+                    <span>Já Paguei — Confirmar Renovação (+30 Dias)</span>
+                  </button>
+
+                  <div className="text-[10px] text-slate-400 text-center flex items-center justify-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                    <span>Aguardando pagamento... A renovação é reconhecida automaticamente!</span>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      )}
+
       <ToastContainer />
     </div>
   );

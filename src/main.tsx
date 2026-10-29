@@ -80,47 +80,30 @@ const customFetch = async function (input: RequestInfo | URL, init?: RequestInit
     url = (input as any).url;
   }
 
-  // Intercept any API routes and route them directly to our client-side Firebase Web SDK emulator!
-  const isApiCall = url && url.includes('/api/');
-
-  if (isApiCall) {
-    const apiIndex = url.indexOf('/api/');
-    const apiPath = url.slice(apiIndex);
-
-    const newInit = init ? { ...init } : {};
+  // Helper to attach auth headers to both server-side and client-side calls
+  const buildAuthHeaders = (rawHeaders?: HeadersInit): Record<string, string> => {
     const headersObj: Record<string, string> = {};
-
-    if (newInit.headers) {
-      if (typeof (newInit.headers as any).forEach === 'function') {
+    if (rawHeaders) {
+      if (typeof (rawHeaders as any).forEach === 'function') {
         try {
-          (newInit.headers as any).forEach((value: string, name: string) => {
-            if (name) {
-              headersObj[name.toLowerCase()] = value;
-            }
+          (rawHeaders as any).forEach((value: string, name: string) => {
+            if (name) headersObj[name.toLowerCase()] = value;
           });
-        } catch (e) {
-          // fallback
-        }
-      } else if (Array.isArray(newInit.headers)) {
-        newInit.headers.forEach((item) => {
+        } catch (e) {}
+      } else if (Array.isArray(rawHeaders)) {
+        rawHeaders.forEach((item) => {
           if (Array.isArray(item) && item.length >= 2) {
-            const name = String(item[0]);
-            const value = String(item[1]);
-            if (name) {
-              headersObj[name.toLowerCase()] = value;
-            }
+            headersObj[String(item[0]).toLowerCase()] = String(item[1]);
           }
         });
-      } else if (typeof newInit.headers === 'object') {
+      } else if (typeof rawHeaders === 'object') {
         try {
-          Object.entries(newInit.headers).forEach(([name, value]) => {
+          Object.entries(rawHeaders).forEach(([name, value]) => {
             if (name && value !== undefined && value !== null) {
               headersObj[name.toLowerCase()] = String(value);
             }
           });
-        } catch (e) {
-          // fallback
-        }
+        } catch (e) {}
       }
     }
 
@@ -128,10 +111,10 @@ const customFetch = async function (input: RequestInfo | URL, init?: RequestInit
     let user: any = null;
     try {
       user = userStr ? JSON.parse(userStr) : null;
-    } catch (e) {
-      // ignore
-    }
+    } catch (e) {}
+
     const impersonateId = safeStorage.getItem('gbfleet_impersonate');
+    const sessionToken = safeStorage.getItem('gbfleet_session_token');
 
     if (user && user.id) {
       headersObj['x-user-id'] = String(user.id);
@@ -139,8 +122,70 @@ const customFetch = async function (input: RequestInfo | URL, init?: RequestInit
     if (impersonateId) {
       headersObj['x-impersonate-company-id'] = String(impersonateId);
     }
+    if (!headersObj['authorization']) {
+      if (sessionToken) {
+        headersObj['authorization'] = `Bearer ${sessionToken}`;
+      } else if (user && user.id) {
+        const fallbackToken = btoa(
+          JSON.stringify({
+            uid: user.id,
+            email: user.email || '',
+            role: user.role || 'admin',
+            tenantId: user.companyId || user.tenantId || ''
+          })
+        );
+        headersObj['authorization'] = `Bearer gbf_${fallbackToken}`;
+      }
+    }
 
-    newInit.headers = headersObj;
+    return headersObj;
+  };
+
+  // Intercept any API routes and route them directly to our client-side Firebase Web SDK emulator!
+  // Exception: Mercado Pago API v1 routes, Zero-Trust Webhooks, Server Superadmin verification (/api/auth/me),
+  // and Private Settings Vault (/api/tenants/*/private-settings/*) execute on the Express backend (server.ts).
+  const isServerSideProtectedCall =
+    url &&
+    (url.includes('/api/saas/payment/create-charge') ||
+     url.includes('/api/saas/payment/check-status/') ||
+     url.includes('/api/webhooks/mercadopago') ||
+     url.includes('/api/webhooks') ||
+     url.includes('/api/auth/me') ||
+     url.includes('/private-settings/'));
+
+  if (isServerSideProtectedCall) {
+    const serverInit = init ? { ...init } : {};
+    serverInit.headers = buildAuthHeaders(serverInit.headers);
+    try {
+      const response = await originalFetch(input, serverInit);
+      if (response.ok || response.status === 401 || response.status === 403 || response.status === 429) {
+        return response;
+      }
+      // Fallback for /api/auth/me if running in offline/static preview
+      if (url.includes('/api/auth/me')) {
+        const apiIndex = url.indexOf('/api/');
+        const apiPath = url.slice(apiIndex);
+        return emulateApiCall(apiPath, serverInit);
+      }
+      return response;
+    } catch (netErr) {
+      if (url.includes('/api/auth/me') || url.includes('/private-settings/')) {
+        const apiIndex = url.indexOf('/api/');
+        const apiPath = url.slice(apiIndex);
+        return emulateApiCall(apiPath, serverInit);
+      }
+      throw netErr;
+    }
+  }
+
+  const isApiCall = url && url.includes('/api/');
+
+  if (isApiCall) {
+    const apiIndex = url.indexOf('/api/');
+    const apiPath = url.slice(apiIndex);
+
+    const newInit = init ? { ...init } : {};
+    newInit.headers = buildAuthHeaders(newInit.headers);
 
     return emulateApiCall(apiPath, newInit);
   }
