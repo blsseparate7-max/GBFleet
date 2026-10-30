@@ -426,6 +426,62 @@ export default async function handler(req: any, res: any) {
       });
     }
 
+    // 2.5) GET /api/saas/payment/reconcile/:tenantId
+    if (cleanPath.includes("/api/saas/payment/reconcile/") && method === "GET") {
+      const parts = cleanPath.split("/");
+      const tenantId = String(parts[parts.length - 1] || "").trim();
+      if (!tenantId) {
+        return res.status(400).json({ error: "tenantId é obrigatório." });
+      }
+
+      const extRef = `truck_saas:${tenantId}`;
+      const searchUrl = `https://api.mercadopago.com/v1/payments/search?external_reference=${encodeURIComponent(extRef)}&status=approved&sort=date_approved&criteria=desc&limit=3`;
+      const mpRes = await fetch(searchUrl, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${MERCADOPAGO_ACCESS_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (!mpRes.ok) {
+        return res.status(200).json({ reconciled: false, status: "none" });
+      }
+
+      const searchData: any = await mpRes.json().catch(() => ({}));
+      const results: any[] = Array.isArray(searchData?.results) ? searchData.results : [];
+      const latestApproved = results.find(
+        (p: any) => p && p.status === "approved" && String(p.external_reference) === extRef
+      );
+
+      if (!latestApproved) {
+        return res.status(200).json({ reconciled: false, status: "none" });
+      }
+
+      const approvedAtMs = latestApproved.date_approved
+        ? new Date(latestApproved.date_approved).getTime()
+        : Date.now();
+      if (Date.now() - approvedAtMs > 7 * 24 * 60 * 60 * 1000) {
+        return res.status(200).json({ reconciled: false, status: "expired_window" });
+      }
+
+      const unlockResult = await unlockTenantInFirestore(
+        tenantId,
+        String(latestApproved.id),
+        latestApproved.transaction_amount
+      );
+
+      return res.status(200).json({
+        reconciled: Boolean(unlockResult.unlocked && !unlockResult.alreadyProcessed),
+        alreadyProcessed: Boolean(unlockResult.alreadyProcessed),
+        status: "approved",
+        paymentId: String(latestApproved.id),
+        amount: latestApproved.transaction_amount,
+        date_approved: latestApproved.date_approved,
+        newExpiresAt: unlockResult.newExpiresAt || null,
+      });
+    }
+
     // 3) POST /api/saas/payment/confirm-unlock
     if (cleanPath.endsWith("/api/saas/payment/confirm-unlock") && method === "POST") {
       const body = await parseRequestBody(req);

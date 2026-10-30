@@ -129,6 +129,7 @@ const customFetch = async function (input: RequestInfo | URL, init?: RequestInit
     url &&
     (url.includes('/api/saas/payment/create-charge') ||
      url.includes('/api/saas/payment/check-status/') ||
+     url.includes('/api/saas/payment/reconcile/') ||
      url.includes('/api/webhooks/mercadopago') ||
      url.includes('/api/webhooks') ||
      url.includes('/api/auth/me') ||
@@ -148,7 +149,9 @@ const customFetch = async function (input: RequestInfo | URL, init?: RequestInit
       // If Vercel rewrite wasn't applied and returned an HTML fallback or 404, call /api/index directly
       if (
         (!response.ok || !contentType.includes('application/json')) &&
-        (url.includes('/api/saas/payment/create-charge') || url.includes('/api/saas/payment/check-status/'))
+        (url.includes('/api/saas/payment/create-charge') ||
+         url.includes('/api/saas/payment/check-status/') ||
+         url.includes('/api/saas/payment/reconcile/'))
       ) {
         const apiIndex = url.indexOf('/api/');
         const subPath = apiIndex !== -1 ? url.slice(apiIndex + 5) : url;

@@ -172,8 +172,51 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
         const errData = await res.json();
         throw new Error(errData.error || "Falha ao carregar empresas");
       }
-      const data = await res.json();
+      const data: CompanyMeta[] = await res.json();
       setCompanies(data);
+
+      // Background auto-reconcile with Mercado Pago for any company that has pending/expiring/expired status
+      (async () => {
+        let anyReconciled = false;
+        for (const comp of data) {
+          if (!comp?.id || comp.id === "comp_superadmin") continue;
+          try {
+            const recRes = await fetch(`/api/saas/payment/reconcile/${comp.id}`);
+            if (!recRes.ok) continue;
+            const recData = await recRes.json().catch(() => ({}));
+            if (
+              recData?.status === "approved" &&
+              recData?.paymentId &&
+              (recData.reconciled || String((comp as any).lastApprovedPaymentId || "") !== String(recData.paymentId))
+            ) {
+              await fetch("/api/saas/payment/confirm-unlock", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "x-user-id": currentUserId,
+                },
+                body: JSON.stringify({
+                  tenantId: comp.id,
+                  paymentId: recData.paymentId,
+                  amount: recData.amount,
+                  newExpiresAt: recData.newExpiresAt,
+                }),
+              });
+              anyReconciled = true;
+              showToast(`✓ Pagamento PIX de "${comp.nome}" identificado e liberado automaticamente (+30 dias)!`, "success");
+            }
+          } catch {}
+        }
+        if (anyReconciled) {
+          const refreshRes = await fetch("/api/superadmin/companies", {
+            headers: { "x-user-id": currentUserId },
+          });
+          if (refreshRes.ok) {
+            const refreshed = await refreshRes.json();
+            setCompanies(refreshed);
+          }
+        }
+      })();
     } catch (err: any) {
       console.error(err);
       setError(err.message || "Não foi possível carregar as empresas.");

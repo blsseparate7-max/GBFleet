@@ -3463,6 +3463,66 @@ app.use("/api", ensureDBSynced);
     }
   });
 
+  // B.1) GET /api/saas/payment/reconcile/:tenantId (Auto-Reconciliation by external_reference)
+  // Automatically finds approved PIX payments on Mercado Pago even if the user paid via WhatsApp or closed the QR modal!
+  app.get("/api/saas/payment/reconcile/:tenantId", async (req, res) => {
+    try {
+      const { tenantId } = req.params;
+      if (!tenantId) {
+        return res.status(400).json({ error: "tenantId é obrigatório." });
+      }
+
+      const extRef = `truck_saas:${tenantId}`;
+      const searchUrl = `https://api.mercadopago.com/v1/payments/search?external_reference=${encodeURIComponent(extRef)}&status=approved&sort=date_approved&criteria=desc&limit=3`;
+      const mpRes = await fetch(searchUrl, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${MERCADOPAGO_ACCESS_TOKEN}`,
+          "Content-Type": "application/json"
+        }
+      });
+
+      if (!mpRes.ok) {
+        return res.json({ reconciled: false, status: "none" });
+      }
+
+      const searchData: any = await mpRes.json().catch(() => ({}));
+      const results: any[] = Array.isArray(searchData?.results) ? searchData.results : [];
+      const latestApproved = results.find(
+        (p: any) => p && p.status === "approved" && String(p.external_reference) === extRef
+      );
+
+      if (!latestApproved) {
+        return res.json({ reconciled: false, status: "none" });
+      }
+
+      // Only auto-reconcile payments approved within the last 7 days
+      const approvedAtMs = latestApproved.date_approved ? new Date(latestApproved.date_approved).getTime() : Date.now();
+      if (Date.now() - approvedAtMs > 7 * 24 * 60 * 60 * 1000) {
+        return res.json({ reconciled: false, status: "expired_window" });
+      }
+
+      const unlockResult = await unlockTenantInFirestoreAndLocal(
+        tenantId,
+        String(latestApproved.id),
+        latestApproved.transaction_amount
+      );
+
+      return res.json({
+        reconciled: Boolean(unlockResult.unlocked && !unlockResult.alreadyProcessed),
+        alreadyProcessed: Boolean(unlockResult.alreadyProcessed),
+        status: "approved",
+        paymentId: String(latestApproved.id),
+        amount: latestApproved.transaction_amount,
+        date_approved: latestApproved.date_approved,
+        newExpiresAt: unlockResult.newExpiresAt || null
+      });
+    } catch (err: any) {
+      console.error("[Mercado Pago Reconcile Exception]:", err);
+      return res.status(200).json({ reconciled: false, error: err.message });
+    }
+  });
+
   // B.2) POST /api/saas/payment/confirm-unlock (Zero-Trust Unlock Verification)
   // Blocks fake client-side unlock requests unless the paymentId is genuinely approved on Mercado Pago API v1!
   app.post("/api/saas/payment/confirm-unlock", async (req, res) => {

@@ -501,6 +501,86 @@ export default function Layout() {
     });
   }, [currentUser?.id]);
 
+  // Hydrate any pending PIX charge for this company if the mobile browser reloaded after switching to the banking app
+  useEffect(() => {
+    if (!currentCompany?.id || clientPixCharge) return;
+    try {
+      const savedPix = localStorage.getItem(`gbfleet_pending_pix_${currentCompany.id}`);
+      if (savedPix) {
+        const parsed = JSON.parse(savedPix);
+        if (parsed?.paymentId && parsed?.qrCode && parsed?.status !== 'approved') {
+          setClientPixCharge(parsed);
+        }
+      }
+    } catch {}
+  }, [currentCompany?.id]);
+
+  // Automatic reconciliation by external_reference (truck_saas:tenantId):
+  // Detects payments even if the PIX was sent via WhatsApp or paid 30+ minutes later after closing the modal!
+  useEffect(() => {
+    if (!currentCompany?.id || currentUser?.role === 'superadmin') return;
+    const shouldMonitor =
+      Boolean(data?.blocked) ||
+      Boolean(currentCompany?.isBlocked) ||
+      Boolean(currentCompany?.isExpiringWarning) ||
+      Boolean(isClientPixModalOpen);
+    if (!shouldMonitor) return;
+
+    let cancelled = false;
+    const runReconcile = async () => {
+      try {
+        const res = await fetch(`/api/saas/payment/reconcile/${currentCompany.id}`);
+        if (!res.ok || cancelled) return;
+        const recData = await res.json().catch(() => ({}));
+        if (
+          recData?.status === 'approved' &&
+          recData?.paymentId &&
+          (recData.reconciled || String(currentCompany.lastApprovedPaymentId || '') !== String(recData.paymentId))
+        ) {
+          localStorage.removeItem(`gbfleet_pending_pix_${currentCompany.id}`);
+          setClientPixCharge((prev: any) => (prev ? { ...prev, status: 'approved' } : null));
+          const unlockRes = await fetch('/api/saas/payment/confirm-unlock', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              tenantId: currentCompany.id,
+              paymentId: recData.paymentId,
+              amount: recData.amount,
+              newExpiresAt: recData.newExpiresAt
+            })
+          });
+          if (unlockRes.ok) {
+            const unlockJson = await unlockRes.json().catch(() => ({}));
+            if (unlockJson?.company) {
+              setCurrentCompany(unlockJson.company);
+              localStorage.setItem('gbfleet_company', JSON.stringify(unlockJson.company));
+              setCachedTenant(unlockJson.company.id, unlockJson.company);
+              updateTenantCache(unlockJson.company);
+              setData((prev: any) => (prev ? { ...prev, blocked: false, company: unlockJson.company } : prev));
+            }
+          }
+          showToast('✓ Pagamento PIX confirmado! Seu painel foi desbloqueado e renovado por +30 dias!', 'success', 6000);
+          setIsClientPixModalOpen(false);
+          fetchData();
+        }
+      } catch {}
+    };
+
+    runReconcile();
+    const interval = setInterval(runReconcile, 6000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [
+    currentCompany?.id,
+    currentCompany?.lastApprovedPaymentId,
+    data?.blocked,
+    currentCompany?.isBlocked,
+    currentCompany?.isExpiringWarning,
+    isClientPixModalOpen
+  ]);
+
   // Automatic 4-second polling for client Mercado Pago PIX payment (both on Blocked Screen and Renewal Modal)
   useEffect(() => {
     if (!clientPixCharge || clientPixCharge.status === 'approved' || !currentCompany) return;
@@ -511,6 +591,7 @@ export default function Layout() {
         if (!res.ok) return;
         const statusData = await res.json();
         if (statusData.status === 'approved') {
+          localStorage.removeItem(`gbfleet_pending_pix_${currentCompany.id}`);
           setClientPixCharge((prev: any) => (prev ? { ...prev, status: 'approved' } : null));
           const unlockRes = await fetch('/api/saas/payment/confirm-unlock', {
             method: 'POST',
@@ -589,6 +670,9 @@ export default function Layout() {
         throw new Error(json.error || 'Erro ao gerar QR Code PIX.');
       }
       setClientPixCharge(json);
+      try {
+        localStorage.setItem(`gbfleet_pending_pix_${currentCompany.id}`, JSON.stringify(json));
+      } catch {}
     } catch (err: any) {
       showToast(err.message || 'Falha ao gerar cobrança PIX no Mercado Pago.', 'error');
     } finally {
