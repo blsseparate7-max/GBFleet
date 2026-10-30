@@ -5,7 +5,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { useTenant } from "../contexts/TenantContext";
 
 interface LoginProps {
-  onLoginSuccess: (user: any, company: any) => void;
+  onLoginSuccess: (user: any, company: any, token?: string) => void;
 }
 
 export default function Login({ onLoginSuccess }: LoginProps) {
@@ -51,7 +51,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
       if (data.company) {
         updateTenantCache(data.company);
       }
-      onLoginSuccess(data.user, data.company);
+      onLoginSuccess(data.user, data.company, data.token);
     } catch (err: any) {
       setError(err.message || "E-mail ou senha inválidos.");
     } finally {

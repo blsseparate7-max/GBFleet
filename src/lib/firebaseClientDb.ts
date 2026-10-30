@@ -639,6 +639,20 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
     }
 
 
+    const getBrazilTodayIsoClient = (): string => {
+      try {
+        return new Intl.DateTimeFormat("en-CA", {
+          timeZone: "America/Sao_Paulo",
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit"
+        }).format(new Date());
+      } catch {
+        const brTime = new Date(Date.now() - 3 * 60 * 60 * 1000);
+        return brTime.toISOString().split("T")[0];
+      }
+    };
+
     // Helper to compute normalized licensing and billing fields for any company (tenant)
     const computeCompanyLicenseState = (c: any, mainUser?: any) => {
       const created = new Date(c.createdAt || new Date());
@@ -691,19 +705,20 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
 
       const isActive = c.isActive !== undefined ? Boolean(c.isActive) : c.status !== "inativo";
 
-      // Calculate exact expiration vs today and grace period cutoff (end of day 23:59:59)
-      const todayStart = new Date();
-      todayStart.setHours(0, 0, 0, 0);
-      const expStart = new Date(planExpiresAt + "T00:00:00");
+      // Calculate exact expiration vs today and grace period cutoff (end of day 23:59:59 in Brazil timezone -03:00)
+      const todayIso = getBrazilTodayIsoClient();
+      const todayStart = new Date(`${todayIso}T00:00:00-03:00`);
+      const expStart = new Date(`${planExpiresAt}T00:00:00-03:00`);
       const daysUntilExpiration = isNaN(expStart.getTime())
         ? Math.max(0, trialDays - elapsedDays)
         : Math.round((expStart.getTime() - todayStart.getTime()) / 86400000);
 
-      const cutoffDate = new Date(planExpiresAt + "T23:59:59");
-      if (!isNaN(cutoffDate.getTime()) && gracePeriodDays > 0) {
-        cutoffDate.setDate(cutoffDate.getDate() + gracePeriodDays);
-      }
-      const isPastGracePeriod = !isNaN(cutoffDate.getTime()) ? now.getTime() > cutoffDate.getTime() : false;
+      const cutoffDate = new Date(`${planExpiresAt}T23:59:59-03:00`);
+      const cutoffTimestamp =
+        !isNaN(cutoffDate.getTime()) && gracePeriodDays > 0
+          ? cutoffDate.getTime() + gracePeriodDays * 86400000
+          : cutoffDate.getTime();
+      const isPastGracePeriod = !isNaN(cutoffTimestamp) ? now.getTime() > cutoffTimestamp : false;
 
       const rawPlanStatus: "active" | "trial" | "suspended" | "canceled" =
         c.planStatus || (!isActive ? "suspended" : c.pago ? "active" : "trial");
@@ -762,17 +777,26 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
     };
 
     const computeNext30Days = (currentExpiresAt?: string): string => {
-      const today = new Date();
-      today.setHours(12, 0, 0, 0);
+      const todayIso = getBrazilTodayIsoClient();
+      const today = new Date(`${todayIso}T12:00:00-03:00`);
       let baseDate = today;
       if (currentExpiresAt && /^\d{4}-\d{2}-\d{2}$/.test(currentExpiresAt)) {
-        const parsed = new Date(currentExpiresAt + "T12:00:00");
+        const parsed = new Date(`${currentExpiresAt}T12:00:00-03:00`);
         if (!isNaN(parsed.getTime()) && parsed.getTime() > today.getTime()) {
           baseDate = parsed;
         }
       }
       const nextDate = new Date(baseDate.getTime() + 30 * 24 * 60 * 60 * 1000);
-      return nextDate.toISOString().split("T")[0];
+      try {
+        return new Intl.DateTimeFormat("en-CA", {
+          timeZone: "America/Sao_Paulo",
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit"
+        }).format(nextDate);
+      } catch {
+        return nextDate.toISOString().split("T")[0];
+      }
     };
 
     // 3.5) POST /api/saas/payment/confirm-unlock (Zero-Trust: Verifies paymentId on backend MP API first!)
@@ -792,6 +816,7 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       }
 
       // Verify on the server-side Mercado Pago endpoint before allowing local unlock
+      let serverNewExpiresAt = body.newExpiresAt || "";
       try {
         const checkRes = await fetch(`/api/saas/payment/check-status/${encodeURIComponent(paymentId)}`);
         if (!checkRes.ok) {
@@ -807,6 +832,9 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
             403
           );
         }
+        if (checkData.newExpiresAt) {
+          serverNewExpiresAt = checkData.newExpiresAt;
+        }
       } catch {
         return jsonResponse(
           { error: "Falha ao validar autenticidade do pagamento junto ao servidor." },
@@ -814,29 +842,38 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
         );
       }
 
-      if (comp.lastApprovedPaymentId !== paymentId) {
-        const nextExp = computeNext30Days(comp.planExpiresAt || comp.dataVencimento);
-        comp.planExpiresAt = nextExp;
-        comp.dataVencimento = nextExp;
-        comp.planStatus = "active";
-        comp.isActive = true;
-        comp.status = "ativo";
-        comp.pago = true;
-        if (comp.promoEnabled) {
-          comp.promoEnabled = false;
-        }
-        comp.lastApprovedPaymentId = paymentId;
-        comp.lastPaymentAt = new Date().toISOString();
-        invalidateTenantCache(comp.id);
-        await persistDB(true);
+      // Always apply the unlocked state in local memory even if server check-status already set lastApprovedPaymentId
+      const nextExp =
+        serverNewExpiresAt ||
+        (comp.lastApprovedPaymentId === paymentId && comp.planExpiresAt
+          ? comp.planExpiresAt
+          : computeNext30Days(comp.planExpiresAt || comp.dataVencimento));
+
+      comp.planExpiresAt = nextExp;
+      comp.dataVencimento = nextExp;
+      comp.planStatus = "active";
+      comp.isActive = true;
+      comp.status = "ativo";
+      comp.pago = true;
+      if (comp.promoEnabled) {
+        comp.promoEnabled = false;
       }
+      comp.lastApprovedPaymentId = paymentId;
+      comp.lastPaymentAt = new Date().toISOString();
+
+      invalidateTenantCache(comp.id);
+      await persistDB(true);
 
       const mainUser = (liveDb.users || []).find((u: any) => u.companyId === comp.id && u.role === "admin");
       const updatedState = computeCompanyLicenseState(sanitizeTenantPublicData(comp), mainUser);
       setCachedTenant(comp.id, updatedState);
+      try {
+        localStorage.setItem("gbfleet_company", JSON.stringify(updatedState));
+      } catch {}
       return jsonResponse({
         success: true,
-        company: updatedState
+        company: updatedState,
+        newExpiresAt: nextExp
       });
     }
 

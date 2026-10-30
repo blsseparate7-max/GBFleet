@@ -10,7 +10,11 @@
       "trialDays": 30,
       "supportCode": null,
       "supportCodeCreatedAt": null,
-      "supportAuthorizedUntil": null
+      "supportAuthorizedUntil": null,
+      "limiteCaminhoes": 10,
+      "valorPorCaminhao": 30,
+      "valorMensalidade": 300,
+      "dataVencimento": "2026-07-18"
     }
   ],
   "users": [
@@ -57,5 +61,7 @@
   "freights": [],
   "maintenance_alerts": [],
   "routes": [],
-  "chat_logs": []
+  "chat_logs": [],
+  "gas_stations": [],
+  "expense_companies": []
 }

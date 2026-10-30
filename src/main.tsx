@@ -156,8 +156,12 @@ const customFetch = async function (input: RequestInfo | URL, init?: RequestInit
   if (isServerSideProtectedCall) {
     const serverInit = init ? { ...init } : {};
     serverInit.headers = buildAuthHeaders(serverInit.headers);
+    const targetInput =
+      typeof input === 'string' && input.startsWith('/') && baseUrl
+        ? `${baseUrl}${input}`
+        : input;
     try {
-      const response = await originalFetch(input, serverInit);
+      const response = await originalFetch(targetInput, serverInit);
       if (response.ok || response.status === 401 || response.status === 403 || response.status === 429) {
         return response;
       }

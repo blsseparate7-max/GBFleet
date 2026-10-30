@@ -389,6 +389,13 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
     setIsGeneratingPix(true);
     setPixCopied(false);
     try {
+      const cleanId = String(company.id || "empresa").replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+      const rawEmail = String(company.ownerEmail || company.adminUser?.email || "").trim().toLowerCase();
+      const validEmailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]{2,})+$/;
+      const safeOwnerEmail = validEmailRegex.test(rawEmail)
+        ? rawEmail
+        : `financeiro.${cleanId}@gbfleet.com.br`;
+
       const res = await fetch("/api/saas/payment/create-charge", {
         method: "POST",
         headers: {
@@ -397,15 +404,22 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
         body: JSON.stringify({
           tenantId: company.id,
           tenantName: company.nome,
-          ownerEmail: company.ownerEmail || company.adminUser?.email || `financeiro@${company.id}.com`,
+          ownerEmail: safeOwnerEmail,
           ownerCpfCnpj: company.cnpjCpf || "",
           planName: company.planName || `Plano ${company.plano || "Pro"}`,
           amount: amountToCharge,
         }),
       });
 
-      const data = await res.json();
-      if (!res.ok) {
+      const rawText = await res.text();
+      let data: any = {};
+      try {
+        data = rawText ? JSON.parse(rawText) : {};
+      } catch {
+        throw new Error("Servidor de pagamento indisponível no momento. Tente novamente em instantes.");
+      }
+
+      if (!res.ok || !data.qrCode) {
         throw new Error(data.error || "Falha ao gerar cobrança PIX no Mercado Pago.");
       }
 
@@ -419,12 +433,53 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
     }
   };
 
+  // Automatic 5-second polling while PIX modal is open in SaaSAdmin
+  useEffect(() => {
+    if (!isPixModalOpen || !pixCharge || pixCharge.status === "approved" || !pixModalCompany) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/saas/payment/check-status/${pixCharge.paymentId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.status === "approved") {
+          setPixCharge((prev) => (prev ? { ...prev, status: "approved" } : null));
+          await fetch("/api/saas/payment/confirm-unlock", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-user-id": currentUserId,
+            },
+            body: JSON.stringify({
+              tenantId: pixModalCompany.id,
+              paymentId: pixCharge.paymentId,
+              amount: pixCharge.amount,
+              newExpiresAt: data.newExpiresAt,
+            }),
+          });
+          showToast(`✓ Pagamento confirmado! "${pixModalCompany.nome}" renovada por +30 dias!`, "success");
+          fetchCompanies();
+        }
+      } catch {
+        // silent background check
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [isPixModalOpen, pixCharge, pixModalCompany?.id]);
+
   const handleManualCheckPixStatus = async () => {
     if (!pixCharge || !pixModalCompany) return;
     setIsCheckingPixStatus(true);
     try {
       const res = await fetch(`/api/saas/payment/check-status/${pixCharge.paymentId}`);
-      const data = await res.json();
+      const rawText = await res.text();
+      let data: any = {};
+      try {
+        data = rawText ? JSON.parse(rawText) : {};
+      } catch {
+        throw new Error("Não foi possível validar o status no servidor.");
+      }
       if (!res.ok) {
         throw new Error(data.error || "Erro ao verificar status.");
       }
@@ -440,6 +495,7 @@ export default function SaaSAdmin({ currentUserId, onImpersonate, activeImperson
             tenantId: pixModalCompany.id,
             paymentId: pixCharge.paymentId,
             amount: pixCharge.amount,
+            newExpiresAt: data.newExpiresAt,
           }),
         });
         showToast(`✓ Pagamento confirmado! "${pixModalCompany.nome}" renovada por +30 dias!`, "success");

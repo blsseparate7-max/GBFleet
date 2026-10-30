@@ -34,7 +34,8 @@ import {
   Copy,
   RefreshCw,
   Sparkles,
-  ExternalLink
+  ExternalLink,
+  MessageCircle
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { onDBSync } from '../lib/firebaseClientDb';
@@ -511,15 +512,26 @@ export default function Layout() {
         const statusData = await res.json();
         if (statusData.status === 'approved') {
           setClientPixCharge((prev: any) => (prev ? { ...prev, status: 'approved' } : null));
-          await fetch('/api/saas/payment/confirm-unlock', {
+          const unlockRes = await fetch('/api/saas/payment/confirm-unlock', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               tenantId: currentCompany.id,
               paymentId: clientPixCharge.paymentId,
-              amount: clientPixCharge.amount
+              amount: clientPixCharge.amount,
+              newExpiresAt: statusData.newExpiresAt
             })
           });
+          if (unlockRes.ok) {
+            const unlockJson = await unlockRes.json().catch(() => ({}));
+            if (unlockJson?.company) {
+              setCurrentCompany(unlockJson.company);
+              localStorage.setItem('gbfleet_company', JSON.stringify(unlockJson.company));
+              setCachedTenant(unlockJson.company.id, unlockJson.company);
+              updateTenantCache(unlockJson.company);
+              setData((prev: any) => (prev ? { ...prev, blocked: false, company: unlockJson.company } : prev));
+            }
+          }
           showToast('✓ Pagamento PIX confirmado! Seu painel foi desbloqueado e renovado por +30 dias!', 'success', 6000);
           setIsClientPixModalOpen(false);
           fetchData();
@@ -547,20 +559,33 @@ export default function Layout() {
         : Number(currentCompany.planPrice || currentCompany.monthlyFeeOverride || currentCompany.valorMensalidade || 149.9));
 
     try {
+      const cleanId = String(currentCompany.id || 'empresa').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+      const rawEmail = String(currentCompany.ownerEmail || currentUser?.email || '').trim().toLowerCase();
+      const validEmailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]{2,})+$/;
+      const safeOwnerEmail = validEmailRegex.test(rawEmail)
+        ? rawEmail
+        : `financeiro.${cleanId}@gbfleet.com.br`;
+
       const res = await fetch('/api/saas/payment/create-charge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tenantId: currentCompany.id,
           tenantName: currentCompany.nome,
-          ownerEmail: currentCompany.ownerEmail || currentUser?.email || `financeiro@${currentCompany.id}.com`,
+          ownerEmail: safeOwnerEmail,
           ownerCpfCnpj: currentCompany.cnpjCpf || '',
           planName: currentCompany.planName || `Plano ${currentCompany.plano || 'Pro'}`,
           amount: amountToCharge
         })
       });
-      const json = await res.json();
-      if (!res.ok) {
+      const rawText = await res.text();
+      let json: any = {};
+      try {
+        json = rawText ? JSON.parse(rawText) : {};
+      } catch {
+        throw new Error('Servidor de pagamento indisponível no momento. Tente novamente em instantes.');
+      }
+      if (!res.ok || !json.qrCode) {
         throw new Error(json.error || 'Erro ao gerar QR Code PIX.');
       }
       setClientPixCharge(json);
@@ -576,18 +601,30 @@ export default function Layout() {
     setIsCheckingClientPix(true);
     try {
       const res = await fetch(`/api/saas/payment/check-status/${clientPixCharge.paymentId}`);
-      const statusData = await res.json();
+      const rawText = await res.text();
+      const statusData = rawText ? JSON.parse(rawText) : {};
       if (statusData.status === 'approved') {
         setClientPixCharge((prev: any) => (prev ? { ...prev, status: 'approved' } : null));
-        await fetch('/api/saas/payment/confirm-unlock', {
+        const unlockRes = await fetch('/api/saas/payment/confirm-unlock', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             tenantId: currentCompany.id,
             paymentId: clientPixCharge.paymentId,
-            amount: clientPixCharge.amount
+            amount: clientPixCharge.amount,
+            newExpiresAt: statusData.newExpiresAt
           })
         });
+        if (unlockRes.ok) {
+          const unlockJson = await unlockRes.json().catch(() => ({}));
+          if (unlockJson?.company) {
+            setCurrentCompany(unlockJson.company);
+            localStorage.setItem('gbfleet_company', JSON.stringify(unlockJson.company));
+            setCachedTenant(unlockJson.company.id, unlockJson.company);
+            updateTenantCache(unlockJson.company);
+            setData((prev: any) => (prev ? { ...prev, blocked: false, company: unlockJson.company } : prev));
+          }
+        }
         showToast('✓ Pagamento PIX confirmado! Painel liberado por +30 dias!', 'success', 6000);
         setIsClientPixModalOpen(false);
         fetchData();
@@ -609,6 +646,27 @@ export default function Layout() {
     setTimeout(() => setClientPixCopied(false), 3000);
   };
 
+  const getSupportWhatsAppUrl = (comp: any, pixCharge: any) => {
+    const rawSupportPhone = String(
+      comp?.supportWhatsApp || localStorage.getItem('gbfleet_support_whatsapp') || ''
+    ).replace(/\D/g, '');
+    const formattedPhone = rawSupportPhone
+      ? rawSupportPhone.startsWith('55')
+        ? rawSupportPhone
+        : `55${rawSupportPhone}`
+      : '';
+    const amountFormatted = Number(
+      pixCharge?.amount || comp?.effectiveChargeAmount || comp?.planPrice || 149.9
+    ).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+    const message =
+      `Olá! Realizei o pagamento via PIX da assinatura no *GBFleet AI* e gostaria de enviar o comprovante.\n\n` +
+      `🏢 *Empresa:* ${comp?.nome || 'Transportadora'}\n` +
+      `📋 *Plano:* ${comp?.planName || `Plano ${comp?.plano || 'Pro'}`}\n` +
+      `💰 *Valor:* R$ ${amountFormatted}\n` +
+      `🔢 *ID Transação MP:* ${pixCharge?.paymentId || 'N/A'}`;
+    return `https://wa.me/${formattedPhone}?text=${encodeURIComponent(message)}`;
+  };
+
   const handleLogout = () => {
     setCurrentUser(null);
     setCurrentCompany(null);
@@ -623,12 +681,17 @@ export default function Layout() {
     setActiveTab('home');
   };
 
-  const handleLoginSuccess = (user: any, company: any) => {
-    setCurrentUser(user);
+  const handleLoginSuccess = (user: any, company: any, token?: string) => {
+    const resolvedToken = token || user?.sessionToken || localStorage.getItem('gbfleet_session_token') || undefined;
+    const enrichedUser = resolvedToken ? { ...user, sessionToken: resolvedToken } : user;
+    setCurrentUser(enrichedUser);
     setCurrentCompany(company);
-    localStorage.setItem('gbfleet_user', JSON.stringify(user));
+    localStorage.setItem('gbfleet_user', JSON.stringify(enrichedUser));
     localStorage.setItem('gbfleet_company', JSON.stringify(company));
-    loginInstant(user, company);
+    if (resolvedToken) {
+      localStorage.setItem('gbfleet_session_token', resolvedToken);
+    }
+    loginInstant(enrichedUser, company, resolvedToken);
     if (company?.id) {
       invalidateTenantCache(company.id);
       setCachedTenant(company.id, company);
@@ -830,29 +893,31 @@ export default function Layout() {
                   </div>
                 </div>
 
+                <div className="bg-emerald-950/40 border border-emerald-500/30 rounded-xl p-3 text-[11px] text-emerald-300 flex items-center justify-center gap-2.5 text-center">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping shrink-0" />
+                  <span>
+                    <strong>Liberação 100% Automática:</strong> assim que concluir o PIX no seu banco, o sistema detecta o pagamento sozinho em segundos e libera seu acesso (+30 dias)!
+                  </span>
+                </div>
+
                 <div className="flex flex-col sm:flex-row gap-2">
-                  <button
-                    type="button"
-                    disabled={isCheckingClientPix}
-                    onClick={handleManualVerifyClientPix}
-                    className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  <a
+                    href={getSupportWhatsAppUrl(blockedComp, clientPixCharge)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-emerald-500/30 font-bold text-xs rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer"
                   >
-                    <RefreshCw size={14} className={cn(isCheckingClientPix && "animate-spin")} />
-                    <span>Já Paguei — Verificar e Liberar</span>
-                  </button>
+                    <MessageCircle size={14} />
+                    <span>Enviar Comprovante ao Suporte</span>
+                  </a>
                   <button
                     type="button"
                     disabled={isGeneratingClientPix}
                     onClick={() => handleGenerateClientPix(false)}
                     className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl border border-slate-700 transition cursor-pointer"
                   >
-                    Novo QR
+                    Gerar Novo QR
                   </button>
-                </div>
-
-                <div className="text-[10px] text-emerald-400/90 text-center flex items-center justify-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                  <span>Aguardando confirmação do pagamento... Seu painel abrirá sozinho assim que compensar!</span>
                 </div>
               </div>
             )}
@@ -1759,20 +1824,22 @@ export default function Layout() {
                     </div>
                   </div>
 
-                  <button
-                    type="button"
-                    disabled={isCheckingClientPix}
-                    onClick={handleManualVerifyClientPix}
-                    className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 cursor-pointer"
-                  >
-                    <RefreshCw size={14} className={cn(isCheckingClientPix && "animate-spin")} />
-                    <span>Já Paguei — Confirmar Renovação (+30 Dias)</span>
-                  </button>
-
-                  <div className="text-[10px] text-slate-400 text-center flex items-center justify-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
-                    <span>Aguardando pagamento... A renovação é reconhecida automaticamente!</span>
+                  <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-[11px] text-emerald-800 flex items-center justify-center gap-2 text-center">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping shrink-0" />
+                    <span>
+                      <strong>Reconhecimento 100% Automático:</strong> pague pelo QR Code ou Copia e Cola e sua assinatura (+30 dias) será renovada sozinha em segundos!
+                    </span>
                   </div>
+
+                  <a
+                    href={getSupportWhatsAppUrl(currentCompany, clientPixCharge)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 font-bold text-xs rounded-xl transition flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <MessageCircle size={14} className="text-emerald-600" />
+                    <span>Precisa de ajuda? Enviar Comprovante ao Suporte</span>
+                  </a>
                 </div>
               ) : null}
             </div>
