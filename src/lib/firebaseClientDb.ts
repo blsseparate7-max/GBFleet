@@ -1,5 +1,13 @@
 import { initializeApp } from "firebase/app";
-import { getFirestore, doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
+import {
+  getFirestore,
+  initializeFirestore,
+  setLogLevel,
+  doc,
+  getDoc,
+  setDoc,
+  onSnapshot
+} from "firebase/firestore";
 import { configJson } from "./configJson";
 import { dbTemplate } from "./dbTemplate";
 import { cacheAttachment } from "./fileCompressor";
@@ -22,7 +30,24 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const firestoreDbId = configJson.firestoreDatabaseId || "(default)";
-export const firestore = getFirestore(app, firestoreDbId);
+
+try {
+  setLogLevel("silent");
+} catch {}
+
+export const firestore = (() => {
+  try {
+    return initializeFirestore(
+      app,
+      {
+        experimentalAutoDetectLongPolling: true,
+      },
+      firestoreDbId
+    );
+  } catch {
+    return getFirestore(app, firestoreDbId);
+  }
+})();
 
 // Core reactive listeners
 type SyncCallback = () => void;

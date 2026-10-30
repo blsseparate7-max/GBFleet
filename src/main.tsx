@@ -31,45 +31,16 @@ const safeStorage = {
   }
 };
 
-// Deteta de forma segura o endereço do backend vindo do .env do Vite
+// Usa sempre rotas relativas na mesma origem ativa (seja no AI Studio, localhost ou Vercel)
+// para evitar que o navegador na Vercel tente chamar o container privado run.app e sofra bloqueio de CORS.
 const getBackendUrl = () => {
-  let envUrl = (import.meta as any).env?.VITE_APP_URL;
-  if (envUrl && typeof envUrl === 'string') {
-    // Remove aspas simples/duplas e espaçosextras da variável de ambiente
-    envUrl = envUrl.replace(/^["']|["']$/g, '').trim();
-    
-    // Se estivermos rodando no ambiente de visualização do AI Studio (Cloud Run) ou localhost,
-    // usamos rotas relativas ("") para que o app chame o próprio contêiner correto e ativo,
-    // evitando bloqueios de CORS e sandbox por parte de navegadores como Safari.
-    const currentHost = window.location.hostname;
-    if (currentHost && (
-      currentHost.includes('run.app') || 
-      currentHost.includes('localhost') || 
-      currentHost.includes('127.0.0.1') || 
-      currentHost.includes('aistudio.google') ||
-      currentHost.includes('googleusercontent')
-    )) {
-      return "";
-    }
-    
-    return envUrl.endsWith('/') ? envUrl.slice(0, -1) : envUrl;
-  }
-  
-  // Se não encontrar o .env (como na Vercel), usa a própria origem atual como fallback relativo ou absoluto
-  try {
-    if (window.location.origin && window.location.origin !== "null" && !window.location.origin.startsWith('null')) {
-      return window.location.origin;
-    }
-  } catch (e) {
-    // Ignore e retorna vazio para usar rotas relativas seguras
-  }
   return "";
 };
 
 const baseUrl = getBackendUrl();
 
 // Global Fetch Interceptor
-const originalFetch = window.fetch;
+const originalFetch = window.fetch.bind(window);
 const customFetch = async function (input: RequestInfo | URL, init?: RequestInit) {
   let url = "";
   if (typeof input === 'string') {
@@ -78,6 +49,16 @@ const customFetch = async function (input: RequestInfo | URL, init?: RequestInit
     url = input.toString();
   } else if (input && typeof input === 'object' && 'url' in input) {
     url = (input as any).url;
+  }
+
+  // Never intercept external Firebase / Google Cloud / Mercado Pago SDK requests
+  if (
+    url.includes('googleapis.com') ||
+    url.includes('firebaseio.com') ||
+    url.includes('gstatic.com') ||
+    url.includes('mercadopago.com')
+  ) {
+    return originalFetch(input, init);
   }
 
   // Helper to attach auth headers to both server-side and client-side calls
@@ -143,7 +124,7 @@ const customFetch = async function (input: RequestInfo | URL, init?: RequestInit
 
   // Intercept any API routes and route them directly to our client-side Firebase Web SDK emulator!
   // Exception: Mercado Pago API v1 routes, Zero-Trust Webhooks, Server Superadmin verification (/api/auth/me),
-  // and Private Settings Vault (/api/tenants/*/private-settings/*) execute on the Express backend (server.ts).
+  // and Private Settings Vault (/api/tenants/*/private-settings/*) execute on the backend / Vercel Serverless.
   const isServerSideProtectedCall =
     url &&
     (url.includes('/api/saas/payment/create-charge') ||
@@ -161,7 +142,24 @@ const customFetch = async function (input: RequestInfo | URL, init?: RequestInit
         ? `${baseUrl}${input}`
         : input;
     try {
-      const response = await originalFetch(targetInput, serverInit);
+      let response = await originalFetch(targetInput, serverInit);
+      const contentType = response.headers.get('content-type') || '';
+
+      // If Vercel rewrite wasn't applied and returned an HTML fallback or 404, call /api/index directly
+      if (
+        (!response.ok || !contentType.includes('application/json')) &&
+        (url.includes('/api/saas/payment/create-charge') || url.includes('/api/saas/payment/check-status/'))
+      ) {
+        const apiIndex = url.indexOf('/api/');
+        const subPath = apiIndex !== -1 ? url.slice(apiIndex + 5) : url;
+        const directServerlessUrl = `/api/index?__path=${encodeURIComponent(subPath)}`;
+        const retryRes = await originalFetch(directServerlessUrl, serverInit);
+        const retryType = retryRes.headers.get('content-type') || '';
+        if (retryRes.ok && retryType.includes('application/json')) {
+          return retryRes;
+        }
+      }
+
       if (response.ok || response.status === 401 || response.status === 403 || response.status === 429) {
         return response;
       }
