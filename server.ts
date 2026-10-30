@@ -581,7 +581,7 @@ const ensureDBSynced = async (req: express.Request, res: express.Response, next:
   }
 };
 
-app.use(ensureDBSynced);
+app.use("/api", ensureDBSynced);
 
   const readDB = () => {
     let db: any;

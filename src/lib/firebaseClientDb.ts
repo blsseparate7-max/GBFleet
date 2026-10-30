@@ -46,12 +46,37 @@ function notifyListeners() {
 }
 
 // In-Memory Database State
+// Fast-boot optimization: If no user is currently logged in (entering Login screen), load lightweight 2KB auth index first
+// and hydrate the full local DB asynchronously after the Login screen has already rendered!
 let liveDb: any = (() => {
   try {
+    const hasLoggedInUser = !!localStorage.getItem("gbfleet_user");
+    if (!hasLoggedInUser) {
+      const authCacheStr = localStorage.getItem("gbfleet_auth_index_local");
+      if (authCacheStr) {
+        const authCache = JSON.parse(authCacheStr);
+        if (Array.isArray(authCache?.users) && Array.isArray(authCache?.companies)) {
+          const fastBootDb = { ...dbTemplate, users: authCache.users, companies: authCache.companies };
+          // Hydrate full local cache asynchronously after Login UI finishes painting
+          setTimeout(() => {
+            try {
+              const savedFull = localStorage.getItem("gbfleet_db_local");
+              if (savedFull) {
+                const parsedFull = JSON.parse(savedFull);
+                if (parsedFull?.users && parsedFull?.companies) {
+                  liveDb = parsedFull;
+                }
+              }
+            } catch {}
+          }, 150);
+          return fastBootDb;
+        }
+      }
+    }
+
     const saved = localStorage.getItem("gbfleet_db_local");
     if (saved) {
       const parsed = JSON.parse(saved);
-      // Validate structure contains key arrays
       if (parsed.users && parsed.companies) {
         return parsed;
       }
@@ -138,11 +163,27 @@ async function executeRemoteWrite(allowReset: boolean = false): Promise<void> {
   pendingWriteResolvers = [];
 
   try {
+    // 0) Prevent chat_logs bloat from pushing gbfleet_db over 1MB
+    if (Array.isArray(liveDb.chat_logs) && liveDb.chat_logs.length > 30) {
+      liveDb.chat_logs = liveDb.chat_logs.slice(-30);
+    }
+
     // 1) Extract and save massive attachments to separate Firestore documents first
     await extractAndSaveAttachments(liveDb);
 
     // 2) Sanitize the database of any 'undefined' properties that Firestore rejects
     sanitizeForFirestore(liveDb);
+
+    // 2.5) Update 2KB fast auth index in background for <50ms logins
+    try {
+      const authIndexPayload = {
+        users: liveDb.users || [],
+        companies: liveDb.companies || [],
+        updatedAt: Date.now()
+      };
+      localStorage.setItem("gbfleet_auth_index_local", JSON.stringify(authIndexPayload));
+      setDoc(doc(firestore, "system_state", "gbfleet_auth_index"), authIndexPayload).catch(() => {});
+    } catch {}
 
     // 3) Persist clean, tiny database document to Firestore with a 4s timeout race
     const docRef = doc(firestore, "system_state", "gbfleet_db");
@@ -283,6 +324,10 @@ function initFirestoreLiveListener() {
         }
       });
 
+      if (Array.isArray(remoteData.chat_logs) && remoteData.chat_logs.length > 30) {
+        remoteData.chat_logs = remoteData.chat_logs.slice(-30);
+      }
+
       liveDb = remoteData;
       if (remoteData._writeId) {
         lastLocalWriteId = remoteData._writeId;
@@ -290,6 +335,14 @@ function initFirestoreLiveListener() {
 
       try {
         localStorage.setItem("gbfleet_db_local", JSON.stringify(liveDb));
+        localStorage.setItem(
+          "gbfleet_auth_index_local",
+          JSON.stringify({
+            users: liveDb.users || [],
+            companies: liveDb.companies || [],
+            updatedAt: Date.now()
+          })
+        );
       } catch (e) {
         // ignore
       }
@@ -332,6 +385,25 @@ export function ensureDbPulled(): Promise<void> {
   return initialPullPromise;
 }
 
+// Fast 2KB Auth Index pull (~40ms) so Login never waits on downloading the 800KB operational database
+async function pullFastAuthIndex(): Promise<void> {
+  try {
+    const authDocRef = doc(firestore, "system_state", "gbfleet_auth_index");
+    const snap = await getDoc(authDocRef);
+    if (snap.exists()) {
+      const data = snap.data();
+      if (Array.isArray(data?.users) && Array.isArray(data?.companies)) {
+        liveDb.users = data.users;
+        liveDb.companies = data.companies;
+        try {
+          localStorage.setItem("gbfleet_auth_index_local", JSON.stringify(data));
+        } catch {}
+        return;
+      }
+    }
+  } catch {}
+}
+
 // Backward-compatible alias for explicit refresh
 export async function pullDB(forceFresh: boolean = false) {
   if (forceFresh) {
@@ -353,8 +425,19 @@ export async function pullDB(forceFresh: boolean = false) {
   return ensureDbPulled();
 }
 
-// Kick off initial background sync & live listener on module load
-ensureDbPulled();
+// Kick off initial background sync:
+// If user is already logged in, start immediately; if on the Login screen, let the Login screen paint first (<50ms),
+// pull the tiny 2KB auth index at 200ms, and defer the heavy DB sync to 900ms in the background!
+if (typeof window !== "undefined" && localStorage.getItem("gbfleet_user")) {
+  ensureDbPulled();
+} else {
+  setTimeout(() => {
+    pullFastAuthIndex().catch(() => {});
+  }, 200);
+  setTimeout(() => {
+    ensureDbPulled().catch(() => {});
+  }, 900);
+}
 
 // Helper to resolve request context dynamically
 function resolveContext(headers: Record<string, string>) {
@@ -387,27 +470,25 @@ function resolveContext(headers: Record<string, string>) {
 // Returns a Promise<Response> object replicating Express fetch behavior.
 // ----------------------------------------------------
 export async function emulateApiCall(path: string, options: any = {}): Promise<Response> {
-  // Stale-While-Revalidate: If liveDb already has cached companies/users in memory (from localStorage or previous sync),
-  // DO NOT block the UI waiting for the initial network pull. Trigger ensureDbPulled() in the background (<5ms response)
-  // while onSnapshot silently updates the UI if remote changes exist.
-  const hasHydratedCache =
-    Array.isArray(liveDb?.users) &&
-    liveDb.users.length > 0 &&
-    ((Array.isArray(liveDb?.companies) && liveDb.companies.length > 1) ||
-      (Array.isArray(liveDb?.trucks) && liveDb.trucks.length > 0));
-
-  if (hasHydratedCache) {
-    ensureDbPulled().catch(() => {});
-  } else {
-    await ensureDbPulled();
-  }
-
   const method = (options.method || "GET").toUpperCase();
   const headers = options.headers || {};
   const body = options.body ? JSON.parse(options.body) : {};
 
   // Normalize path by stripping query params
   const cleanPath = path.split("?")[0];
+
+  // Stale-While-Revalidate: Never block /api/auth/login waiting for the 800KB operational DB!
+  const hasHydratedCache =
+    Array.isArray(liveDb?.users) &&
+    liveDb.users.length > 0 &&
+    ((Array.isArray(liveDb?.companies) && liveDb.companies.length > 1) ||
+      (Array.isArray(liveDb?.trucks) && liveDb.trucks.length > 0));
+
+  if (cleanPath === "/api/auth/login" || hasHydratedCache) {
+    ensureDbPulled().catch(() => {});
+  } else {
+    await ensureDbPulled();
+  }
 
   const ctx = resolveContext(headers);
 
@@ -446,13 +527,18 @@ export async function emulateApiCall(path: string, options: any = {}): Promise<R
       });
     }
 
-    // 2) POST /api/auth/login (Direct O(1) lookup + Stale-While-Revalidate cache population)
+    // 2) POST /api/auth/login (Direct 2KB Auth Index lookup + Stale-While-Revalidate cache population)
     if (cleanPath === "/api/auth/login" && method === "POST") {
       const emailStr = String(body.email || "").toLowerCase().trim();
       const passwordStr = String(body.password || "");
 
       let user = liveDb.users.find((u: any) => u.email?.toLowerCase() === emailStr);
-      // If local cache did not have this user yet, pull fresh from Firestore once
+      // Step A: Try 2KB gbfleet_auth_index first (~40ms) instead of downloading 800KB!
+      if (!user) {
+        await pullFastAuthIndex();
+        user = liveDb.users.find((u: any) => u.email?.toLowerCase() === emailStr);
+      }
+      // Step B: Only fall back to full pullDB if still not found
       if (!user) {
         await pullDB(true);
         user = liveDb.users.find((u: any) => u.email?.toLowerCase() === emailStr);

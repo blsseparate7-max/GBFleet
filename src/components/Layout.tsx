@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, Suspense, lazy } from 'react';
 import { 
   Home as HomeIcon,
   LayoutDashboard, 
@@ -41,22 +41,23 @@ import { onDBSync } from '../lib/firebaseClientDb';
 import { useAuth } from '../contexts/AuthContext';
 import { useTenant } from '../contexts/TenantContext';
 import { getCachedTenant, setCachedTenant, setCachedUserProfile, invalidateTenantCache } from '../lib/tenantService';
-import Home from './Home';
-import Dashboard from './Dashboard';
-import Chat from './Chat';
-import Trucks from './Trucks';
-import FuelLogs from './FuelLogs';
-import Expenses from './Expenses';
-import CashFlow from './CashFlow';
-import Freights from './Freights';
-import Maintenance from './Maintenance';
-import Drivers from './Drivers';
-import DriverFinancials from './DriverFinancials';
-import Simulator from './Simulator';
 import Login from './Login';
-import SaaSAdmin from './SaaSAdmin';
-import Reports from './Reports';
 import { ToastContainer, showToast } from './ui/Toast';
+
+// Lazy-loaded internal modules so the Login screen renders in <100ms without loading Recharts, jsPDF, or Leaflet
+const Home = lazy(() => import('./Home'));
+const Dashboard = lazy(() => import('./Dashboard'));
+const Trucks = lazy(() => import('./Trucks'));
+const FuelLogs = lazy(() => import('./FuelLogs'));
+const Expenses = lazy(() => import('./Expenses'));
+const CashFlow = lazy(() => import('./CashFlow'));
+const Freights = lazy(() => import('./Freights'));
+const Maintenance = lazy(() => import('./Maintenance'));
+const Drivers = lazy(() => import('./Drivers'));
+const DriverFinancials = lazy(() => import('./DriverFinancials'));
+const Simulator = lazy(() => import('./Simulator'));
+const SaaSAdmin = lazy(() => import('./SaaSAdmin'));
+const Reports = lazy(() => import('./Reports'));
 
 type Tab = 'home' | 'dashboard' | 'trucks' | 'fuel' | 'expenses' | 'cash' | 'freights' | 'maintenance' | 'drivers' | 'driver_financials' | 'simulator' | 'reports' | 'saas';
 
@@ -1286,7 +1287,14 @@ export default function Layout() {
               <p className="text-sm font-semibold">Carregando painel...</p>
             </div>
           ) : (
-            <>
+            <Suspense
+              fallback={
+                <div className="h-full flex items-center justify-center flex-col text-slate-400 gap-3">
+                  <div className="w-8 h-8 rounded-full border-4 border-blue-600 border-t-transparent animate-spin"></div>
+                  <p className="text-sm font-semibold">Carregando módulo...</p>
+                </div>
+              }
+            >
               {activeTab === 'saas' && <SaaSAdmin currentUserId={currentUser?.id} onImpersonate={handleImpersonate} activeImpersonatedId={impersonatedCompanyId} />}
               {activeTab === 'home' && <Home data={data} onNavigate={(tab) => setActiveTab(tab as Tab)} currentUser={currentUser} />}
               {activeTab === 'dashboard' && <Dashboard data={data} onNavigate={(tab) => setActiveTab(tab as Tab)} />}
@@ -1300,7 +1308,7 @@ export default function Layout() {
               {activeTab === 'drivers' && <Drivers data={data} onUpdate={fetchData} />}
               {activeTab === 'driver_financials' && <DriverFinancials data={data} onUpdate={fetchData} />}
               {activeTab === 'simulator' && <Simulator data={data} onUpdate={fetchData} />}
-            </>
+            </Suspense>
           )}
         </div>
       </main>

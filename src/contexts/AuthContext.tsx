@@ -122,6 +122,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // 2) Safety Fallback Timeout (2500ms max) + Firebase Auth & O(1) onSnapshot listener
   useEffect(() => {
+    // If on the Login screen (no profile in localStorage), immediately mark loading = false (<10ms)
+    if (!profile?.id) {
+      setLoading(false);
+      return;
+    }
+
     const safetyTimer = setTimeout(() => {
       setLoading(false);
     }, 2500);
@@ -166,11 +172,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setLoading(false);
     }
 
-    // If profile is already loaded from localStorage, trigger background verification
-    if (profile?.id) {
-      setLoading(false);
-      refreshAuthMeBackground(profile);
-    }
+    // Trigger non-blocking background verification
+    setLoading(false);
+    refreshAuthMeBackground(profile);
 
     return () => {
       clearTimeout(safetyTimer);
